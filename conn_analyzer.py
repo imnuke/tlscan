@@ -92,12 +92,13 @@ async def handle_tool_errors(request, handler):
             status="error"
         )
 
-async def main(function_name: str = "sub_4124E3"):
+async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat"):
     """
     Main function to analyze SSL/TLS connections.
 
     Args:
         function_name: Name of the function to analyze (default: "sub_4124E3")
+        model: LLM model to use (default: "deepseek-chat")
     """
     connection_type = 'stdio'
     server_script = '/home/peng/Projects/others/ida-pro-mcp/src/ida_pro_mcp/server.py'
@@ -128,7 +129,7 @@ async def main(function_name: str = "sub_4124E3"):
         tools = []
 
     agent = create_agent(
-        model="deepseek-chat",
+        model=model,
         tools=tools,
         middleware=[handle_tool_errors],
         system_prompt=(
@@ -223,6 +224,12 @@ if __name__ == "__main__":
         type=str,
         default="sub_4124E3",
         help="Name of the function to analyze (default: sub_4124E3)"
+    )
+    parser.add_argument(
+        "-m", "--model",
+        type=str,
+        default="deepseek-chat",
+        help="LLM model to use (default: deepseek-chat). Examples: openai:gpt-4o, anthropic:claude-sonnet-4-5, deepseek-chat"
     )
     args = parser.parse_args()
 
