@@ -19,6 +19,9 @@ from rich import box
 # Initialize Rich console for beautiful output
 console = Console()
 
+# Global flag to track connection failures
+connection_failed = False
+
 # Custom Heading class with left alignment instead of center
 class LeftAlignedHeading(Heading):
     """Custom heading that renders left-aligned instead of centered."""
@@ -50,10 +53,36 @@ def create_markdown(content: str) -> Markdown:
 @wrap_tool_call
 async def handle_tool_errors(request, handler):
     """Handle tool execution errors gracefully without terminating the workflow."""
+    global connection_failed
+
     try:
         return await handler(request)
     except Exception as e:
-        # Return error message to the model so it can continue
+        error_str = str(e)
+
+        # Check if this is a connection refused error (MCP server not running)
+        if isinstance(e, ConnectionRefusedError) or "[Errno 111] Connection refused" in error_str:
+            connection_failed = True
+            console.print()
+            console.print(Panel(
+                "[bold red]✗ Connection Refused[/bold red]\n\n"
+                "The MCP server is not running. Please start it by:\n"
+                "1. Opening IDA Pro\n"
+                "2. Going to Edit → Plugins → MCP (Ctrl+Alt+M)\n"
+                "3. Starting the server\n\n"
+                "Terminating agent execution...",
+                border_style="red",
+                title="[bold]MCP Server Error[/bold]"
+            ))
+            console.print()
+
+            return ToolMessage(
+                content="Connection refused - MCP server is not running. Please start the server and try again.",
+                tool_call_id=request.tool_call["id"],
+                status="error"
+            )
+
+        # For other errors, continue as before
         error_msg = f"Tool execution failed: {str(e)}"
         console.print(f"[bold yellow]⚠️  TOOL ERROR:[/bold yellow] {error_msg}")
         return ToolMessage(
@@ -109,14 +138,23 @@ async def main():
         )
     )
 
+    rules = (
+        "Hostname verification should be performed using X509_check_host or equivalent custom code.\n"
+        "Certificate expiration checks should be implemented using X509_get_notAfter or equivalent custom code.\n"
+        "Certificate revocation checks should be implemented using OCSP or CRL checks.\n"
+        "When SSL_CTX_set_verify or SSL_set_verify sets SSL_VERIFY_NONE(0), SSL_get_verify_result must be called to check the verification status.\n"
+        ""
+    )
+
     user_prompt = (
         "There is a network connection established from function connect_ssl, "
-        "I need you to analyze it and tell me: "
-        "- Does the connection use default certificate checking?\n"
-        "- Does it use any custom certificate checking code? If yes, is the custom code secure?\n"
-        "- Is there any dependencies that not in the binary we need to check?\n"
-        "- Is there any check for certificate hostname, certificate expiration?\n"
+        "I need you to analyze it and tell me if the code violates any SSL/TLS security best practices based on the following rules:\n"
+        + rules
+        # "- Is there any dependencies that not in the binary we need to check?\n"
+        # "- Is there any check for certificate hostname, certificate expiration or revocation?\n"
     )
+
+    # TODO: Restrict the output format.
 
     console.print(Panel.fit("[bold cyan]Starting Agent Execution[/bold cyan]", border_style="cyan"))
     console.print()
@@ -126,6 +164,10 @@ async def main():
         stream_mode="values",
         config={"recursion_limit": 50}
     ):
+        # Check if connection failed - terminate immediately
+        if connection_failed:
+            break
+
         # Get the last message in the current state
         if "messages" in chunk and chunk["messages"]:
             last_message = chunk["messages"][-1]
@@ -159,7 +201,11 @@ async def main():
                     console.print()
 
     console.print()
-    console.print(Panel.fit("[bold green]✓ Agent Execution Complete[/bold green]", border_style="green"))
+    # Show different message based on whether we terminated early
+    if connection_failed:
+        console.print(Panel.fit("[bold red]✗ Agent Execution Terminated[/bold red]", border_style="red"))
+    else:
+        console.print(Panel.fit("[bold green]✓ Agent Execution Complete[/bold green]", border_style="green"))
 
 if __name__ == "__main__":
     asyncio.run(main())
