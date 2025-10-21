@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import asyncio
+import argparse
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_tool_call
@@ -91,7 +92,13 @@ async def handle_tool_errors(request, handler):
             status="error"
         )
 
-async def main():
+async def main(function_name: str = "sub_4124E3"):
+    """
+    Main function to analyze SSL/TLS connections.
+
+    Args:
+        function_name: Name of the function to analyze (default: "sub_4124E3")
+    """
     connection_type = 'stdio'
     server_script = '/home/peng/Projects/others/ida-pro-mcp/src/ida_pro_mcp/server.py'
     try:
@@ -147,7 +154,7 @@ async def main():
     )
 
     user_prompt = (
-        "There is a network connection established from function connect_ssl, "
+        f"There is a network connection established from function {function_name}, "
         "I need you to analyze it and tell me if the code violates any SSL/TLS security best practices based on the following rules:\n"
         + rules
         # "- Is there any dependencies that not in the binary we need to check?\n"
@@ -208,4 +215,15 @@ async def main():
         console.print(Panel.fit("[bold green]✓ Agent Execution Complete[/bold green]", border_style="green"))
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(
+        description="Analyze SSL/TLS connections in binary functions using IDA Pro MCP tools"
+    )
+    parser.add_argument(
+        "-f", "--function",
+        type=str,
+        default="sub_4124E3",
+        help="Name of the function to analyze (default: sub_4124E3)"
+    )
+    args = parser.parse_args()
+
+    asyncio.run(main(args.function))
