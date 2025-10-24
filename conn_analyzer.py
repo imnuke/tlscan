@@ -108,7 +108,9 @@ async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat"):
                 "idapro": {
                     "transport": "stdio",
                     "command": "python",
-                    "args": [server_script]
+                    "args": [
+                        server_script
+                    ]
                 }
             }
         else:
@@ -146,23 +148,66 @@ async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat"):
         )
     )
 
+    # TODO: rule: called function but not properly checked the result
+
     rules = (
-        "Hostname verification should be performed using X509_check_host or equivalent custom code.\n"
-        "Certificate expiration checks should be implemented using X509_get_notAfter or equivalent custom code.\n"
-        "Certificate revocation checks should be implemented using OCSP or CRL checks.\n"
-        "When SSL_CTX_set_verify or SSL_set_verify sets SSL_VERIFY_NONE(0), SSL_get_verify_result must be called to check the verification status.\n"
-        ""
+        "Default verification (RECOMMENDED): Default verification should be performed using SSL_CTX_set_verify or equivalent custom code.\n"
+        "Hostname verification (MUST): Hostname verification should be performed using X509_check_host or equivalent custom code.\n"
+        "Result checking (MUST): When SSL_CTX_set_verify or SSL_set_verify sets SSL_VERIFY_NONE(0), SSL_get_verify_result must be called to check the verification status.\n"
+        "Certificate expiration (RECOMMENDED): Certificate expiration checks should be implemented using X509_get_notAfter or equivalent custom code.\n"
+        "Certificate revocation (RECOMMENDED): Certificate revocation checks should be implemented using OCSP or CRL checks.\n"
     )
+
+    oneshot_example = (
+        "The output should be like this:\n\n"
+
+        "Connection establishing flow: \n"
+        "- upscli_init (0x5b96): creates ssl_ctx via TLS_client_method/SSL_CTX_new, calls SSL_CTX_load_verify_locations when a CA path is provided, and calls SSL_CTX_set_verify(ssl_ctx, (_DWORD)a1 != 0, 0).\n"
+        "    - Code lines of interest (decompiled):\n"
+        "       - SSL_CTX_load_verify_locations(ssl_ctx, 0, a2) if a2 != 0\n"
+        "       - SSL_CTX_set_verify(ssl_ctx, (_DWORD)a1 != 0, 0)\n"
+        "- upscli_sslinit (0x6465): performs STARTTLS, then SSL_new(ssl_ctx), SSL_set_fd, then calls:\n"
+        "    - if (a2) SSL_set_verify(ssl, 1, 0);\n"
+        "    - else SSL_set_verify(ssl, 0, 0);\n"
+        "    - then calls SSL_connect and returns based on the SSL_connect result.\n"
+        "- upscli_tryconnect (0x6796): decides whether to call upscli_sslinit based on configuration/flags; logs \"Certificate verification is disabled\" when verification flag is false.\n"
+        "- upscli_add_host_cert and upscli_find_host_cert are stubs (no-op / return 0), so there is no per-host certificate pinning implemented.\n"
+
+        "Rule checks performed:\n"
+        "Hostname verification (MUST):\n"
+        "- Findings:\n"
+        "  - No call to X509_check_host, X509_check_cert or any hostname check exists in the codebase I could find. Search for \"X509\" and \"X509_check_host\" returned nothing."
+        "  - After SSL_connect the code does not extract the peer certificate and check the certificate's subject/SAN against the server hostname. So it does not perform hostname verification — this violates the MUST."
+        "Result checking (MUST): When SSL_CTX_set_verify or SSL_set_verify sets SSL_VERIFY_NONE(0), SSL_get_verify_result must be called to check the verification status"
+        "- Findings:\n"
+        "  - The code uses SSL_CTX_set_verify(..., mode, 0) and per-connection SSL_set_verify(..., mode, 0). When mode is 0 the code effectively disables verification."
+        "  - There is no use/import of SSL_get_verify_result in the binary (no symbol and no string usage)"
+        "The code does not call SSL_get_verify_result after SSL_connect to check the verification result even in the branch where verification is enabled. Therefore it does not explicitly check verification status after the handshake — this violates the MUST (no verification result check is done)."
+
+        "More dependencies need to be checked:\n"
+        "- upscli_init receives parameters a1 and a2: a2 is used as the CA path passed to SSL_CTX_load_verify_locations; a1 controls the boolean passed to SSL_CTX_set_verify."
+        "- upscli_tryconnect uses flags (a4 and host_cert) to decide whether to perform SSL at all and whether to require verification. The log lines show that verification is enabled/disabled by configuration flags (and host_cert would influence this)."
+
+        "Results Summary (in table):\n"
+        "| Rule | Status |\n"
+        "|------|--------|\n"
+        "| Hostname verification | Violation |\n"
+        "| Result checking | Violation on condition |\n"
+
+        "Additional observations:\n"
+        "<Any other relevant findings or notes>"
+    )
+
+    # TODO: The LLM should ask for external file access if needed.
 
     user_prompt = (
         f"There is a network connection established from function {function_name}, "
         "I need you to analyze it and tell me if the code violates any SSL/TLS security best practices based on the following rules:\n"
-        + rules
-        # "- Is there any dependencies that not in the binary we need to check?\n"
-        # "- Is there any check for certificate hostname, certificate expiration or revocation?\n"
+        + rules + 
+        "If there are custom implementations of these checks, explain how they work in detail.\n"
+        "If the security relies on external information like config file or command-line arguments, please mention it.\n"
+        + oneshot_example
     )
-
-    # TODO: Restrict the output format.
 
     console.print(Panel.fit("[bold cyan]Starting Agent Execution[/bold cyan]", border_style="cyan"))
     console.print()
@@ -233,4 +278,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    asyncio.run(main(args.function))
+    asyncio.run(main(args.function, args.model))
