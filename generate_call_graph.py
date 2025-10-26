@@ -215,6 +215,22 @@ def export_to_json(graph: nx.DiGraph, binary_path: str, output_path: str):
     logger.info(f"Call graph exported to {output_path}")
 
 
+def draw_call_graph(call_graph: nx.DiGraph, root=None, output_file: Optional[str] = None, highlight_nodes: list = []) -> None:
+    A = nx.nx_agraph.to_agraph(call_graph)
+    A.graph_attr['ranksep'] = '2.0'  # Add vertical spacing between nodes
+
+    # Highlight specified nodes
+    for node in highlight_nodes:
+        if node in A.nodes():
+            A.get_node(node).attr['color'] = 'blue'
+            A.get_node(node).attr['style'] = 'filled'
+            A.get_node(node).attr['fillcolor'] = 'lightblue'
+
+    A.layout('dot')
+    A.draw(output_file, format='pdf')
+    logger.info(f'Call graph saved to: {output_file}')
+
+
 def main():
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(
@@ -267,6 +283,9 @@ def main():
         print(f"Nodes (functions): {len(call_graph.nodes)}")
         print(f"Edges (calls): {len(call_graph.edges)}")
         print("="*50)
+
+        # Draw the call graph
+        draw_call_graph(call_graph, output_file="call_graph.pdf", highlight_nodes=ssl_functions)
 
     except Exception as e:
         logger.error(f"Error: {e}")
