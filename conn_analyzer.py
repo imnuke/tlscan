@@ -146,12 +146,62 @@ async def handle_tool_errors(request, handler):
             status="error"
         )
 
-async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat", call_graph_path: str = "call_graph.json"):
+# Global agent instances - will be initialized in main()
+supervisor_agent = None
+dataflow_agent = None
+ssl_analysis_agent = None
+
+# Tool wrappers for supervisor to call worker agents
+@tool
+async def call_dataflow_agent(request: str, context: str = "") -> str:
     """
-    Main function to analyze SSL/TLS connections.
+    Perform dataflow analysis (forward/backward slicing, inter-procedural).
+
+    Use this tool to trace:
+    - Where a variable's value flows TO (forward slicing)
+    - Where a variable's value comes FROM (backward slicing)
+    - Dataflow across function boundaries (inter-procedural analysis)
 
     Args:
-        function_name: Name of the function to analyze (default: "sub_4124E3")
+        request: Specific dataflow analysis question
+        context: Relevant code/function information from IDA for analysis
+
+    Returns:
+        Dataflow analysis results with sources, sinks, and paths
+    """
+    full_request = f"{request}\n\nContext:\n{context}" if context else request
+    result = await dataflow_agent.ainvoke(
+        {"messages": [{"role": "user", "content": full_request}]}
+    )
+    return result["messages"][-1].content
+
+@tool
+async def call_ssl_agent(request: str, context: str = "") -> str:
+    """
+    Analyze SSL/TLS security practices against security rules.
+
+    Use this tool to check if code violates SSL/TLS security best practices,
+    identify conditional security behavior, and flag parameters/config that
+    affect security.
+
+    Args:
+        request: SSL security analysis question
+        context: Relevant SSL-related code/function information
+
+    Returns:
+        SSL security analysis with rule violations and conditional behaviors
+    """
+    full_request = f"{request}\n\nContext:\n{context}" if context else request
+    result = await ssl_analysis_agent.ainvoke(
+        {"messages": [{"role": "user", "content": full_request}]}
+    )
+    return result["messages"][-1].content
+
+async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.json"):
+    """
+    Main function to analyze SSL/TLS connections using multi-agent system.
+
+    Args:
         model: LLM model to use (default: "deepseek-chat")
         call_graph_path: Path to call graph JSON file (default: "call_graph.json")
     """
@@ -197,76 +247,133 @@ async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat", 
         console.print("[yellow]Using fallback tools instead...[/yellow]")
         tools = []
 
-    agent = create_agent(
+    # Initialize all agents
+    global dataflow_agent, ssl_analysis_agent, supervisor_agent
+
+    # 1. Dataflow Analysis Agent - performs slicing and dataflow analysis
+    dataflow_agent = create_agent(
         model=model,
         tools=tools,
         middleware=[handle_tool_errors],
         system_prompt=(
-            "You are a helpful assistant with access to IDA Pro tools. "
-            "Help users analyze code, rename variables, explain functions, and more.\n\n"
-            "IMPORTANT GUIDELINES:\n"
-            "1. Use IDA Pro tools strategically to gather information needed to answer questions\n"
-            "2. After gathering sufficient information, synthesize your findings into a clear answer\n"
-            "3. Avoid calling the same tool repeatedly with similar parameters\n"
-            "4. If you cannot find what you're looking for after 3-5 tool calls, explain what you found and what might be missing\n"
-            "5. Always provide a final answer based on the information gathered, even if incomplete\n"
-            "6. Focus on answering the user's specific question rather than exhaustively exploring the binary\n"
-            "7. If a tool returns an error, try alternative approaches or work with the information you have"
+            "You are a dataflow analysis expert with direct access to IDA Pro MCP tools. "
+            "Your specialization is program slicing, taint analysis, and tracking how data flows through binaries.\n\n"
+            "IDA TOOLS AVAILABLE:\n"
+            "You have direct access to all IDA Pro tools to query the binary as needed:\n"
+            "- Get function details, decompilation, disassembly\n"
+            "- Find cross-references (xrefs), callers, and callees\n"
+            "- Search for functions, strings, and globals\n"
+            "- Analyze structures, variables, and data types\n\n"
+            "DATAFLOW CAPABILITIES:\n"
+            "- Forward slicing: Track where a variable's value flows TO (uses/dependencies downstream)\n"
+            "- Backward slicing: Track where a variable comes FROM (sources/definitions upstream)\n"
+            "- Inter-procedural analysis: Track dataflow across function boundaries\n"
+            "- Identify data sources: Config files, command-line args, function parameters, globals\n\n"
+            "ANALYSIS APPROACH:\n"
+            "1. Use IDA tools to get function code and understand the context\n"
+            "2. Identify the variable/parameter of interest\n"
+            "3. Trace backward to find all possible sources (assignments, parameters, returns)\n"
+            "4. Trace forward to find all uses and propagations\n"
+            "5. Track across function calls using IDA's caller/callee tools\n"
+            "6. Distinguish between:\n"
+            "   - Direct dataflow (assignment, parameter passing)\n"
+            "   - Control-flow dependencies (conditionals, loops)\n"
+            "   - Aliasing (pointers, references)\n\n"
+            "OUTPUT FORMAT:\n"
+            "- List all dataflow paths clearly with addresses and function names\n"
+            "- Identify ultimate sources (config, argv, stdin, network, etc.)\n"
+            "- Highlight security-relevant flows\n"
+            "- Note any ambiguities or limitations in the analysis"
         )
     )
 
-    # TODO: rule: called function but not properly checked the result
-
-    # 具体整理：可能与控制流相关的有哪些？
-    # 哪些函数调用依赖是必须检查的？即谁必须在谁之后调用？
-    # 哪些函数调用的返回结果是必须检查的？应该如何被检查？
-
-    rules = (
-        "Default verification (RECOMMENDED): Default verification should be performed using SSL_CTX_set_verify or equivalent custom code.\n"
-        "Hostname verification (MUST): Hostname verification should be performed using X509_check_host or equivalent custom code.\n"
-        "Result checking (MUST): When SSL_CTX_set_verify or SSL_set_verify sets SSL_VERIFY_NONE(0), SSL_get_verify_result must be called to check the verification status.\n"
-        "Certificate expiration (RECOMMENDED): Certificate expiration checks should be implemented using X509_get_notAfter or equivalent custom code.\n"
-        "Certificate revocation (RECOMMENDED): Certificate revocation checks should be implemented using OCSP or CRL checks.\n"
+    # 2. SSL Security Analysis Agent - checks SSL/TLS security rules
+    ssl_analysis_agent = create_agent(
+        model=model,
+        tools=tools,
+        middleware=[handle_tool_errors],
+        system_prompt=(
+            "You are an SSL/TLS security expert with direct access to IDA Pro MCP tools. "
+            "Your specialization is identifying security vulnerabilities in SSL/TLS implementations.\n\n"
+            "IDA TOOLS AVAILABLE:\n"
+            "You have direct access to all IDA Pro tools to query the binary as needed:\n"
+            "- Get function details, decompilation, disassembly\n"
+            "- Find cross-references (xrefs), callers, and callees\n"
+            "- Search for SSL/TLS functions, strings, and globals\n"
+            "- Analyze structures, variables, and data types\n\n"
+            "SECURITY RULES TO CHECK:\n"
+            "1. Default verification (RECOMMENDED): SSL_CTX_set_verify or custom verification\n"
+            "2. Hostname verification (MUST): X509_check_host or equivalent\n"
+            "3. Result checking (MUST): When SSL_VERIFY_NONE is used, SSL_get_verify_result must be called\n"
+            "4. Certificate expiration (RECOMMENDED): X509_get_notAfter checks\n"
+            "5. Certificate revocation (RECOMMENDED): OCSP or CRL checks\n\n"
+            "ANALYSIS APPROACH:\n"
+            "1. Use IDA tools to search for SSL/TLS functions and understand their usage\n"
+            "2. Decompile relevant functions to analyze SSL/TLS code\n"
+            "3. Check each security rule systematically\n"
+            "4. Identify conditional security behavior (e.g., 'verification enabled only if config flag set')\n"
+            "5. Flag parameters/variables that control security decisions\n"
+            "6. Use xrefs and caller analysis to understand control flow\n"
+            "7. Note custom implementations that might fulfill security requirements\n\n"
+            "CRITICAL: When you find that security behavior depends on runtime values "
+            "(parameters, config flags, globals), explicitly state:\n"
+            "- The variable/parameter name\n"
+            "- Which function/location uses it\n"
+            "- What security decision it controls\n"
+            "This signals the supervisor to request dataflow analysis.\n\n"
+            "OUTPUT FORMAT:\n"
+            "- Rule-by-rule analysis with PASS/FAIL/CONDITIONAL status\n"
+            "- For CONDITIONAL: Describe what condition affects security\n"
+            "- Highlight variables that need dataflow tracing\n"
+            "- Provide code excerpts with addresses and locations"
+        )
     )
 
-    oneshot_example = (
-        "The output should be like this:\n\n"
-
-        "Connection establishing flow: \n"
-        "- upscli_init (0x5b96): creates ssl_ctx via TLS_client_method/SSL_CTX_new, calls SSL_CTX_load_verify_locations when a CA path is provided, and calls SSL_CTX_set_verify(ssl_ctx, (_DWORD)a1 != 0, 0).\n"
-        "    - Code lines of interest (decompiled):\n"
-        "       - SSL_CTX_load_verify_locations(ssl_ctx, 0, a2) if a2 != 0\n"
-        "       - SSL_CTX_set_verify(ssl_ctx, (_DWORD)a1 != 0, 0)\n"
-        "- upscli_sslinit (0x6465): performs STARTTLS, then SSL_new(ssl_ctx), SSL_set_fd, then calls:\n"
-        "    - if (a2) SSL_set_verify(ssl, 1, 0);\n"
-        "    - else SSL_set_verify(ssl, 0, 0);\n"
-        "    - then calls SSL_connect and returns based on the SSL_connect result.\n"
-        "- upscli_tryconnect (0x6796): decides whether to call upscli_sslinit based on configuration/flags; logs \"Certificate verification is disabled\" when verification flag is false.\n"
-        "- upscli_add_host_cert and upscli_find_host_cert are stubs (no-op / return 0), so there is no per-host certificate pinning implemented.\n"
-
-        "Rule checks performed:\n"
-        "Hostname verification (MUST):\n"
-        "- Findings:\n"
-        "  - No call to X509_check_host, X509_check_cert or any hostname check exists in the codebase I could find. Search for \"X509\" and \"X509_check_host\" returned nothing."
-        "  - After SSL_connect the code does not extract the peer certificate and check the certificate's subject/SAN against the server hostname. So it does not perform hostname verification — this violates the MUST."
-        "Result checking (MUST): When SSL_CTX_set_verify or SSL_set_verify sets SSL_VERIFY_NONE(0), SSL_get_verify_result must be called to check the verification status"
-        "- Findings:\n"
-        "  - The code uses SSL_CTX_set_verify(..., mode, 0) and per-connection SSL_set_verify(..., mode, 0). When mode is 0 the code effectively disables verification."
-        "  - There is no use/import of SSL_get_verify_result in the binary (no symbol and no string usage)"
-        "The code does not call SSL_get_verify_result after SSL_connect to check the verification result even in the branch where verification is enabled. Therefore it does not explicitly check verification status after the handshake — this violates the MUST (no verification result check is done)."
-
-        "More dependencies need to be checked:\n"
-        "- upscli_init receives parameters a1 and a2: a2 is used as the CA path passed to SSL_CTX_load_verify_locations; a1 controls the boolean passed to SSL_CTX_set_verify."
-        "- upscli_tryconnect uses flags (a4 and host_cert) to decide whether to perform SSL at all and whether to require verification. The log lines show that verification is enabled/disabled by configuration flags (and host_cert would influence this)."
-
-        "Results Summary (in table):\n"
-        "| Rule | Status |\n"
-        "|------|--------|\n"
-        "| Hostname verification | Violation |\n"
-        "| Result checking | Violation on condition |\n"
-
-        "Additional observations:\n"
-        "<Any other relevant findings or notes>"
+    # 3. Supervisor Agent - coordinates worker agents
+    supervisor_agent = create_agent(
+        model=model,
+        tools=[call_dataflow_agent, call_ssl_agent],
+        middleware=[handle_tool_errors],
+        system_prompt=(
+            "You are a supervisor agent coordinating SSL/TLS security analysis. "
+            "You manage two specialized worker agents, both of which have direct access to IDA Pro tools.\n\n"
+            "WORKER AGENTS:\n"
+            "1. SSL Security Agent (call_ssl_agent):\n"
+            "   - Has direct IDA MCP access to query the binary\n"
+            "   - Analyzes SSL/TLS implementations against security rules\n"
+            "   - Identifies violations and conditional security behaviors\n"
+            "   - Reports variables/parameters that control security decisions\n\n"
+            "2. Dataflow Analysis Agent (call_dataflow_agent):\n"
+            "   - Has direct IDA MCP access to query the binary\n"
+            "   - Performs forward/backward slicing and inter-procedural analysis\n"
+            "   - Traces variables to their ultimate sources (config, argv, network, etc.)\n"
+            "   - Tracks data propagation through the program\n\n"
+            "ANALYSIS WORKFLOW:\n"
+            "1. Start with call_ssl_agent to analyze SSL/TLS security\n"
+            "   - The SSL agent will autonomously query IDA to gather necessary code\n"
+            "   - It will check each security rule and identify violations\n\n"
+            "2. When SSL agent reports CONDITIONAL security behavior:\n"
+            "   - The agent will highlight which variable/parameter controls security\n"
+            "   - Call call_dataflow_agent to trace that variable to its source\n"
+            "   - Dataflow agent will autonomously query IDA for callers, function details, etc.\n"
+            "   - Determine ultimate source: config file, command-line arg, hardcoded, etc.\n\n"
+            "3. Synthesize findings into comprehensive security report\n\n"
+            "EXAMPLE WORKFLOW:\n"
+            "- You: Call SSL agent to analyze the binary\n"
+            "- SSL agent: 'SSL_set_verify uses parameter verify_flag at 0x12345 (CONDITIONAL)'\n"
+            "- You: Call dataflow agent to trace verify_flag\n"
+            "- Dataflow agent: 'verify_flag comes from config file via read_config() at 0x23456'\n"
+            "- You: Report complete findings with full context\n\n"
+            "KEY POINTS:\n"
+            "- Both workers are self-sufficient and query IDA directly\n"
+            "- Your role is coordination, not being a tool proxy\n"
+            "- Focus on synthesizing worker outputs into clear security assessments\n\n"
+            "OUTPUT REQUIREMENTS:\n"
+            "- Provide a clear, structured security assessment\n"
+            "- For each rule: status (PASS/FAIL/CONDITIONAL) with evidence\n"
+            "- For conditional behavior: include dataflow trace showing the source\n"
+            "- Highlight critical vulnerabilities vs. best practice recommendations"
+        )
     )
 
     # TODO: The LLM should ask for external file access if needed.
@@ -278,29 +385,31 @@ async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat", 
         call_graph_section = (
             "## Available Call Graph Information\n\n"
             "Below is the call graph extracted from the binary showing SSL/TLS function usage and call relationships. "
-            "Use this information to understand the code flow and function relationships. "
-            "You can still use IDA Pro tools for detailed analysis when needed.\n\n"
+            "Use this to guide your analysis.\n\n"
             + call_graph_text + "\n\n"
             "---\n\n"
         )
 
     user_prompt = (
         call_graph_section +
-        # f"There is a network connection established from function {function_name}, "
-        "The binary might uses OpenSSL to establish SSL/TLS connections to servers. "
-        "Based on the call graph and your analysis,"
-        "I need you to analyze it and tell me if the code violates any SSL/TLS security best practices based on the following rules:\n"
-        + rules +
-        "If there are custom implementations of these checks, explain how they work in detail.\n"
-        "If the security is on condition, please analyse the dataflow and explain the conditions.\n"
-        "If the security relies on external information like config file or command-line arguments, please mention it.\n"
-        + oneshot_example
+        "Analyze the SSL/TLS security of this binary. The binary may use OpenSSL or similar libraries "
+        "to establish secure connections.\n\n"
+        "Your task:\n"
+        "1. Use your worker agents to thoroughly analyze the SSL/TLS implementation\n"
+        "2. Check compliance with SSL/TLS security best practices\n"
+        "3. When you find conditional security behavior (e.g., verification depends on a config flag), "
+        "use dataflow analysis to trace where the controlling variable comes from\n"
+        "4. Provide a comprehensive security report with:\n"
+        "   - Connection establishment flow\n"
+        "   - Security rule compliance (PASS/FAIL/CONDITIONAL)\n"
+        "   - Dataflow traces for security-critical variables\n"
+        "Coordinate your worker agents effectively to produce a thorough analysis."
     )
 
-    console.print(Panel.fit("[bold cyan]Starting Agent Execution[/bold cyan]", border_style="cyan"))
+    console.print(Panel.fit("[bold cyan]Starting Supervisor Agent[/bold cyan]", border_style="cyan"))
     console.print()
 
-    async for chunk in agent.astream(
+    async for chunk in supervisor_agent.astream(
         {"messages": [{"role": "user", "content": user_prompt}]},
         stream_mode="values",
         config={"recursion_limit": 100}
@@ -350,14 +459,7 @@ async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat", 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Analyze SSL/TLS connections in binary functions using IDA Pro MCP tools"
-    )
-    # TODO: 删除掉这个参数，让大模型根据call graph自己决定分析哪个函数
-    parser.add_argument(
-        "-f", "--function",
-        type=str,
-        default="sub_4124E3",
-        help="Name of the function to analyze (default: sub_4124E3)"
+        description="Analyze SSL/TLS security using multi-agent system with IDA Pro MCP tools"
     )
     parser.add_argument(
         "-m", "--model",
@@ -373,4 +475,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    asyncio.run(main(args.function, args.model, args.call_graph))
+    asyncio.run(main(args.model, args.call_graph))
