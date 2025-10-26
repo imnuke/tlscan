@@ -51,6 +51,60 @@ def create_markdown(content: str) -> Markdown:
     md.elements["heading_open"] = LeftAlignedHeading
     return md
 
+def format_call_graph(call_graph_data: dict) -> str:
+    """
+    Format call graph data into a readable text representation.
+
+    Args:
+        call_graph_data: Dictionary containing call graph metadata, nodes, and edges
+
+    Returns:
+        Formatted string representation of the call graph
+    """
+    if not call_graph_data:
+        return ""
+
+    output = ["# Call Graph Information\n"]
+
+    # Add metadata
+    metadata = call_graph_data.get("metadata", {})
+    output.append("## Metadata")
+    output.append(f"- Binary: {metadata.get('binary', 'N/A')}")
+    output.append(f"- Total functions: {metadata.get('node_count', 0)}")
+    output.append(f"- Total call relationships: {metadata.get('edge_count', 0)}")
+
+    ssl_patterns = metadata.get('ssl_patterns', [])
+    if ssl_patterns:
+        output.append(f"- SSL/TLS patterns: {', '.join(ssl_patterns)}")
+    output.append("")
+
+    # List all nodes
+    nodes = call_graph_data.get("nodes", [])
+    if nodes:
+        output.append("## Nodes (Functions)")
+        output.append(f"Total: {len(nodes)} functions")
+        output.append("")
+        for node in nodes:
+            name = node.get("name", "")
+            address = node.get("address", "")
+            output.append(f"- {name} ({address})")
+        output.append("")
+
+    # List all edges
+    edges = call_graph_data.get("edges", [])
+    if edges:
+        output.append("## Edges (Call Relationships)")
+        output.append(f"Total: {len(edges)} edges")
+        output.append("")
+        for edge in edges:
+            caller = edge.get("caller", "")
+            callee = edge.get("callee", "")
+            call_site = edge.get("call_site", "")
+            output.append(f"- {caller} → {callee} (at {call_site})")
+        output.append("")
+
+    return "\n".join(output)
+
 @wrap_tool_call
 async def handle_tool_errors(request, handler):
     """Handle tool execution errors gracefully without terminating the workflow."""
@@ -92,14 +146,27 @@ async def handle_tool_errors(request, handler):
             status="error"
         )
 
-async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat"):
+async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat", call_graph_path: str = "call_graph.json"):
     """
     Main function to analyze SSL/TLS connections.
 
     Args:
         function_name: Name of the function to analyze (default: "sub_4124E3")
         model: LLM model to use (default: "deepseek-chat")
+        call_graph_path: Path to call graph JSON file (default: "call_graph.json")
     """
+    # Load call graph if available
+    call_graph_data = None
+    if call_graph_path and os.path.exists(call_graph_path):
+        try:
+            with open(call_graph_path, 'r') as f:
+                call_graph_data = json.load(f)
+            console.print(f"[green]✓[/green] Loaded call graph from [bold]{call_graph_path}[/bold]")
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow]  Failed to load call graph: {e}")
+    elif call_graph_path:
+        console.print(f"[yellow]⚠[/yellow]  Call graph file not found: {call_graph_path}")
+
     connection_type = 'stdio'
     server_script = '/home/peng/Projects/others/ida-pro-mcp/src/ida_pro_mcp/server.py'
     try:
@@ -149,6 +216,10 @@ async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat"):
     )
 
     # TODO: rule: called function but not properly checked the result
+
+    # 具体整理：可能与控制流相关的有哪些？
+    # 哪些函数调用依赖是必须检查的？即谁必须在谁之后调用？
+    # 哪些函数调用的返回结果是必须检查的？应该如何被检查？
 
     rules = (
         "Default verification (RECOMMENDED): Default verification should be performed using SSL_CTX_set_verify or equivalent custom code.\n"
@@ -200,11 +271,28 @@ async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat"):
 
     # TODO: The LLM should ask for external file access if needed.
 
+    # Format call graph if available
+    call_graph_section = ""
+    if call_graph_data:
+        call_graph_text = format_call_graph(call_graph_data)
+        call_graph_section = (
+            "## Available Call Graph Information\n\n"
+            "Below is the call graph extracted from the binary showing SSL/TLS function usage and call relationships. "
+            "Use this information to understand the code flow and function relationships. "
+            "You can still use IDA Pro tools for detailed analysis when needed.\n\n"
+            + call_graph_text + "\n\n"
+            "---\n\n"
+        )
+
     user_prompt = (
-        f"There is a network connection established from function {function_name}, "
+        call_graph_section +
+        # f"There is a network connection established from function {function_name}, "
+        "The binary might uses OpenSSL to establish SSL/TLS connections to servers. "
+        "Based on the call graph and your analysis,"
         "I need you to analyze it and tell me if the code violates any SSL/TLS security best practices based on the following rules:\n"
-        + rules + 
+        + rules +
         "If there are custom implementations of these checks, explain how they work in detail.\n"
+        "If the security is on condition, please analyse the dataflow and explain the conditions.\n"
         "If the security relies on external information like config file or command-line arguments, please mention it.\n"
         + oneshot_example
     )
@@ -215,7 +303,7 @@ async def main(function_name: str = "sub_4124E3", model: str = "deepseek-chat"):
     async for chunk in agent.astream(
         {"messages": [{"role": "user", "content": user_prompt}]},
         stream_mode="values",
-        config={"recursion_limit": 50}
+        config={"recursion_limit": 100}
     ):
         # Check if connection failed - terminate immediately
         if connection_failed:
@@ -264,6 +352,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Analyze SSL/TLS connections in binary functions using IDA Pro MCP tools"
     )
+    # TODO: 删除掉这个参数，让大模型根据call graph自己决定分析哪个函数
     parser.add_argument(
         "-f", "--function",
         type=str,
@@ -276,6 +365,12 @@ if __name__ == "__main__":
         default="deepseek-chat",
         help="LLM model to use (default: deepseek-chat). Examples: openai:gpt-4o, anthropic:claude-sonnet-4-5, deepseek-chat"
     )
+    parser.add_argument(
+        "-g", "--call-graph",
+        type=str,
+        default="call_graph.json",
+        help="Path to call graph JSON file (default: call_graph.json)"
+    )
     args = parser.parse_args()
 
-    asyncio.run(main(args.function, args.model))
+    asyncio.run(main(args.function, args.model, args.call_graph))
