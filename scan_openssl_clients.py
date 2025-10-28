@@ -75,7 +75,13 @@ def is_regular_file(path: str) -> bool:
 
 
 def extract_symbols(path: str) -> Set[str]:
-    """Collect symbol names from .dynsym and .symtab if available."""
+    """Collect imported (undefined) symbol names from .dynsym and .symtab.
+
+    Only returns symbols with st_shndx == 'SHN_UNDEF' (pyelftools returns this
+    as a string, not integer 0). These are external symbols that the binary
+    imports/uses but does not define. This prevents flagging libraries like
+    libssl.so that export OpenSSL functions.
+    """
     names: Set[str] = set()
     try:
         with open(path, "rb") as f:
@@ -85,9 +91,12 @@ def extract_symbols(path: str) -> Set[str]:
                 if not sec:
                     continue
                 for sym in sec.iter_symbols():
-                    nm = sym.name
-                    if nm:
-                        names.add(nm)
+                    # Only include undefined/imported symbols
+                    # Note: pyelftools returns 'SHN_UNDEF' as a string, not integer 0
+                    if sym['st_shndx'] == 'SHN_UNDEF':
+                        nm = sym.name
+                        if nm:
+                            names.add(nm)
     except Exception:
         pass
     return names
@@ -184,15 +193,10 @@ def scan_file(path: str, min_strlen: int) -> Optional[Dict]:
         return None
 
     symbols = extract_symbols(path)
-    strings = extract_strings(path, minlen=min_strlen)
 
-    # token corpus = exact tokens; to keep demo strict, we do exact matches only
-    corpus = set()
-    corpus |= symbols
-    # also include strings that exactly match indicator keys
-    for s in strings:
-        if s in ALL_KEYS:
-            corpus.add(s)
+    # Use only undefined/imported symbols for detection
+    # (String extraction causes false positives for libraries that define these functions)
+    corpus = symbols
 
     hits = match_indicators(corpus)
     level, rationale = score(hits)
@@ -206,7 +210,6 @@ def scan_file(path: str, min_strlen: int) -> Optional[Dict]:
         "rationale": rationale,
         "hits": hits,
         "symbol_sample": sorted(list(symbols & ALL_KEYS))[:10],
-        "string_sample": sorted([s for s in strings if s in ALL_KEYS])[:10],
     }
 
 
