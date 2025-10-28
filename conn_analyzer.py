@@ -12,6 +12,12 @@ from rich.console import Console
 from rich.markdown import Markdown, Heading
 from rich.panel import Panel
 from rich import box
+from firmware_tools import (
+    find_import,
+    find_export,
+    grep,
+    read_file
+)
 
 # multiple agents:
 # - function and variable renaming agent
@@ -105,6 +111,84 @@ def format_call_graph(call_graph_data: dict) -> str:
 
     return "\n".join(output)
 
+async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None) -> str:
+    """
+    Stream an agent's execution and log all intermediate steps.
+
+    Args:
+        agent: The agent to execute
+        messages: List of messages to send to the agent
+        agent_name: Display name of the agent (e.g., "Dataflow Agent")
+        agent_emoji: Emoji to use for this agent (e.g., "🔍")
+        config: Optional config dict for the agent
+
+    Returns:
+        The final AI message content
+    """
+    global connection_failed
+
+    # Print agent header
+    console.print()
+    console.print(Panel.fit(
+        f"[bold cyan]{agent_emoji} {agent_name} Executing[/bold cyan]",
+        border_style="cyan"
+    ))
+    console.print()
+
+    final_content = ""
+    config = config or {"recursion_limit": 100}
+
+    async for chunk in agent.astream(
+        {"messages": messages},
+        stream_mode="values",
+        config=config
+    ):
+        # Check if connection failed - terminate immediately
+        if connection_failed:
+            break
+
+        # Get the last message in the current state
+        if "messages" in chunk and chunk["messages"]:
+            last_message = chunk["messages"][-1]
+
+            # Check if it's an AI message with tool calls
+            if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+                console.print(f"[bold magenta]🔧 {agent_name} TOOL CALLS:[/bold magenta]")
+                for tool_call in last_message.tool_calls:
+                    console.print(f"  • [cyan]{tool_call['name']}[/cyan]")
+                    console.print(f"    [dim]Args: {json.dumps(tool_call['args'], indent=6)}[/dim]")
+                console.print()
+
+            # Check if it's a tool message (result)
+            elif hasattr(last_message, "type") and last_message.type == "tool":
+                # Check if it's an error result
+                if hasattr(last_message, "status") and last_message.status == "error":
+                    console.print(f"[bold yellow]⚠️  {agent_name} TOOL ERROR ({last_message.name}):[/bold yellow]")
+                    console.print(f"  [yellow]{last_message.content}[/yellow]")
+                else:
+                    console.print(f"[bold green]📊 {agent_name} TOOL RESULT ([cyan]{last_message.name}[/cyan]):[/bold green]")
+                    content_preview = last_message.content[:500] if len(last_message.content) > 500 else last_message.content
+                    console.print(f"  [dim]{content_preview}{'...' if len(last_message.content) > 500 else ''}[/dim]")
+                console.print()
+
+            # Check if it's an AI message with content (thinking)
+            elif hasattr(last_message, "content") and last_message.content and hasattr(last_message, "type") and last_message.type == "ai":
+                if last_message.content.strip():
+                    console.print(f"[bold blue]💭 {agent_name} THINKING:[/bold blue]")
+                    # Render markdown content with left-aligned headings
+                    md = create_markdown(last_message.content)
+                    console.print(md)
+                    console.print()
+                    final_content = last_message.content
+
+    console.print(Panel.fit(
+        f"[bold green]✓ {agent_name} Complete[/bold green]",
+        border_style="green"
+    ))
+    console.print()
+
+    return final_content
+
 @wrap_tool_call
 async def handle_tool_errors(request, handler):
     """Handle tool execution errors gracefully without terminating the workflow."""
@@ -170,10 +254,13 @@ async def call_dataflow_agent(request: str, context: str = "") -> str:
         Dataflow analysis results with sources, sinks, and paths
     """
     full_request = f"{request}\n\nContext:\n{context}" if context else request
-    result = await dataflow_agent.ainvoke(
-        {"messages": [{"role": "user", "content": full_request}]}
+    result = await stream_and_log_agent(
+        agent=dataflow_agent,
+        messages=[{"role": "user", "content": full_request}],
+        agent_name="Dataflow Analysis Agent",
+        agent_emoji="🔍"
     )
-    return result["messages"][-1].content
+    return result
 
 @tool
 async def call_ssl_agent(request: str, context: str = "") -> str:
@@ -192,10 +279,13 @@ async def call_ssl_agent(request: str, context: str = "") -> str:
         SSL security analysis with rule violations and conditional behaviors
     """
     full_request = f"{request}\n\nContext:\n{context}" if context else request
-    result = await ssl_analysis_agent.ainvoke(
-        {"messages": [{"role": "user", "content": full_request}]}
+    result = await stream_and_log_agent(
+        agent=ssl_analysis_agent,
+        messages=[{"role": "user", "content": full_request}],
+        agent_name="SSL Security Analysis Agent",
+        agent_emoji="🔒"
     )
-    return result["messages"][-1].content
+    return result
 
 async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.json"):
     """
@@ -329,6 +419,38 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         )
     )
 
+    firmware_traverse_agent = create_agent(
+        model=model,
+        tools=[find_import, find_export, grep, read_file],
+        middleware=[handle_tool_errors],
+        system_prompt=(
+            "You are a firmware analysis expert with direct access to firmware analysis tools. "
+            "Your specialization is identifying and extracting relevant information from firmware binaries.\n\n"
+            "TOOLS AVAILABLE:\n"
+            "You have direct access to the following tools to analyze the firmware binary:\n"
+            "- find_import: Find which binary calls the given function\n"
+            "- find_export: Find which binary defines the given function\n"
+            "- grep: Search for a pattern in a file\n"
+            "- read_file: Read the contents of a file\n\n"
+            "ANALYSIS APPROACH:\n"
+            "1. Use the available tools to search for functions, strings, and other relevant information\n"
+            "2. Analyze the results to extract meaningful insights about the firmware\n"
+            "3. Correlate findings to build a comprehensive understanding of the firmware's behavior\n\n"
+            "OUTPUT FORMAT:\n"
+            "- Provide clear and structured analysis results\n"
+            "- Highlight key findings and their implications\n"
+            "- Include code excerpts with addresses and locations"
+        )
+    )
+
+    vulnerability_result_agent = create_agent(
+        model=model,
+        tools=[],
+        middleware=[handle_tool_errors],
+        system_prompt=(
+        )
+    )
+
     # 3. Supervisor Agent - coordinates worker agents
     supervisor_agent = create_agent(
         model=model,
@@ -390,6 +512,9 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
             "---\n\n"
         )
 
+    # FIXME: The call graph is not being used.
+    # NOTE: Should the supervisor pass call graph to workers?
+    # 没有调用图agent就会到处胡乱搞。
     user_prompt = (
         call_graph_section +
         "Analyze the SSL/TLS security of this binary. The binary may use OpenSSL or similar libraries "
