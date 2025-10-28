@@ -531,56 +531,12 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         "Coordinate your worker agents effectively to produce a thorough analysis."
     )
 
-    console.print(Panel.fit("[bold cyan]Starting Supervisor Agent[/bold cyan]", border_style="cyan"))
-    console.print()
-
-    async for chunk in supervisor_agent.astream(
-        {"messages": [{"role": "user", "content": user_prompt}]},
-        stream_mode="values",
-        config={"recursion_limit": 100}
-    ):
-        # Check if connection failed - terminate immediately
-        if connection_failed:
-            break
-
-        # Get the last message in the current state
-        if "messages" in chunk and chunk["messages"]:
-            last_message = chunk["messages"][-1]
-
-            # Check if it's an AI message with tool calls
-            if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-                console.print("[bold magenta]🔧 TOOL CALLS:[/bold magenta]")
-                for tool_call in last_message.tool_calls:
-                    console.print(f"  • [cyan]{tool_call['name']}[/cyan]")
-                    console.print(f"    [dim]Args: {json.dumps(tool_call['args'], indent=6)}[/dim]")
-                console.print()
-
-            # Check if it's a tool message (result)
-            elif hasattr(last_message, "type") and last_message.type == "tool":
-                # Check if it's an error result
-                if hasattr(last_message, "status") and last_message.status == "error":
-                    console.print(f"[bold yellow]⚠️  TOOL ERROR ({last_message.name}):[/bold yellow]")
-                    console.print(f"  [yellow]{last_message.content}[/yellow]")
-                else:
-                    console.print(f"[bold green]📊 TOOL RESULT ([cyan]{last_message.name}[/cyan]):[/bold green]")
-                    console.print(f"  [dim]{last_message.content[:500]}...[/dim]")  # Show first 500 chars
-                console.print()
-
-            # Check if it's an AI message with content (thinking)
-            elif hasattr(last_message, "content") and last_message.content and hasattr(last_message, "type") and last_message.type == "ai":
-                if last_message.content.strip():
-                    console.print("[bold blue]💭 LLM THINKING:[/bold blue]")
-                    # Render markdown content with left-aligned headings
-                    md = create_markdown(last_message.content)
-                    console.print(md)
-                    console.print()
-
-    console.print()
-    # Show different message based on whether we terminated early
-    if connection_failed:
-        console.print(Panel.fit("[bold red]✗ Agent Execution Terminated[/bold red]", border_style="red"))
-    else:
-        console.print(Panel.fit("[bold green]✓ Agent Execution Complete[/bold green]", border_style="green"))
+    await stream_and_log_agent(
+        agent=supervisor_agent,
+        messages=[{"role": "user", "content": user_prompt}],
+        agent_name="Supervisor Agent",
+        agent_emoji="🎯"
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
