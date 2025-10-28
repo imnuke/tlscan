@@ -233,7 +233,6 @@ async def handle_tool_errors(request, handler):
 # Global agent instances - will be initialized in main()
 supervisor_agent = None
 dataflow_agent = None
-ssl_analysis_agent = None
 
 # Tool wrappers for supervisor to call worker agents
 @tool
@@ -259,31 +258,6 @@ async def call_dataflow_agent(request: str, context: str = "") -> str:
         messages=[{"role": "user", "content": full_request}],
         agent_name="Dataflow Analysis Agent",
         agent_emoji="🔍"
-    )
-    return result
-
-@tool
-async def call_ssl_agent(request: str, context: str = "") -> str:
-    """
-    Analyze SSL/TLS security practices against security rules.
-
-    Use this tool to check if code violates SSL/TLS security best practices,
-    identify conditional security behavior, and flag parameters/config that
-    affect security.
-
-    Args:
-        request: SSL security analysis question
-        context: Relevant SSL-related code/function information
-
-    Returns:
-        SSL security analysis with rule violations and conditional behaviors
-    """
-    full_request = f"{request}\n\nContext:\n{context}" if context else request
-    result = await stream_and_log_agent(
-        agent=ssl_analysis_agent,
-        messages=[{"role": "user", "content": full_request}],
-        agent_name="SSL Security Analysis Agent",
-        agent_emoji="🔒"
     )
     return result
 
@@ -338,7 +312,7 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         tools = []
 
     # Initialize all agents
-    global dataflow_agent, ssl_analysis_agent, supervisor_agent
+    global dataflow_agent, supervisor_agent
 
     # 1. Dataflow Analysis Agent - performs slicing and dataflow analysis
     dataflow_agent = create_agent(
@@ -377,48 +351,6 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         )
     )
 
-    # 2. SSL Security Analysis Agent - checks SSL/TLS security rules
-    ssl_analysis_agent = create_agent(
-        model=model,
-        tools=tools,
-        middleware=[handle_tool_errors],
-        system_prompt=(
-            "You are an SSL/TLS security expert with direct access to IDA Pro MCP tools. "
-            "Your specialization is identifying security vulnerabilities in SSL/TLS implementations.\n\n"
-            "IDA TOOLS AVAILABLE:\n"
-            "You have direct access to all IDA Pro tools to query the binary as needed:\n"
-            "- Get function details, decompilation, disassembly\n"
-            "- Find cross-references (xrefs), callers, and callees\n"
-            "- Search for SSL/TLS functions, strings, and globals\n"
-            "- Analyze structures, variables, and data types\n\n"
-            "SECURITY RULES TO CHECK:\n"
-            "1. Default verification (RECOMMENDED): SSL_CTX_set_verify or custom verification\n"
-            "2. Hostname verification (MUST): X509_check_host or equivalent\n"
-            "3. Result checking (MUST): When SSL_VERIFY_NONE is used, SSL_get_verify_result must be called\n"
-            "4. Certificate expiration (RECOMMENDED): X509_get_notAfter checks\n"
-            "5. Certificate revocation (RECOMMENDED): OCSP or CRL checks\n\n"
-            "ANALYSIS APPROACH:\n"
-            "1. Use IDA tools to search for SSL/TLS functions and understand their usage\n"
-            "2. Decompile relevant functions to analyze SSL/TLS code\n"
-            "3. Check each security rule systematically\n"
-            "4. Identify conditional security behavior (e.g., 'verification enabled only if config flag set')\n"
-            "5. Flag parameters/variables that control security decisions\n"
-            "6. Use xrefs and caller analysis to understand control flow\n"
-            "7. Note custom implementations that might fulfill security requirements\n\n"
-            "CRITICAL: When you find that security behavior depends on runtime values "
-            "(parameters, config flags, globals), explicitly state:\n"
-            "- The variable/parameter name\n"
-            "- Which function/location uses it\n"
-            "- What security decision it controls\n"
-            "This signals the supervisor to request dataflow analysis.\n\n"
-            "OUTPUT FORMAT:\n"
-            "- Rule-by-rule analysis with PASS/FAIL/CONDITIONAL status\n"
-            "- For CONDITIONAL: Describe what condition affects security\n"
-            "- Highlight variables that need dataflow tracing\n"
-            "- Provide code excerpts with addresses and locations"
-        )
-    )
-
     firmware_traverse_agent = create_agent(
         model=model,
         tools=[find_import, find_export, grep, read_file],
@@ -451,84 +383,81 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         )
     )
 
-    # 3. Supervisor Agent - coordinates worker agents
+    # Format call graph for system prompt if available
+    call_graph_context = ""
+    if call_graph_data:
+        call_graph_text = format_call_graph(call_graph_data)
+        call_graph_context = (
+            "\n\nCALL GRAPH CONTEXT:\n"
+            "Below is the call graph extracted from the binary showing SSL/TLS function usage and call relationships. "
+            "Use this to guide your analysis and avoid unnecessary exploration.\n\n"
+            + call_graph_text
+        )
+
+    # 3. Supervisor Agent - performs SSL analysis and coordinates dataflow analysis
     supervisor_agent = create_agent(
         model=model,
-        tools=[call_dataflow_agent, call_ssl_agent],
+        tools=tools + [call_dataflow_agent],  # IDA MCP tools + dataflow delegation
         middleware=[handle_tool_errors],
         system_prompt=(
-            "You are a supervisor agent coordinating SSL/TLS security analysis. "
-            "You manage two specialized worker agents, both of which have direct access to IDA Pro tools.\n\n"
-            "WORKER AGENTS:\n"
-            "1. SSL Security Agent (call_ssl_agent):\n"
-            "   - Has direct IDA MCP access to query the binary\n"
-            "   - Analyzes SSL/TLS implementations against security rules\n"
-            "   - Identifies violations and conditional security behaviors\n"
-            "   - Reports variables/parameters that control security decisions\n\n"
-            "2. Dataflow Analysis Agent (call_dataflow_agent):\n"
-            "   - Has direct IDA MCP access to query the binary\n"
-            "   - Performs forward/backward slicing and inter-procedural analysis\n"
-            "   - Traces variables to their ultimate sources (config, argv, network, etc.)\n"
-            "   - Tracks data propagation through the program\n\n"
+            "You are an SSL/TLS security analyst with direct access to IDA Pro tools and dataflow analysis support.\n\n"
+            "YOUR CAPABILITIES:\n"
+            "1. Direct IDA Pro MCP access for binary analysis:\n"
+            "   - Get function details, decompilation, disassembly\n"
+            "   - Find cross-references (xrefs), callers, and callees\n"
+            "   - Search for SSL/TLS functions, strings, and globals\n"
+            "   - Analyze structures, variables, and data types\n\n"
+            "2. Delegate dataflow analysis to specialized agent:\n"
+            "   - Call call_dataflow_agent to trace variables to their sources\n"
+            "   - Get forward/backward slicing results\n"
+            "   - Track data across function boundaries\n\n"
+            "SSL/TLS SECURITY RULES TO CHECK:\n"
+            "1. Default verification (RECOMMENDED): SSL_CTX_set_verify or custom verification\n"
+            "2. Hostname verification (MUST): X509_check_host or equivalent\n"
+            "3. Result checking (MUST): When SSL_VERIFY_NONE is used, SSL_get_verify_result must be called\n"
+            "4. Certificate expiration (RECOMMENDED): X509_get_notAfter checks\n"
+            "5. Certificate revocation (RECOMMENDED): OCSP or CRL checks\n\n"
             "ANALYSIS WORKFLOW:\n"
-            "1. Start with call_ssl_agent to analyze SSL/TLS security\n"
-            "   - The SSL agent will autonomously query IDA to gather necessary code\n"
-            "   - It will check each security rule and identify violations\n\n"
-            "2. When SSL agent reports CONDITIONAL security behavior:\n"
-            "   - The agent will highlight which variable/parameter controls security\n"
-            "   - Call call_dataflow_agent to trace that variable to its source\n"
-            "   - Dataflow agent will autonomously query IDA for callers, function details, etc.\n"
+            "1. Use IDA tools to search for SSL/TLS functions and analyze their usage\n"
+            "   - Leverage the call graph context below to focus your analysis\n"
+            "   - Decompile relevant functions to examine SSL/TLS code\n"
+            "   - Check each security rule systematically\n\n"
+            "2. Identify conditional security behavior:\n"
+            "   - Flag parameters/variables that control security decisions\n"
+            "   - Note when verification depends on runtime values (config flags, parameters, etc.)\n\n"
+            "3. When you find conditional security:\n"
+            "   - Call call_dataflow_agent to trace the controlling variable to its source\n"
             "   - Determine ultimate source: config file, command-line arg, hardcoded, etc.\n\n"
-            "3. Synthesize findings into comprehensive security report\n\n"
+            "4. Synthesize comprehensive security report:\n"
+            "   - Connection establishment flow\n"
+            "   - Rule-by-rule analysis with PASS/FAIL/CONDITIONAL status\n"
+            "   - For CONDITIONAL: include dataflow trace showing the variable source\n"
+            "   - Highlight critical vulnerabilities vs. best practice recommendations\n\n"
             "EXAMPLE WORKFLOW:\n"
-            "- You: Call SSL agent to analyze the binary\n"
-            "- SSL agent: 'SSL_set_verify uses parameter verify_flag at 0x12345 (CONDITIONAL)'\n"
-            "- You: Call dataflow agent to trace verify_flag\n"
+            "- You: Search for SSL_set_verify usage using IDA tools\n"
+            "- You: Find SSL_set_verify uses parameter 'verify_flag' at 0x12345 (CONDITIONAL)\n"
+            "- You: Call call_dataflow_agent to trace verify_flag\n"
             "- Dataflow agent: 'verify_flag comes from config file via read_config() at 0x23456'\n"
-            "- You: Report complete findings with full context\n\n"
-            "KEY POINTS:\n"
-            "- Both workers are self-sufficient and query IDA directly\n"
-            "- Your role is coordination, not being a tool proxy\n"
-            "- Focus on synthesizing worker outputs into clear security assessments\n\n"
-            "OUTPUT REQUIREMENTS:\n"
-            "- Provide a clear, structured security assessment\n"
-            "- For each rule: status (PASS/FAIL/CONDITIONAL) with evidence\n"
-            "- For conditional behavior: include dataflow trace showing the source\n"
-            "- Highlight critical vulnerabilities vs. best practice recommendations"
+            "- You: Report complete findings with full context"
+            + call_graph_context
         )
     )
 
     # TODO: The LLM should ask for external file access if needed.
 
-    # Format call graph if available
-    call_graph_section = ""
-    if call_graph_data:
-        call_graph_text = format_call_graph(call_graph_data)
-        call_graph_section = (
-            "## Available Call Graph Information\n\n"
-            "Below is the call graph extracted from the binary showing SSL/TLS function usage and call relationships. "
-            "Use this to guide your analysis.\n\n"
-            + call_graph_text + "\n\n"
-            "---\n\n"
-        )
-
-    # FIXME: The call graph is not being used.
-    # NOTE: Should the supervisor pass call graph to workers?
-    # 没有调用图agent就会到处胡乱搞。
+    # Simplified user prompt - call graph is now in system prompt
     user_prompt = (
-        call_graph_section +
         "Analyze the SSL/TLS security of this binary. The binary may use OpenSSL or similar libraries "
         "to establish secure connections.\n\n"
         "Your task:\n"
-        "1. Use your worker agents to thoroughly analyze the SSL/TLS implementation\n"
+        "1. Use IDA tools to analyze the SSL/TLS implementation (leverage the call graph context in your system prompt)\n"
         "2. Check compliance with SSL/TLS security best practices\n"
         "3. When you find conditional security behavior (e.g., verification depends on a config flag), "
-        "use dataflow analysis to trace where the controlling variable comes from\n"
+        "use the dataflow agent to trace where the controlling variable comes from\n"
         "4. Provide a comprehensive security report with:\n"
         "   - Connection establishment flow\n"
         "   - Security rule compliance (PASS/FAIL/CONDITIONAL)\n"
-        "   - Dataflow traces for security-critical variables\n"
-        "Coordinate your worker agents effectively to produce a thorough analysis."
+        "   - Dataflow traces for security-critical variables"
     )
 
     await stream_and_log_agent(
