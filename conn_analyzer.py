@@ -111,6 +111,31 @@ def format_call_graph(call_graph_data: dict) -> str:
 
     return "\n".join(output)
 
+def load_security_rules(library_name: str = "openssl") -> str:
+    """
+    Load SSL/TLS security rules from markdown file.
+
+    Args:
+        library_name: Name of the SSL/TLS library (openssl, curl, libcurl, gnutls, mbedtls, php_curl, wget)
+
+    Returns:
+        Content of the rules file, or empty string if file not found
+    """
+    rule_file = os.path.join("security_rules", f"rule_{library_name}.md")
+
+    if os.path.exists(rule_file):
+        try:
+            with open(rule_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            console.print(f"[green]✓[/green] Loaded security rules from [bold]{rule_file}[/bold]")
+            return content
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow]  Failed to load security rules from {rule_file}: {e}")
+            return ""
+    else:
+        console.print(f"[yellow]⚠[/yellow]  Security rules file not found: {rule_file}")
+        return ""
+
 async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None) -> str:
     """
     Stream an agent's execution and log all intermediate steps.
@@ -289,7 +314,7 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
     )
     return result
 
-async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.json", firmware_path: str = None):
+async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.json", firmware_path: str = None, rules: str = "openssl"):
     """
     Main function to analyze SSL/TLS connections using multi-agent system.
 
@@ -297,7 +322,10 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         model: LLM model to use (default: "deepseek-chat")
         call_graph_path: Path to call graph JSON file (default: "call_graph.json")
         firmware_path: Path to firmware filesystem root (optional, enables firmware agent)
+        rules: SSL/TLS library rules to use (default: "openssl")
     """
+    # Load security rules for the specified library
+    security_rules_content = load_security_rules(rules)
     # Load call graph if available
     call_graph_data = None
     if call_graph_path and os.path.exists(call_graph_path):
@@ -518,18 +546,7 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
             "   - Get forward/backward slicing results\n"
             "   - Track data across function boundaries\n\n"
             + firmware_capability +
-            "SSL/TLS SECURITY RULES TO CHECK:\n"
-            "1. Default verification (RECOMMENDED): SSL_CTX_set_verify or custom verification\n"
-            "2. Hostname verification (MUST): X509_check_host or equivalent\n"
-            # SSL_get_verify_result will also return X509_V_OK if the server doesn't provide a certificate.
-            # So SSL_get_peer_certificate must be checked before calling SSL_get_verify_result.
-            # (as mentioned in the sslint paper.)
-            "3. Checking dependency (MUST): When SSL_VERIFY_NONE is used, SSL_get_verify_result must be called and checked\n"
-            "4. Checking dependency (MUST): Before calling SSL_get_verify_result, SSL_get_peer_certificate must be called and checked to ensure server provides a certificate\n"
-            "5. Certificate expiration (RECOMMENDED): X509_get_notAfter checks\n"
-            "6. Certificate revocation (RECOMMENDED): OCSP or CRL checks\n\n"
-            "7. Strong TLS versions (MUST): TLS 1.2 or higher\n"
-            "8. Secure TLS cipher suites (MUST): Use strong cipher suites (e.g., AES-GCM)\n"
+            (security_rules_content + "\n\n" if security_rules_content else "") +
             "ANALYSIS WORKFLOW:\n"
             "1. Use IDA tools to search for SSL/TLS functions and analyze their usage\n"
             "   - Leverage the call graph context below to focus your analysis\n"
@@ -600,6 +617,13 @@ if __name__ == "__main__":
         default=None,
         help="Path to firmware filesystem root (enables firmware analysis agent)"
     )
+    parser.add_argument(
+        "-r", "--rules",
+        type=str,
+        default="openssl",
+        choices=["openssl", "curl", "libcurl", "gnutls", "mbedtls", "php_curl", "wget"],
+        help="SSL/TLS library rules to use (default: openssl)"
+    )
     args = parser.parse_args()
 
-    asyncio.run(main(args.model, args.call_graph, args.firmware_path))
+    asyncio.run(main(args.model, args.call_graph, args.firmware_path, args.rules))
