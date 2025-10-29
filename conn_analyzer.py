@@ -233,6 +233,7 @@ async def handle_tool_errors(request, handler):
 # Global agent instances - will be initialized in main()
 supervisor_agent = None
 dataflow_agent = None
+firmware_traverse_agent = None
 
 # Tool wrappers for supervisor to call worker agents
 @tool
@@ -261,13 +262,41 @@ async def call_dataflow_agent(request: str, context: str = "") -> str:
     )
     return result
 
-async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.json"):
+@tool
+async def call_firmware_agent(request: str, context: str = "") -> str:
+    """
+    Analyze firmware filesystem: config files, cross-binary relationships, scripts.
+
+    Use this tool to:
+    - Find which binary defines/calls a function (cross-binary analysis)
+    - Read configuration files that might affect SSL/TLS behavior
+    - Search for strings/patterns in firmware files
+    - Analyze startup scripts or shell scripts that configure services
+
+    Args:
+        request: Firmware analysis question (what to find/analyze)
+        context: Relevant context from IDA analysis (function names, addresses, etc.)
+
+    Returns:
+        Analysis results from firmware filesystem exploration
+    """
+    full_request = f"{request}\n\nContext:\n{context}" if context else request
+    result = await stream_and_log_agent(
+        agent=firmware_traverse_agent,
+        messages=[{"role": "user", "content": full_request}],
+        agent_name="Firmware Filesystem Agent",
+        agent_emoji="📁"
+    )
+    return result
+
+async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.json", firmware_path: str = None):
     """
     Main function to analyze SSL/TLS connections using multi-agent system.
 
     Args:
         model: LLM model to use (default: "deepseek-chat")
         call_graph_path: Path to call graph JSON file (default: "call_graph.json")
+        firmware_path: Path to firmware filesystem root (optional, enables firmware agent)
     """
     # Load call graph if available
     call_graph_data = None
@@ -312,7 +341,7 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         tools = []
 
     # Initialize all agents
-    global dataflow_agent, supervisor_agent
+    global dataflow_agent, supervisor_agent, firmware_traverse_agent
 
     # 1. Dataflow Analysis Agent - performs slicing and dataflow analysis
     dataflow_agent = create_agent(
@@ -351,29 +380,64 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         )
     )
 
-    firmware_traverse_agent = create_agent(
-        model=model,
-        tools=[find_import, find_export, grep, read_file],
-        middleware=[handle_tool_errors],
-        system_prompt=(
-            "You are a firmware analysis expert with direct access to firmware analysis tools. "
-            "Your specialization is identifying and extracting relevant information from firmware binaries.\n\n"
-            "TOOLS AVAILABLE:\n"
-            "You have direct access to the following tools to analyze the firmware binary:\n"
-            "- find_import: Find which binary calls the given function\n"
-            "- find_export: Find which binary defines the given function\n"
-            "- grep: Search for a pattern in a file\n"
-            "- read_file: Read the contents of a file\n\n"
-            "ANALYSIS APPROACH:\n"
-            "1. Use the available tools to search for functions, strings, and other relevant information\n"
-            "2. Analyze the results to extract meaningful insights about the firmware\n"
-            "3. Correlate findings to build a comprehensive understanding of the firmware's behavior\n\n"
+    # Conditionally create firmware agent if firmware path provided
+    if firmware_path:
+        console.print(f"[green]✓[/green] Firmware agent enabled (path: [bold]{firmware_path}[/bold])")
+        firmware_traverse_agent = create_agent(
+            model=model,
+            tools=[find_import, find_export, grep, read_file],
+            middleware=[handle_tool_errors],
+            system_prompt=(
+                f"You are a firmware filesystem expert specializing in cross-binary analysis, configuration files, and scripts. "
+                f"Your role is to analyze firmware files at: {firmware_path}\n\n"
+            "PRIMARY USE CASES:\n"
+            "1. Cross-binary analysis: Trace functions across multiple binaries in the firmware\n"
+            "2. Configuration analysis: Find and analyze config files that affect SSL/TLS behavior\n"
+            "3. Script analysis: Examine startup/shell scripts that configure services\n\n"
+            "TOOLS AND THEIR USES:\n"
+            "- find_export(function_name): Find which binary DEFINES a function (implementation location)\n"
+            "  • Use when: Looking for where a function is implemented\n"
+            "  • Example: find_export('SSL_verify_callback') → returns binary that contains this function\n\n"
+            "- find_import(function_name): Find which binary CALLS a function (usage location)\n"
+            "  • Use when: Looking for binaries that use a specific function\n"
+            "  • Example: find_import('SSL_CTX_set_verify') → returns binaries calling this function\n\n"
+            "- grep(pattern, file_path): Search for patterns in files\n"
+            "  • Use when: Searching for config keys, function names, or security-related strings\n"
+            "  • Example: grep('ssl_verify', '/etc/config.conf') → find SSL verification settings\n\n"
+            "- read_file(file_path): Read full contents of a file\n"
+            "  • Use when: Need complete context after finding relevant sections\n"
+            "  • Example: read_file('/etc/ssl.conf') → read entire SSL configuration\n\n"
+            "ANALYSIS WORKFLOW:\n"
+            "1. For cross-binary tracing:\n"
+            "   - Use find_export to locate function implementation\n"
+            "   - Use find_import to find all callers across binaries\n"
+            "   - Map the complete call chain across firmware components\n\n"
+            "2. For configuration analysis:\n"
+            "   - Use grep to search for SSL/TLS-related settings in config files\n"
+            "   - Use read_file to get full context once relevant files are identified\n"
+            "   - Identify default values, conditional settings, and security flags\n\n"
+            "3. For script analysis:\n"
+            "   - Use grep to find scripts that mention SSL/TLS commands or binaries\n"
+            "   - Use read_file to analyze complete script logic\n"
+            "   - Identify runtime configuration, environment variables, command-line args\n\n"
             "OUTPUT FORMAT:\n"
-            "- Provide clear and structured analysis results\n"
-            "- Highlight key findings and their implications\n"
-            "- Include code excerpts with addresses and locations"
+            "- File paths with line numbers (e.g., '/etc/ssl.conf:42')\n"
+            "- Relevant excerpts with surrounding context (3-5 lines)\n"
+            "- Binary relationships: 'binary_A imports SSL_verify from binary_B'\n"
+            "- Security implications: How findings affect SSL/TLS security\n"
+            "- Cross-references: 'Function X defined in libssl.so, called by httpd and ftpd'\n\n"
+            "EXAMPLE SCENARIOS:\n"
+            "- Q: 'Is SSL_verify_callback implemented in another binary?'\n"
+            "  A: Use find_export('SSL_verify_callback') to locate implementation\n\n"
+            "- Q: 'Which config file controls SSL verification behavior?'\n"
+            "  A: Use grep('ssl_verify', '/etc/*') then read_file on matches\n\n"
+            "- Q: 'Does any startup script disable SSL verification?'\n"
+            "  A: Use grep('SSL_VERIFY_NONE|--no-verify', '/etc/init.d/*') and analyze results"
+            )
         )
-    )
+    else:
+        console.print(f"[dim]ℹ[/dim]  Firmware agent disabled (use --firmware-path to enable)")
+        firmware_traverse_agent = None
 
     vulnerability_result_agent = create_agent(
         model=model,
@@ -395,12 +459,54 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         )
 
     # 3. Supervisor Agent - performs SSL analysis and coordinates dataflow analysis
+    # Build supervisor tools list conditionally
+    supervisor_tools = tools + [call_dataflow_agent]
+    if firmware_traverse_agent is not None:
+        supervisor_tools.append(call_firmware_agent)
+
+    # Build firmware-related prompt sections conditionally
+    firmware_capability = ""
+    firmware_workflow = ""
+    firmware_dataflow_note = ""
+    firmware_examples = ""
+
+    if firmware_traverse_agent is not None:
+        firmware_capability = (
+            "3. Delegate firmware filesystem analysis to specialized agent:\n"
+            "   - Call call_firmware_agent for cross-binary function tracing\n"
+            "   - Analyze configuration files that affect SSL/TLS behavior\n"
+            "   - Examine startup scripts that configure services\n"
+            "   - Find which binaries import/export SSL/TLS functions\n\n"
+        )
+        firmware_workflow = (
+            "2. When functions might be in other binaries:\n"
+            "   - Call call_firmware_agent to find cross-binary dependencies\n"
+            "   - Identify which binaries implement/call SSL/TLS functions\n"
+            "   - Example: Custom SSL_verify_callback might be in a separate library\n\n"
+        )
+        firmware_dataflow_note = "\n   - If source appears to be external (config file, script), call call_firmware_agent"
+        firmware_examples = (
+            "Example 1 - Conditional security with config file:\n"
+            "- You: Search for SSL_set_verify usage using IDA tools\n"
+            "- You: Find SSL_set_verify uses parameter 'verify_flag' at 0x12345 (CONDITIONAL)\n"
+            "- You: Call call_dataflow_agent to trace verify_flag\n"
+            "- Dataflow agent: 'verify_flag comes from read_config() at 0x23456'\n"
+            "- You: Call call_firmware_agent to find and analyze config file\n"
+            "- Firmware agent: 'Config at /etc/ssl.conf sets verify_flag=0 (disabled)'\n"
+            "- You: Report complete findings with config file context\n\n"
+            "Example 2 - Cross-binary SSL implementation:\n"
+            "- You: Analyze SSL_connect but can't find SSL_verify_callback in current binary\n"
+            "- You: Call call_firmware_agent to find SSL_verify_callback implementation\n"
+            "- Firmware agent: 'SSL_verify_callback defined in libcustom_ssl.so'\n"
+            "- You: Report cross-binary architecture and its security implications\n\n"
+        )
+
     supervisor_agent = create_agent(
         model=model,
-        tools=tools + [call_dataflow_agent],  # IDA MCP tools + dataflow delegation
+        tools=supervisor_tools,
         middleware=[handle_tool_errors],
         system_prompt=(
-            "You are an SSL/TLS security analyst with direct access to IDA Pro tools and dataflow analysis support.\n\n"
+            "You are an SSL/TLS security analyst with direct access to IDA Pro tools and specialized worker agents.\n\n"
             "YOUR CAPABILITIES:\n"
             "1. Direct IDA Pro MCP access for binary analysis:\n"
             "   - Get function details, decompilation, disassembly\n"
@@ -411,34 +517,39 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
             "   - Call call_dataflow_agent to trace variables to their sources\n"
             "   - Get forward/backward slicing results\n"
             "   - Track data across function boundaries\n\n"
+            + firmware_capability +
             "SSL/TLS SECURITY RULES TO CHECK:\n"
             "1. Default verification (RECOMMENDED): SSL_CTX_set_verify or custom verification\n"
             "2. Hostname verification (MUST): X509_check_host or equivalent\n"
-            "3. Result checking (MUST): When SSL_VERIFY_NONE is used, SSL_get_verify_result must be called\n"
-            "4. Certificate expiration (RECOMMENDED): X509_get_notAfter checks\n"
-            "5. Certificate revocation (RECOMMENDED): OCSP or CRL checks\n\n"
+            # SSL_get_verify_result will also return X509_V_OK if the server doesn't provide a certificate.
+            # So SSL_get_peer_certificate must be checked before calling SSL_get_verify_result.
+            # (as mentioned in the sslint paper.)
+            "3. Checking dependency (MUST): When SSL_VERIFY_NONE is used, SSL_get_verify_result must be called and checked\n"
+            "4. Checking dependency (MUST): Before calling SSL_get_verify_result, SSL_get_peer_certificate must be called and checked to ensure server provides a certificate\n"
+            "5. Certificate expiration (RECOMMENDED): X509_get_notAfter checks\n"
+            "6. Certificate revocation (RECOMMENDED): OCSP or CRL checks\n\n"
+            "7. Strong TLS versions (MUST): TLS 1.2 or higher\n"
+            "8. Secure TLS cipher suites (MUST): Use strong cipher suites (e.g., AES-GCM)\n"
             "ANALYSIS WORKFLOW:\n"
             "1. Use IDA tools to search for SSL/TLS functions and analyze their usage\n"
             "   - Leverage the call graph context below to focus your analysis\n"
             "   - Decompile relevant functions to examine SSL/TLS code\n"
             "   - Check each security rule systematically\n\n"
-            "2. Identify conditional security behavior:\n"
+            + firmware_workflow +
+            ("2" if not firmware_workflow else "3") + ". Identify conditional security behavior:\n"
             "   - Flag parameters/variables that control security decisions\n"
             "   - Note when verification depends on runtime values (config flags, parameters, etc.)\n\n"
-            "3. When you find conditional security:\n"
-            "   - Call call_dataflow_agent to trace the controlling variable to its source\n"
+            + ("3" if not firmware_workflow else "4") + ". When you find conditional security:\n"
+            "   - Call call_dataflow_agent to trace the controlling variable to its source"
+            + firmware_dataflow_note + "\n"
             "   - Determine ultimate source: config file, command-line arg, hardcoded, etc.\n\n"
-            "4. Synthesize comprehensive security report:\n"
-            "   - Connection establishment flow\n"
+            + ("4" if not firmware_workflow else "5") + ". Synthesize comprehensive security report:\n"
+            "   - Connection establishment flow" + (" (including cross-binary calls)" if firmware_workflow else "") + "\n"
             "   - Rule-by-rule analysis with PASS/FAIL/CONDITIONAL status\n"
             "   - For CONDITIONAL: include dataflow trace showing the variable source\n"
             "   - Highlight critical vulnerabilities vs. best practice recommendations\n\n"
-            "EXAMPLE WORKFLOW:\n"
-            "- You: Search for SSL_set_verify usage using IDA tools\n"
-            "- You: Find SSL_set_verify uses parameter 'verify_flag' at 0x12345 (CONDITIONAL)\n"
-            "- You: Call call_dataflow_agent to trace verify_flag\n"
-            "- Dataflow agent: 'verify_flag comes from config file via read_config() at 0x23456'\n"
-            "- You: Report complete findings with full context"
+            + ("EXAMPLE WORKFLOW:\n" if not firmware_examples else "EXAMPLE WORKFLOWS:\n")
+            + firmware_examples
             + call_graph_context
         )
     )
@@ -483,6 +594,12 @@ if __name__ == "__main__":
         default="call_graph.json",
         help="Path to call graph JSON file (default: call_graph.json)"
     )
+    parser.add_argument(
+        "-f", "--firmware-path",
+        type=str,
+        default=None,
+        help="Path to firmware filesystem root (enables firmware analysis agent)"
+    )
     args = parser.parse_args()
 
-    asyncio.run(main(args.model, args.call_graph))
+    asyncio.run(main(args.model, args.call_graph, args.firmware_path))
