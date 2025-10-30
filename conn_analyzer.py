@@ -415,13 +415,13 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
     )
     return result
 
-def generate_call_graph_for_binary(binary_path: str, output_json_path: str = "call_graph.json", enable_ida_msg: bool = False) -> dict:
+def generate_call_graph_for_binary(binary_path: str, output_json_path: str = "temp_files/call_graph.json", enable_ida_msg: bool = False) -> dict:
     """
     Generate call graph for SSL/TLS functions in the binary.
 
     Args:
         binary_path: Path to the binary file to analyze
-        output_json_path: Path to output JSON file (default: "call_graph.json")
+        output_json_path: Path to output JSON file (default: "temp_files/call_graph.json")
         enable_ida_msg: Enable IDA console messages (default: False)
 
     Returns:
