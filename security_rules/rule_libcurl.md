@@ -1,6 +1,30 @@
 # libcurl SSL/TLS Security Rules
 
-## 1. Certificate Chain Checking
+## 1. SSL/TLS Usage Detection
+**Priority**: MUST
+**Description**: Verify that HTTPS/SSL is actually being used, not just available. Detect conditional usage or plaintext fallbacks.
+
+**Implementation**:
+- Check URL scheme: must be "https://" not "http://"
+- Verify `curl_easy_setopt()` is actually called (not just declared)
+- Look for protocol downgrades or fallbacks to HTTP
+- Conditional patterns: SSL usage based on config/env variable
+- Check `CURLOPT_URL` value or `curl_easy_setopt()` URL parameter
+
+**Detection Patterns**:
+- URL patterns: presence of "https://" in URL strings
+- Conditional protocol: `url = (use_ssl ? "https" : "http") + "://..."`
+- Port-based: different handling for port 443 vs 80
+- Config/env checks: `if (config.ssl_enabled)` before setting https URL
+- Functions: Look for `curl_easy_init()` followed by actual `curl_easy_perform()`
+
+**Vulnerability Indicators**:
+- Hardcoded "http://" URLs for sensitive operations
+- Protocol fallback on CURLE_SSL_* errors
+- Conditional SSL based on user-controllable input
+- Default to plaintext with optional SSL upgrade
+
+## 2. Certificate Chain Checking
 **Priority**: MUST
 **Description**: Verify the server's certificate chain against trusted CA certificates
 
@@ -14,7 +38,7 @@
 - Options: `CURLOPT_SSL_VERIFYPEER`, `CURLOPT_CAINFO`, `CURLOPT_CAPATH`
 - Vulnerability: `curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L)`
 
-## 2. Hostname Verification
+## 3. Hostname Verification
 **Priority**: MUST
 **Description**: Verify that the certificate matches the hostname being connected to
 
@@ -27,7 +51,7 @@
 - Options: `CURLOPT_SSL_VERIFYHOST`
 - Vulnerability: `curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L)` or `1L`
 
-## 3. Protocol Version
+## 4. Protocol Version
 **Priority**: MUST
 **Description**: Enforce TLS 1.2 or higher, disable older insecure protocols
 
@@ -41,7 +65,7 @@
 - Constants: `CURL_SSLVERSION_TLSv1_2`, `CURL_SSLVERSION_TLSv1_3`, `CURL_SSLVERSION_MAX_*`
 - Vulnerability: Not setting minimum TLS version or allowing SSLv2/SSLv3/TLS1.0/TLS1.1
 
-## 4. Cipher Suite Selection
+## 5. Cipher Suite Selection
 **Priority**: RECOMMENDED
 **Description**: Restrict cipher suites to strong algorithms
 
@@ -54,7 +78,7 @@
 - Options: `CURLOPT_SSL_CIPHER_LIST`
 - Vulnerability: Not restricting cipher suites or allowing weak ciphers
 
-## 5. Certificate Pinning
+## 6. Certificate Pinning
 **Priority**: OPTIONAL (HIGH SECURITY)
 **Description**: Pin specific certificates or public keys
 
@@ -67,7 +91,7 @@
 - Options: `CURLOPT_PINNEDPUBLICKEY`
 - Implementation: Presence of public key hashes or pinned certificate files
 
-## 6. Certificate Revocation
+## 7. Certificate Revocation
 **Priority**: RECOMMENDED
 **Description**: Check certificate revocation status
 
@@ -80,7 +104,7 @@
 - Options: `CURLOPT_SSL_OPTIONS`
 - Constants: `CURLSSLOPT_REVOKE_BEST_EFFORT`
 
-## 7. SSL/TLS Backend Configuration
+## 8. SSL/TLS Backend Configuration
 **Priority**: INFORMATIONAL
 **Description**: Be aware of which SSL/TLS library libcurl is compiled against
 

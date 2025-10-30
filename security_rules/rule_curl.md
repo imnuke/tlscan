@@ -1,6 +1,28 @@
 # cURL Command-Line Tool SSL/TLS Security Rules
 
-## 1. Certificate Chain Checking
+## 1. SSL/TLS Usage Detection
+**Priority**: MUST
+**Description**: Verify that HTTPS is actually being used in commands/scripts.
+
+**Implementation**:
+- Check URL scheme in commands: "https://" vs "http://"
+- Look for `--proto` or `--proto-redir` that might allow HTTP downgrades
+- Check scripts for conditional curl invocation with different protocols
+- Verify no HTTP fallback in error handling
+
+**Detection Patterns**:
+- Command patterns: `curl https://` vs `curl http://`
+- Conditional URLs in shell scripts: `curl "$PROTOCOL://example.com"`
+- Protocol restrictions: `--proto =https` (forces HTTPS only)
+- Flags: `--proto`, `--proto-redir`, `--proto-default`
+
+**Vulnerability Indicators**:
+- Hardcoded HTTP URLs for sensitive operations
+- Scripts that construct URLs conditionally: `${USE_SSL:+https}://`
+- Missing `--proto =https` when handling sensitive data
+- HTTP fallback after SSL/TLS errors
+
+## 2. Certificate Chain Checking
 **Priority**: MUST
 **Description**: Verify the server's certificate chain against trusted CA certificates
 
@@ -13,7 +35,7 @@
 - Flags: `--cacert`, `--capath`
 - Vulnerability: presence of `--insecure` or `-k` flag in command-line or scripts
 
-## 2. Hostname Verification
+## 3. Hostname Verification
 **Priority**: MUST
 **Description**: Verify that the certificate matches the hostname
 
@@ -24,7 +46,7 @@
 **Detection Patterns**:
 - Vulnerability: presence of `--insecure` or `-k` flag
 
-## 3. Protocol Version
+## 4. Protocol Version
 **Priority**: MUST
 **Description**: Enforce secure TLS versions
 
@@ -38,7 +60,7 @@
 - Flags: `--tlsv1.2`, `--tlsv1.3`, `--tls-max`, `--ssl`, `--ssl-reqd`
 - Vulnerability: Not specifying minimum TLS version or using insecure versions
 
-## 4. Certificate Pinning
+## 5. Certificate Pinning
 **Priority**: OPTIONAL (HIGH SECURITY)
 **Description**: Pin specific public keys
 
@@ -50,7 +72,7 @@
 - Flags: `--pinnedpubkey`
 - Implementation: Public key hashes in command-line or config
 
-## 5. Certificate Revocation
+## 6. Certificate Revocation
 **Priority**: RECOMMENDED
 **Description**: Check certificate revocation status
 
@@ -62,7 +84,7 @@
 - Flags: `--ssl-no-revoke`
 - Vulnerability: Using `--ssl-no-revoke` flag
 
-## 6. Cipher Suite Selection
+## 7. Cipher Suite Selection
 **Priority**: RECOMMENDED
 **Description**: Restrict cipher suites
 
@@ -74,7 +96,7 @@
 - Flags: `--ciphers`
 - Vulnerability: Not restricting ciphers or allowing weak ciphers
 
-## 7. Certificate File Formats
+## 8. Certificate File Formats
 **Priority**: INFORMATIONAL
 **Description**: Specify certificate file formats if needed
 

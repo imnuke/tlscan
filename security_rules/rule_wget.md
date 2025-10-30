@@ -1,6 +1,28 @@
 # wget Command-Line Tool SSL/TLS Security Rules
 
-## 1. Certificate Chain Checking
+## 1. SSL/TLS Usage Detection
+**Priority**: MUST
+**Description**: Verify that HTTPS is actually being used in commands/scripts.
+
+**Implementation**:
+- Check URL scheme: "https://" vs "http://"
+- Look for `--https-only` flag (enforces HTTPS-only mode)
+- Check scripts for conditional URL construction
+- Verify no HTTP fallback paths
+
+**Detection Patterns**:
+- Command patterns: `wget https://` vs `wget http://`
+- Enforcement flag: `--https-only` presence
+- Conditional URLs: shell variable substitution affecting protocol
+- Config files: check `https_only = on` in wgetrc
+
+**Vulnerability Indicators**:
+- Hardcoded HTTP URLs for sensitive operations
+- Missing `--https-only` flag
+- Scripts with protocol fallback logic
+- Config files with `https_only = off`
+
+## 2. Certificate Chain Checking
 **Priority**: MUST
 **Description**: Verify the server's certificate chain
 
@@ -14,7 +36,7 @@
 - Flags: `--ca-certificate`, `--ca-directory`
 - Vulnerability: presence of `--no-check-certificate` in command-line, scripts, or wgetrc config
 
-## 2. Hostname Verification
+## 3. Hostname Verification
 **Priority**: MUST
 **Description**: Verify certificate matches hostname
 
@@ -25,7 +47,7 @@
 **Detection Patterns**:
 - Vulnerability: presence of `--no-check-certificate`
 
-## 3. Protocol Version
+## 4. Protocol Version
 **Priority**: MUST
 **Description**: Enforce secure TLS/SSL versions
 
@@ -39,7 +61,7 @@
 - Flags: `--secure-protocol`
 - Vulnerability: Not specifying minimum protocol or using insecure versions
 
-## 4. HTTPS Enforcement
+## 5. HTTPS Enforcement
 **Priority**: RECOMMENDED
 **Description**: Ensure HTTPS is used and enforce secure connections
 
@@ -51,7 +73,7 @@
 - Flags: `--https-only`
 - Vulnerability: Not enforcing HTTPS for sensitive operations
 
-## 5. Certificate File Formats
+## 6. Certificate File Formats
 **Priority**: INFORMATIONAL
 **Description**: Specify certificate file formats if needed
 
@@ -64,7 +86,7 @@
 **Detection Patterns**:
 - Flags: `--certificate`, `--certificate-type`, `--private-key`
 
-## 6. Configuration Files
+## 7. Configuration Files
 **Priority**: RECOMMENDED
 **Description**: Check wget configuration files for insecure settings
 
@@ -77,7 +99,7 @@
 - Config files: check for `check_certificate = off` or `secure_protocol = SSLv3`
 - Vulnerability: Insecure settings in wgetrc files
 
-## 7. Post-Processing and Security
+## 8. Post-Processing and Security
 **Priority**: INFORMATIONAL
 **Description**: Secure handling of downloaded content
 

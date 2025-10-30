@@ -1,6 +1,28 @@
 # mbedTLS SSL/TLS Security Rules
 
-## 1. Certificate Chain Checking
+## 1. SSL/TLS Usage Detection
+**Priority**: MUST
+**Description**: Verify that mbedTLS is actually being used for connections, not just linked.
+
+**Implementation**:
+- Check for `mbedtls_ssl_setup()` and `mbedtls_ssl_handshake()` calls
+- Verify SSL context is configured and handshake is performed
+- Look for conditional TLS setup based on runtime config
+- Check for plaintext fallback paths
+
+**Detection Patterns**:
+- Functions: `mbedtls_ssl_setup`, `mbedtls_ssl_handshake`, `mbedtls_ssl_write`, `mbedtls_ssl_read`
+- Initialization: `mbedtls_ssl_config_init` followed by actual usage
+- Conditional patterns: TLS setup inside conditional branches
+- Config-based: SSL enabled via configuration flags
+
+**Vulnerability Indicators**:
+- mbedTLS functions linked but never called
+- Plain socket operations without mbedtls wrappers
+- Conditional SSL that defaults to off
+- Error handling that falls back to plaintext
+
+## 2. Certificate Chain Checking
 **Priority**: MUST
 **Description**: Verify the server's certificate chain
 
@@ -15,7 +37,7 @@
 - Constants: `MBEDTLS_SSL_VERIFY_REQUIRED`, `MBEDTLS_SSL_VERIFY_OPTIONAL`, `MBEDTLS_SSL_VERIFY_NONE`
 - Vulnerability: Using `MBEDTLS_SSL_VERIFY_NONE` or not setting verification callback
 
-## 2. Hostname Verification
+## 3. Hostname Verification
 **Priority**: MUST
 **Description**: Verify certificate matches hostname
 
@@ -28,7 +50,7 @@
 - Functions: `mbedtls_ssl_set_hostname`, `mbedtls_x509_crt_verify_with_profile`
 - Vulnerability: Not calling `mbedtls_ssl_set_hostname`
 
-## 3. Protocol Version
+## 4. Protocol Version
 **Priority**: MUST
 **Description**: Enforce secure TLS versions
 
@@ -43,7 +65,7 @@
 - Constants: `MBEDTLS_SSL_MAJOR_VERSION_3`, `MBEDTLS_SSL_MINOR_VERSION_*`
 - Vulnerability: Not setting minimum version or allowing TLS 1.0/1.1
 
-## 4. Cipher Suite Selection
+## 5. Cipher Suite Selection
 **Priority**: MUST
 **Description**: Use strong cipher suites
 
@@ -57,7 +79,7 @@
 - Constants: `MBEDTLS_TLS_*` cipher suite macros
 - Vulnerability: Not restricting cipher suites or allowing weak ciphers
 
-## 5. Certificate Revocation
+## 6. Certificate Revocation
 **Priority**: RECOMMENDED
 **Description**: Check certificate revocation
 
@@ -70,7 +92,7 @@
 - Functions: `mbedtls_x509_crl_parse`, `mbedtls_x509_crl_parse_file`
 - Vulnerability: Missing CRL checks
 
-## 6. Certificate Pinning
+## 7. Certificate Pinning
 **Priority**: OPTIONAL (HIGH SECURITY)
 **Description**: Pin specific certificates or public keys
 
@@ -83,7 +105,7 @@
 - Functions: `mbedtls_pk_write_pubkey_der`, `mbedtls_md()` for hashing
 - Implementation: Pin validation in custom verification callback
 
-## 7. Entropy and Random Number Generation
+## 8. Entropy and Random Number Generation
 **Priority**: MUST
 **Description**: Ensure proper RNG initialization for mbedTLS (embedded systems)
 

@@ -1,6 +1,28 @@
 # GnuTLS SSL/TLS Security Rules
 
-## 1. Certificate Chain Checking
+## 1. SSL/TLS Usage Detection
+**Priority**: MUST
+**Description**: Verify that GnuTLS is actually being used for connections, not just linked.
+
+**Implementation**:
+- Check for `gnutls_init()` and `gnutls_handshake()` calls in connection path
+- Verify TLS session is established (not using plain `connect()` + `send()`/`recv()`)
+- Look for conditional TLS initialization based on config/flags
+- Check for plaintext fallback on handshake failures
+
+**Detection Patterns**:
+- Functions: `gnutls_init`, `gnutls_handshake`, `gnutls_record_send`, `gnutls_record_recv`
+- Conditional patterns: `if (use_tls)` before gnutls_init()
+- Port-based: different code paths for different ports
+- Protocol-based: checking URL scheme before TLS setup
+
+**Vulnerability Indicators**:
+- GnuTLS functions exist but never reached in dataflow
+- Plain socket operations without gnutls wrappers
+- Conditional TLS that defaults to disabled
+- Plaintext fallback on error
+
+## 2. Certificate Chain Checking
 **Priority**: MUST
 **Description**: Verify the server's certificate chain
 
@@ -15,7 +37,7 @@
 - Constants: `GNUTLS_CERT_INVALID`, `GNUTLS_CERT_SIGNER_NOT_FOUND`, `GNUTLS_CERT_EXPIRED`
 - Vulnerability: Not calling verification functions or ignoring return values
 
-## 2. Hostname Verification
+## 3. Hostname Verification
 **Priority**: MUST
 **Description**: Verify certificate matches hostname
 
@@ -29,7 +51,7 @@
 - Constants: `GNUTLS_NAME_DNS`
 - Vulnerability: Not setting server name or not verifying hostname
 
-## 3. Protocol Version and Cipher Selection
+## 4. Protocol Version and Cipher Selection
 **Priority**: MUST
 **Description**: Enforce secure protocol versions and cipher suites
 
@@ -44,7 +66,7 @@
 - Priority strings: `NORMAL`, `SECURE128`, `SECURE192`, `SECURE256`, `VERS-TLS1.2`, `VERS-TLS1.3`
 - Vulnerability: Using `NORMAL` without disabling old protocols, or custom weak priority strings
 
-## 4. Certificate Revocation
+## 5. Certificate Revocation
 **Priority**: RECOMMENDED
 **Description**: Check certificate revocation status
 
@@ -57,7 +79,7 @@
 - Functions: `gnutls_ocsp_status_request_enable_client`, `gnutls_ocsp_status_request_get`, `gnutls_certificate_set_x509_crl_file`
 - Vulnerability: Missing revocation checks
 
-## 5. Certificate Pinning
+## 6. Certificate Pinning
 **Priority**: OPTIONAL (HIGH SECURITY)
 **Description**: Pin specific certificates or public keys
 
@@ -70,7 +92,7 @@
 - Functions: `gnutls_certificate_get_peers`, `gnutls_x509_crt_get_fingerprint`, `gnutls_certificate_set_verify_function`
 - Implementation: Hardcoded fingerprints or pin validation code
 
-## 6. Session Resumption Security
+## 7. Session Resumption Security
 **Priority**: RECOMMENDED
 **Description**: Secure session resumption mechanisms
 
