@@ -461,8 +461,8 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             server_process.terminate()
             server_process.wait()
         console.print(f"[bold red]✗[/bold red] Failed to connect to MCP server: {e}")
-        console.print("[yellow]Using fallback tools instead...[/yellow]")
-        tools = []
+        console.print("[bold red]✗[/bold red] Cannot continue without MCP tools. Exiting.")
+        raise  # Re-raise exception to terminate
 
     # Initialize all agents
     global dataflow_agent, supervisor_agent, firmware_traverse_agent
