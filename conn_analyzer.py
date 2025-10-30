@@ -714,6 +714,7 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
 
     # Build firmware-related prompt sections conditionally
     firmware_capability = ""
+    firmware_trigger_section = ""
     firmware_workflow = ""
     firmware_dataflow_note = ""
     firmware_examples = ""
@@ -726,13 +727,35 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             "   - Examine startup scripts that configure services\n"
             "   - Find which binaries import/export SSL/TLS functions\n\n"
         )
+        firmware_trigger_section = (
+            "WHEN TO USE FIRMWARE AGENT (call_firmware_agent):\n"
+            "You MUST call call_firmware_agent in these scenarios:\n"
+            "1. Dataflow ends at FILE I/O functions:\n"
+            "   - Functions like: fopen(), open(), read(), fread(), read_config(), parse_config(), load_config()\n"
+            "   - Action: Use firmware agent to locate the file path and read its contents\n"
+            "   - Example: 'verify_flag comes from read_config(\"/etc/ssl.conf\")' → call firmware agent to read /etc/ssl.conf\n\n"
+            "2. Dataflow ends at ENVIRONMENT access:\n"
+            "   - Functions like: getenv(), environ, secure_getenv()\n"
+            "   - Action: Use firmware agent to search scripts/configs that set these env vars\n"
+            "   - Example: 'verify_mode = getenv(\"SSL_VERIFY\")' → find where SSL_VERIFY is set\n\n"
+            "3. CROSS-BINARY dependencies:\n"
+            "   - Cannot find function definition in current binary\n"
+            "   - Action: Use firmware agent to search which binary implements the function\n"
+            "   - Example: 'SSL_verify_callback not found in binary' → find in other .so files\n\n"
+            "4. DATA from external sources:\n"
+            "   - Configuration files, startup scripts, command-line parsing\n"
+            "   - Action: Use firmware agent to analyze these external sources\n\n"
+        )
         firmware_workflow = (
             "2. When functions might be in other binaries:\n"
             "   - Call call_firmware_agent to find cross-binary dependencies\n"
             "   - Identify which binaries implement/call SSL/TLS functions\n"
             "   - Example: Custom SSL_verify_callback might be in a separate library\n\n"
         )
-        firmware_dataflow_note = "\n   - If source appears to be external (config file, script), call call_firmware_agent"
+        firmware_dataflow_note = (
+            "\n   - **IMPORTANT**: If dataflow traces to file I/O functions (fopen, read, open, read_config, parse_config, etc.) "
+            "or environment access (getenv, environ), you MUST call call_firmware_agent to locate and analyze the external file/config"
+        )
         firmware_examples = (
             "Example 1 - Conditional security with config file:\n"
             "- You: Search for SSL_set_verify usage using IDA tools\n"
@@ -766,6 +789,7 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             "   - Get forward/backward slicing results\n"
             "   - Track data across function boundaries\n\n"
             + firmware_capability +
+            firmware_trigger_section +
             (security_rules_content + "\n\n" if security_rules_content else "") +
             "ANALYSIS WORKFLOW:\n"
             "1. Use IDA tools to search for SSL/TLS functions and analyze their usage\n"
@@ -793,19 +817,31 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
 
     # TODO: The LLM should ask for external file access if needed.
 
-    # Simplified user prompt - call graph is now in system prompt
+    # Build user prompt conditionally based on firmware agent availability
+    dataflow_instruction = (
+        "3. When you find conditional security behavior (e.g., verification depends on a config flag), "
+        "use the dataflow agent to trace where the controlling variable comes from"
+    )
+
+    if firmware_traverse_agent is not None:
+        dataflow_instruction += (
+            "\n   **CRITICAL**: If dataflow traces to file I/O (fopen, read_config, etc.) or environment access (getenv), "
+            "you MUST use call_firmware_agent to find and analyze the configuration file or script. "
+            "Do not skip this step - config file analysis is essential for determining actual security behavior."
+        )
+
     user_prompt = (
         "Analyze the SSL/TLS security of this binary. The binary may use OpenSSL or similar libraries "
         "to establish secure connections.\n\n"
         "Your task:\n"
         "1. Use IDA tools to analyze the SSL/TLS implementation (leverage the call graph context in your system prompt)\n"
         "2. Check compliance with SSL/TLS security best practices\n"
-        "3. When you find conditional security behavior (e.g., verification depends on a config flag), "
-        "use the dataflow agent to trace where the controlling variable comes from\n"
+        + dataflow_instruction + "\n"
         "4. Provide a comprehensive security report with:\n"
         "   - Connection establishment flow\n"
         "   - Security rule compliance (PASS/FAIL/CONDITIONAL)\n"
         "   - Dataflow traces for security-critical variables"
+        + ("\n   - Configuration file analysis results (if applicable)" if firmware_traverse_agent is not None else "")
     )
 
     try:
