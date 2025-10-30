@@ -3,6 +3,9 @@ import sys
 import json
 import asyncio
 import argparse
+import subprocess
+import time
+import requests
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_tool_call
@@ -135,6 +138,90 @@ def load_security_rules(library_name: str = "openssl") -> str:
     else:
         console.print(f"[yellow]⚠[/yellow]  Security rules file not found: {rule_file}")
         return ""
+
+def start_headless_ida_server(binary_path: str, host: str = "localhost", port: int = 8745) -> subprocess.Popen:
+    """
+    Start headless IDA server process.
+
+    Args:
+        binary_path: Path to binary to analyze
+        host: Server host (default: localhost)
+        port: Server port (default: 8745)
+
+    Returns:
+        Server process handle
+    """
+    ida_pro_mcp_dir = '/home/peng/Projects/others/ida-pro-mcp'
+
+    console.print(f"[cyan]⚙[/cyan]  Starting headless IDA server for [bold]{binary_path}[/bold]...")
+
+    cmd = [
+        "uv", "run",
+        "--directory", ida_pro_mcp_dir,
+        "idalib-mcp",
+        "--host", host,
+        "--port", str(port),
+        binary_path
+    ]
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        # Wait for server to be ready (poll SSE endpoint)
+        url = f"http://{host}:{port}/sse"
+        console.print(f"[cyan]⏳[/cyan]  Waiting for server at {url}...")
+
+        for i in range(30):  # Wait up to 30 seconds
+            # Check if process crashed
+            if process.poll() is not None:
+                # Process exited, capture output
+                stdout, stderr = process.communicate()
+                console.print(f"[bold red]✗[/bold red] Headless IDA server process exited with code {process.returncode}")
+                console.print()
+                if stderr:
+                    console.print("[bold red]Server Error Output:[/bold red]")
+                    console.print(Panel(stderr, border_style="red", title="stderr"))
+                if stdout:
+                    console.print("[bold yellow]Server Output:[/bold yellow]")
+                    console.print(Panel(stdout, border_style="yellow", title="stdout"))
+                raise RuntimeError(f"Headless IDA server failed to start (exit code {process.returncode})")
+
+            time.sleep(1)
+            try:
+                response = requests.head(url, timeout=1)
+                if response.status_code in [200, 405, 400]:  # Server responding
+                    console.print(f"[green]✓[/green] Headless IDA server ready")
+                    return process
+            except requests.RequestException:
+                pass
+
+        # Timeout - check if process is still running
+        if process.poll() is not None:
+            # Process died during wait
+            stdout, stderr = process.communicate()
+            console.print(f"[bold red]✗[/bold red] Server process died during startup (exit code {process.returncode})")
+            if stderr:
+                console.print("[bold red]Error Output:[/bold red]")
+                console.print(Panel(stderr, border_style="red"))
+            if stdout:
+                console.print("[bold yellow]Output:[/bold yellow]")
+                console.print(Panel(stdout, border_style="yellow"))
+            raise RuntimeError(f"Server process failed during startup (exit code {process.returncode})")
+        else:
+            # Still running but not responding
+            process.terminate()
+            console.print(f"[bold red]✗[/bold red] Server did not respond within 30 seconds (process still running)")
+            console.print("[yellow]⚠[/yellow]  Check if port 8745 is already in use or server is slow to start")
+            raise TimeoutError(f"Headless IDA server did not start within 30 seconds")
+
+    except Exception as e:
+        console.print(f"[bold red]✗[/bold red] Failed to start headless IDA server: {e}")
+        raise
 
 async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None) -> str:
     """
@@ -314,7 +401,7 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
     )
     return result
 
-async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.json", firmware_path: str = None, rules: str = "openssl"):
+async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "plugin", call_graph_path: str = "call_graph.json", firmware_path: str = None, rules: str = "openssl"):
     """
     Main function to analyze SSL/TLS connections using multi-agent system.
 
@@ -338,32 +425,41 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
     elif call_graph_path:
         console.print(f"[yellow]⚠[/yellow]  Call graph file not found: {call_graph_path}")
 
-    connection_type = 'stdio'
+    server_process = None  # Track server process for cleanup
     server_script = '/home/peng/Projects/others/ida-pro-mcp/src/ida_pro_mcp/server.py'
+
     try:
-        if connection_type == 'stdio':
-            server_config = {
-                "idapro": {
-                    "transport": "stdio",
-                    "command": "python",
-                    "args": [
-                        server_script
-                    ]
-                }
-            }
-        else:
+        if conn_type == 'headless_ida':
+            # Auto-start headless IDA server
+            server_process = start_headless_ida_server(file_path)
+
             server_config = {
                 "idapro": {
                     "transport": "sse",
                     "url": "http://localhost:8745/sse"
                 }
             }
+        elif conn_type == 'plugin':
+            # Use IDA GUI plugin (manual startup required)
+            server_config = {
+                "idapro": {
+                    "transport": "stdio",
+                    "command": "python",
+                    "args": [server_script]
+                }
+            }
+        else:
+            raise ValueError(f"Invalid connection type: {conn_type}")
 
         client = MultiServerMCPClient(server_config)
-
         tools = await client.get_tools()
         console.print(f"[green]✓[/green] Successfully loaded [bold]{len(tools)}[/bold] tools from MCP server")
+
     except Exception as e:
+        if server_process:
+            console.print("[yellow]⚠[/yellow]  Terminating headless server due to error...")
+            server_process.terminate()
+            server_process.wait()
         console.print(f"[bold red]✗[/bold red] Failed to connect to MCP server: {e}")
         console.print("[yellow]Using fallback tools instead...[/yellow]")
         tools = []
@@ -588,16 +684,41 @@ async def main(model: str = "deepseek-chat", call_graph_path: str = "call_graph.
         "   - Dataflow traces for security-critical variables"
     )
 
-    await stream_and_log_agent(
-        agent=supervisor_agent,
-        messages=[{"role": "user", "content": user_prompt}],
-        agent_name="Supervisor Agent",
-        agent_emoji="🎯"
-    )
+    try:
+        await stream_and_log_agent(
+            agent=supervisor_agent,
+            messages=[{"role": "user", "content": user_prompt}],
+            agent_name="Supervisor Agent",
+            agent_emoji="🎯"
+        )
+    finally:
+        # Clean up headless server
+        if conn_type == 'headless_ida' and server_process:
+            console.print()
+            console.print("[cyan]🛑[/cyan]  Shutting down headless IDA server...")
+            server_process.terminate()
+            try:
+                server_process.wait(timeout=5)
+                console.print("[green]✓[/green] Server terminated successfully")
+            except subprocess.TimeoutExpired:
+                console.print("[yellow]⚠[/yellow]  Server did not terminate, forcing kill...")
+                server_process.kill()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Analyze SSL/TLS security using multi-agent system with IDA Pro MCP tools"
+        description="Analyze SSL/TLS security using multi-agent system with IDA Pro"
+    )
+    parser.add_argument(
+        "binary_path",
+        type=str,
+        help="Path to binary file to analyze"
+    )
+    parser.add_argument(
+        "-c", "--conn-type",
+        type=str,
+        default="headless_ida",
+        choices=["plugin", "headless_ida"],
+        help="IDA connection type: 'plugin' (IDA GUI with MCP plugin) or 'headless_ida' (automatic headless server) (default: headless_ida)"
     )
     parser.add_argument(
         "-m", "--model",
@@ -626,4 +747,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    asyncio.run(main(args.model, args.call_graph, args.firmware_path, args.rules))
+    asyncio.run(main(
+        file_path=args.binary_path,
+        model=args.model,
+        conn_type=args.conn_type,
+        call_graph_path=args.call_graph,
+        firmware_path=args.firmware_path,
+        rules=args.rules
+    ))
