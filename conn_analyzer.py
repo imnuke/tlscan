@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import re
 import asyncio
 import argparse
 import subprocess
@@ -20,6 +21,12 @@ from firmware_tools import (
     find_export,
     grep,
     read_file
+)
+from generate_call_graph import (
+    IDABackend,
+    export_to_json,
+    draw_call_graph,
+    ssl_function_patterns
 )
 
 # multiple agents:
@@ -401,6 +408,91 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
     )
     return result
 
+def generate_call_graph_for_binary(binary_path: str, output_json_path: str = "call_graph.json", enable_ida_msg: bool = False) -> dict:
+    """
+    Generate call graph for SSL/TLS functions in the binary.
+
+    Args:
+        binary_path: Path to the binary file to analyze
+        output_json_path: Path to output JSON file (default: "call_graph.json")
+        enable_ida_msg: Enable IDA console messages (default: False)
+
+    Returns:
+        Call graph data as dictionary
+
+    Raises:
+        RuntimeError: If call graph generation fails
+    """
+    console.print()
+    console.print(Panel.fit(
+        f"[bold cyan]📊 Generating Call Graph[/bold cyan]",
+        border_style="cyan"
+    ))
+    console.print()
+
+    backend = None
+    try:
+        # Initialize IDA backend (opens database)
+        console.print(f"[cyan]⚙[/cyan]  Opening binary with IDA: [bold]{binary_path}[/bold]...")
+        backend = IDABackend(binary_path, enable_ida_msg=enable_ida_msg)
+
+        # Filter SSL/TLS functions
+        console.print("[cyan]🔍[/cyan]  Filtering SSL/TLS functions...")
+        pattern = re.compile("|".join(ssl_function_patterns))
+        all_functions = backend.get_func_list_in_name()
+        ssl_functions = [f for f in all_functions if pattern.search(f)]
+        console.print(f"[green]✓[/green] Found [bold]{len(ssl_functions)}[/bold] SSL/TLS functions")
+
+        if ssl_functions:
+            console.print(f"[dim]   Functions: {', '.join(ssl_functions[:5])}{'...' if len(ssl_functions) > 5 else ''}[/dim]")
+
+        # Generate call graph
+        console.print("[cyan]🕸[/cyan]  Generating call graph...")
+        call_graph = backend.generate_call_graph(filtered_functions=ssl_functions)
+        console.print(f"[green]✓[/green] Call graph generated: [bold]{len(call_graph.nodes)}[/bold] nodes, [bold]{len(call_graph.edges)}[/bold] edges")
+
+        # Export to JSON
+        console.print(f"[cyan]💾[/cyan]  Exporting to [bold]{output_json_path}[/bold]...")
+        export_to_json(call_graph, binary_path, output_json_path)
+        console.print(f"[green]✓[/green] Exported to JSON")
+
+        # Draw PDF
+        pdf_path = output_json_path.replace('.json', '.pdf')
+        console.print(f"[cyan]🎨[/cyan]  Drawing call graph to [bold]{pdf_path}[/bold]...")
+        draw_call_graph(call_graph, output_file=pdf_path, highlight_nodes=ssl_functions)
+        console.print(f"[green]✓[/green] PDF visualization created")
+
+        # Load the generated JSON to return
+        with open(output_json_path, 'r') as f:
+            call_graph_data = json.load(f)
+
+        console.print()
+        console.print(Panel.fit(
+            f"[bold green]✓ Call Graph Generation Complete[/bold green]",
+            border_style="green"
+        ))
+        console.print()
+
+        return call_graph_data
+
+    except Exception as e:
+        console.print()
+        console.print(Panel(
+            f"[bold red]✗ Call Graph Generation Failed[/bold red]\n\n{str(e)}",
+            border_style="red",
+            title="[bold]Error[/bold]"
+        ))
+        console.print()
+        raise RuntimeError(f"Failed to generate call graph: {e}")
+
+    finally:
+        # CRITICAL: Close IDA database before MCP server starts
+        if backend is not None:
+            console.print("[cyan]🔒[/cyan]  Closing IDA database...")
+            del backend
+            console.print("[green]✓[/green] Database closed")
+            console.print()
+
 async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "plugin", call_graph_path: str = "call_graph.json", firmware_path: str = None, rules: str = "openssl"):
     """
     Main function to analyze SSL/TLS connections using multi-agent system.
@@ -413,23 +505,27 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
     """
     # Load security rules for the specified library
     security_rules_content = load_security_rules(rules)
-    # Load call graph if available
-    call_graph_data = None
-    if call_graph_path and os.path.exists(call_graph_path):
-        try:
-            with open(call_graph_path, 'r') as f:
-                call_graph_data = json.load(f)
-            console.print(f"[green]✓[/green] Loaded call graph from [bold]{call_graph_path}[/bold]")
-        except Exception as e:
-            console.print(f"[yellow]⚠[/yellow]  Failed to load call graph: {e}")
-    elif call_graph_path:
-        console.print(f"[yellow]⚠[/yellow]  Call graph file not found: {call_graph_path}")
 
+    # Generate or load call graph based on connection type
+    call_graph_data = None
     server_process = None  # Track server process for cleanup
     server_script = '/home/peng/Projects/others/ida-pro-mcp/src/ida_pro_mcp/server.py'
 
     try:
         if conn_type == 'headless_ida':
+            # Generate call graph BEFORE starting MCP server
+            # (Both use idalib and can't run simultaneously)
+            try:
+                call_graph_data = generate_call_graph_for_binary(
+                    binary_path=file_path,
+                    output_json_path=call_graph_path,
+                    enable_ida_msg=False
+                )
+            except Exception as e:
+                console.print(f"[bold red]✗[/bold red] Cannot continue without call graph. Exiting.")
+                raise
+
+            # Now start headless IDA server (database is closed from graph generation)
             # Auto-start headless IDA server
             server_process = start_headless_ida_server(file_path)
 
@@ -441,6 +537,18 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             }
         elif conn_type == 'plugin':
             # Use IDA GUI plugin (manual startup required)
+            # Load call graph from existing file (user should generate separately)
+            if call_graph_path and os.path.exists(call_graph_path):
+                try:
+                    with open(call_graph_path, 'r') as f:
+                        call_graph_data = json.load(f)
+                    console.print(f"[green]✓[/green] Loaded call graph from [bold]{call_graph_path}[/bold]")
+                except Exception as e:
+                    console.print(f"[yellow]⚠[/yellow]  Failed to load call graph: {e}")
+            elif call_graph_path:
+                console.print(f"[yellow]⚠[/yellow]  Call graph file not found: {call_graph_path}")
+                console.print(f"[dim]   ℹ  Run generate_call_graph.py separately or use --conn-type=headless_ida for auto-generation[/dim]")
+
             server_config = {
                 "idapro": {
                     "transport": "stdio",
