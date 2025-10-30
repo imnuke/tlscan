@@ -23,12 +23,11 @@ from rich.console import Console
 from rich.markdown import Markdown, Heading
 from rich.panel import Panel
 from rich import box
-from firmware_tools import (
-    find_import,
-    find_export,
-    grep,
-    read_file
-)
+
+# Import firmware_tools BEFORE generate_call_graph
+# (IDA modules modify sys.path and remove current directory)
+import firmware_tools
+
 from generate_call_graph import (
     IDABackend,
     export_to_json,
@@ -622,9 +621,23 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
     # Conditionally create firmware agent if firmware path provided
     if firmware_path:
         console.print(f"[green]✓[/green] Firmware agent enabled (path: [bold]{firmware_path}[/bold])")
+
+        # Initialize firmware tools with the firmware root path
+        firmware_tools.set_firmware_root(firmware_path)
+
+        # Get firmware analysis tools
+        fw_tools = [
+            firmware_tools.search_files_by_name,
+            firmware_tools.search_files_by_content,
+            firmware_tools.read_file,
+            firmware_tools.list_binary_symbols,
+            firmware_tools.find_binaries_with_symbol,
+            firmware_tools.find_function_references
+        ]
+
         firmware_traverse_agent = create_agent(
             model=model,
-            tools=[find_import, find_export, grep, read_file],
+            tools=fw_tools,
             middleware=[handle_tool_errors],
             system_prompt=(
                 f"You are a firmware filesystem expert specializing in cross-binary analysis, configuration files, and scripts. "
@@ -634,44 +647,40 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             "2. Configuration analysis: Find and analyze config files that affect SSL/TLS behavior\n"
             "3. Script analysis: Examine startup/shell scripts that configure services\n\n"
             "TOOLS AND THEIR USES:\n"
-            "- find_export(function_name): Find which binary DEFINES a function (implementation location)\n"
-            "  • Use when: Looking for where a function is implemented\n"
-            "  • Example: find_export('SSL_verify_callback') → returns binary that contains this function\n\n"
-            "- find_import(function_name): Find which binary CALLS a function (usage location)\n"
-            "  • Use when: Looking for binaries that use a specific function\n"
-            "  • Example: find_import('SSL_CTX_set_verify') → returns binaries calling this function\n\n"
-            "- grep(pattern, file_path): Search for patterns in files\n"
-            "  • Use when: Searching for config keys, function names, or security-related strings\n"
-            "  • Example: grep('ssl_verify', '/etc/config.conf') → find SSL verification settings\n\n"
-            "- read_file(file_path): Read full contents of a file\n"
-            "  • Use when: Need complete context after finding relevant sections\n"
-            "  • Example: read_file('/etc/ssl.conf') → read entire SSL configuration\n\n"
+            "1. search_files_by_name(pattern) - Find files by name/glob pattern\n"
+            "   - Examples: '*.conf', 'libssl*', 'startup*'\n"
+            "   - Use for: finding configs, scripts, specific binaries\n\n"
+            "2. search_files_by_content(pattern, file_pattern=None) - Find files containing text/regex\n"
+            "   - Examples: 'SSL_verify', 'verify.*=.*0', 'curl_easy_setopt'\n"
+            "   - Use for: finding SSL keywords, config options, function calls\n\n"
+            "3. read_file(path, start_line=None, end_line=None) - Read file contents\n"
+            "   - Use for: reading configs, scripts, text files\n"
+            "   - Supports line ranges for large files\n\n"
+            "4. list_binary_symbols(path, symbol_filter=None) - List functions in binary (nm)\n"
+            "   - Examples: list_binary_symbols('usr/lib/libssl.so', 'SSL_')\n"
+            "   - Use for: finding what functions a binary defines/imports\n\n"
+            "5. find_binaries_with_symbol(symbol_name, binary_pattern='*') - Cross-binary search\n"
+            "   - Examples: find_binaries_with_symbol('SSL_verify_callback')\n"
+            "   - Use for: finding which binary implements a function\n\n"
+            "6. find_function_references(function_name) - Unified search (text + binaries)\n"
+            "   - Use for: comprehensive function tracing across all firmware files\n\n"
             "ANALYSIS WORKFLOW:\n"
-            "1. For cross-binary tracing:\n"
-            "   - Use find_export to locate function implementation\n"
-            "   - Use find_import to find all callers across binaries\n"
-            "   - Map the complete call chain across firmware components\n\n"
-            "2. For configuration analysis:\n"
-            "   - Use grep to search for SSL/TLS-related settings in config files\n"
-            "   - Use read_file to get full context once relevant files are identified\n"
-            "   - Identify default values, conditional settings, and security flags\n\n"
-            "3. For script analysis:\n"
-            "   - Use grep to find scripts that mention SSL/TLS commands or binaries\n"
-            "   - Use read_file to analyze complete script logic\n"
-            "   - Identify runtime configuration, environment variables, command-line args\n\n"
+            "1. Start with search_files_by_name or search_files_by_content to find relevant files\n"
+            "2. Use read_file to examine configuration files and scripts\n"
+            "3. Use list_binary_symbols to analyze individual binaries\n"
+            "4. Use find_binaries_with_symbol for cross-binary function tracing\n"
+            "5. Use find_function_references for comprehensive analysis across all file types\n\n"
             "OUTPUT FORMAT:\n"
-            "- File paths with line numbers (e.g., '/etc/ssl.conf:42')\n"
+            "- File paths with line numbers (e.g., 'etc/ssl.conf:42')\n"
             "- Relevant excerpts with surrounding context (3-5 lines)\n"
             "- Binary relationships: 'binary_A imports SSL_verify from binary_B'\n"
             "- Security implications: How findings affect SSL/TLS security\n"
             "- Cross-references: 'Function X defined in libssl.so, called by httpd and ftpd'\n\n"
             "EXAMPLE SCENARIOS:\n"
-            "- Q: 'Is SSL_verify_callback implemented in another binary?'\n"
-            "  A: Use find_export('SSL_verify_callback') to locate implementation\n\n"
-            "- Q: 'Which config file controls SSL verification behavior?'\n"
-            "  A: Use grep('ssl_verify', '/etc/*') then read_file on matches\n\n"
-            "- Q: 'Does any startup script disable SSL verification?'\n"
-            "  A: Use grep('SSL_VERIFY_NONE|--no-verify', '/etc/init.d/*') and analyze results"
+            "- Finding config files: search_files_by_name('*.conf') → read_file('etc/ssl.conf')\n"
+            "- Finding SSL settings: search_files_by_content('ssl_verify') → read_file to check values\n"
+            "- Cross-binary trace: find_binaries_with_symbol('SSL_verify_callback') → shows which bins have it\n"
+            "- Function analysis: find_function_references('SSL_CTX_set_verify') → full firmware trace\n"
             )
         )
     else:
