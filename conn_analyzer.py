@@ -7,6 +7,13 @@ import argparse
 import subprocess
 import time
 import requests
+import logging
+
+# Suppress verbose HTTP logs from MCP client (SSE transport)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("mcp").setLevel(logging.WARNING)
+
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_tool_call
