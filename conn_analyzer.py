@@ -45,6 +45,25 @@ console = Console()
 # Global flag to track connection failures
 connection_failed = False
 
+def count_tokens(text: str, model: str = "gpt-4") -> int:
+    """
+    Count tokens in text using tiktoken.
+
+    Args:
+        text: Text to count tokens for
+        model: Model name for tokenizer (default: gpt-4)
+
+    Returns:
+        Token count
+    """
+    try:
+        import tiktoken
+        encoding = tiktoken.encoding_for_model(model)
+        return len(encoding.encode(text))
+    except Exception:
+        # Fallback: rough estimate (1 token ≈ 4 chars)
+        return len(text) // 4
+
 # Custom Heading class with left alignment instead of center
 class LeftAlignedHeading(Heading):
     """Custom heading that renders left-aligned instead of centered."""
@@ -391,7 +410,9 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                     console.print(f"[bold yellow]⚠️  {agent_name} TOOL ERROR ({last_message.name}):[/bold yellow]")
                     console.print(f"  [yellow]{last_message.content}[/yellow]")
                 else:
-                    console.print(f"[bold green]📊 {agent_name} TOOL RESULT ([cyan]{last_message.name}[/cyan]):[/bold green]")
+                    # Count tokens in tool result
+                    tool_tokens = count_tokens(last_message.content)
+                    console.print(f"[bold green]📊 {agent_name} TOOL RESULT ([cyan]{last_message.name}[/cyan]) - {tool_tokens:,} tokens:[/bold green]")
                     content_preview = last_message.content[:500] if len(last_message.content) > 500 else last_message.content
                     console.print(f"  [dim]{content_preview}{'...' if len(last_message.content) > 500 else ''}[/dim]")
                 console.print()
@@ -399,7 +420,9 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
             # Check if it's an AI message with content (thinking)
             elif hasattr(last_message, "content") and last_message.content and hasattr(last_message, "type") and last_message.type == "ai":
                 if last_message.content.strip():
-                    console.print(f"[bold blue]💭 {agent_name} THINKING:[/bold blue]")
+                    # Count tokens in agent synthesis
+                    synthesis_tokens = count_tokens(last_message.content)
+                    console.print(f"[bold blue]💭 {agent_name} THINKING - {synthesis_tokens:,} tokens:[/bold blue]")
                     # Render markdown content with left-aligned headings
                     md = create_markdown(last_message.content)
                     console.print(md)
@@ -479,12 +502,26 @@ async def call_dataflow_agent(request: str, context: str = "") -> str:
         Dataflow analysis results with sources, sinks, and paths
     """
     full_request = f"{request}\n\nContext:\n{context}" if context else request
+
+    # Log request token count
+    request_tokens = count_tokens(full_request)
+    console.print(f"[dim]📤 Dataflow Agent Request: {request_tokens:,} tokens[/dim]")
+    console.print()
+
     result = await stream_and_log_agent(
         agent=dataflow_agent,
         messages=[{"role": "user", "content": full_request}],
         agent_name="Dataflow Analysis Agent",
         agent_emoji="🔍"
     )
+
+    # Log response token count
+    response_tokens = count_tokens(result)
+    console.print()
+    console.print(f"[dim]📥 Dataflow Agent Response: {response_tokens:,} tokens[/dim]")
+    console.print(f"[dim]💰 Total Dataflow Round: {request_tokens + response_tokens:,} tokens[/dim]")
+    console.print()
+
     return result
 
 @tool
@@ -506,12 +543,26 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
         Analysis results from firmware filesystem exploration
     """
     full_request = f"{request}\n\nContext:\n{context}" if context else request
+
+    # Log request token count
+    request_tokens = count_tokens(full_request)
+    console.print(f"[dim]📤 Firmware Agent Request: {request_tokens:,} tokens[/dim]")
+    console.print()
+
     result = await stream_and_log_agent(
         agent=firmware_traverse_agent,
         messages=[{"role": "user", "content": full_request}],
         agent_name="Firmware Filesystem Agent",
         agent_emoji="📁"
     )
+
+    # Log response token count
+    response_tokens = count_tokens(result)
+    console.print()
+    console.print(f"[dim]📥 Firmware Agent Response: {response_tokens:,} tokens[/dim]")
+    console.print(f"[dim]💰 Total Firmware Round: {request_tokens + response_tokens:,} tokens[/dim]")
+    console.print()
+
     return result
 
 def generate_call_graph_for_binary(binary_path: str, output_json_path: str = "temp_files/call_graph.json", enable_ida_msg: bool = False) -> dict:
