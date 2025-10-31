@@ -64,6 +64,25 @@ def count_tokens(text: str, model: str = "gpt-4") -> int:
         # Fallback: rough estimate (1 token ≈ 4 chars)
         return len(text) // 4
 
+# Token count warning threshold
+TOKEN_WARNING_THRESHOLD = 8000
+
+def format_token_count(count: int, threshold: int = TOKEN_WARNING_THRESHOLD) -> str:
+    """
+    Format token count with highlighting if it exceeds threshold.
+
+    Args:
+        count: Token count to format
+        threshold: Warning threshold (default: TOKEN_WARNING_THRESHOLD)
+
+    Returns:
+        Formatted string with color coding for high counts
+    """
+    if count > threshold:
+        return f"[bold yellow]⚠️ {count:,}[/bold yellow]"
+    else:
+        return f"{count:,}"
+
 # Custom Heading class with left alignment instead of center
 class LeftAlignedHeading(Heading):
     """Custom heading that renders left-aligned instead of centered."""
@@ -412,7 +431,7 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                 else:
                     # Count tokens in tool result
                     tool_tokens = count_tokens(last_message.content)
-                    console.print(f"[bold green]📊 {agent_name} TOOL RESULT ([cyan]{last_message.name}[/cyan]) - {tool_tokens:,} tokens:[/bold green]")
+                    console.print(f"[bold green]📊 {agent_name} TOOL RESULT ([cyan]{last_message.name}[/cyan]) - {format_token_count(tool_tokens)} tokens:[/bold green]")
                     content_preview = last_message.content[:500] if len(last_message.content) > 500 else last_message.content
                     console.print(f"  [dim]{content_preview}{'...' if len(last_message.content) > 500 else ''}[/dim]")
                 console.print()
@@ -422,7 +441,7 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                 if last_message.content.strip():
                     # Count tokens in agent synthesis
                     synthesis_tokens = count_tokens(last_message.content)
-                    console.print(f"[bold blue]💭 {agent_name} THINKING - {synthesis_tokens:,} tokens:[/bold blue]")
+                    console.print(f"[bold blue]💭 {agent_name} THINKING - {format_token_count(synthesis_tokens)} tokens:[/bold blue]")
                     # Render markdown content with left-aligned headings
                     md = create_markdown(last_message.content)
                     console.print(md)
@@ -505,7 +524,7 @@ async def call_dataflow_agent(request: str, context: str = "") -> str:
 
     # Log request token count
     request_tokens = count_tokens(full_request)
-    console.print(f"[dim]📤 Dataflow Agent Request: {request_tokens:,} tokens[/dim]")
+    console.print(f"[dim]📤 Dataflow Agent Request: {format_token_count(request_tokens)} tokens[/dim]")
     console.print()
 
     result = await stream_and_log_agent(
@@ -518,8 +537,8 @@ async def call_dataflow_agent(request: str, context: str = "") -> str:
     # Log response token count
     response_tokens = count_tokens(result)
     console.print()
-    console.print(f"[dim]📥 Dataflow Agent Response: {response_tokens:,} tokens[/dim]")
-    console.print(f"[dim]💰 Total Dataflow Round: {request_tokens + response_tokens:,} tokens[/dim]")
+    console.print(f"[dim]📥 Dataflow Agent Response: {format_token_count(response_tokens)} tokens[/dim]")
+    console.print(f"[dim]💰 Total Dataflow Round: {format_token_count(request_tokens + response_tokens)} tokens[/dim]")
     console.print()
 
     return result
@@ -546,7 +565,7 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
 
     # Log request token count
     request_tokens = count_tokens(full_request)
-    console.print(f"[dim]📤 Firmware Agent Request: {request_tokens:,} tokens[/dim]")
+    console.print(f"[dim]📤 Firmware Agent Request: {format_token_count(request_tokens)} tokens[/dim]")
     console.print()
 
     result = await stream_and_log_agent(
@@ -559,8 +578,8 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
     # Log response token count
     response_tokens = count_tokens(result)
     console.print()
-    console.print(f"[dim]📥 Firmware Agent Response: {response_tokens:,} tokens[/dim]")
-    console.print(f"[dim]💰 Total Firmware Round: {request_tokens + response_tokens:,} tokens[/dim]")
+    console.print(f"[dim]📥 Firmware Agent Response: {format_token_count(response_tokens)} tokens[/dim]")
+    console.print(f"[dim]💰 Total Firmware Round: {format_token_count(request_tokens + response_tokens)} tokens[/dim]")
     console.print()
 
     return result
