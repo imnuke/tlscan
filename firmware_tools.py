@@ -139,7 +139,15 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
             "--line-number",
             "--no-heading",
             "--color", "never",
-            # Exclude web files (minified JS/HTML/CSS can be 100KB+ on one line)
+        ]
+
+        # Add user file_pattern FIRST (if provided)
+        if file_pattern:
+            cmd.extend(["--glob", file_pattern])
+
+        # Add exclusions AFTER - they take final precedence over file_pattern
+        # Exclude web files (minified JS/HTML/CSS can be 100KB+ on one line)
+        cmd.extend([
             "--glob", "!*.js",
             "--glob", "!*.html",
             "--glob", "!*.htm",
@@ -153,10 +161,7 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
             "--glob", "!NEWS*",
             "--glob", "!README*",
             "--glob", "!*manifest*",
-        ]
-
-        if file_pattern:
-            cmd.extend(["--glob", file_pattern])
+        ])
 
         cmd.extend([pattern, str(FIRMWARE_ROOT)])
 
