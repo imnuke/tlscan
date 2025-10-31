@@ -138,6 +138,20 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
             "--line-number",
             "--no-heading",
             "--color", "never",
+            # Exclude web files (minified JS/HTML/CSS can be 100KB+ on one line)
+            "--glob", "!*.js",
+            "--glob", "!*.html",
+            "--glob", "!*.htm",
+            "--glob", "!*.css",
+            "--glob", "!*.svg",
+            # Exclude metadata/documentation files
+            "--glob", "!ChangeLog*",
+            "--glob", "!CHANGES*",
+            "--glob", "!COPYING*",
+            "--glob", "!LICENSE*",
+            "--glob", "!NEWS*",
+            "--glob", "!README*",
+            "--glob", "!*manifest*",
         ]
 
         if file_pattern:
