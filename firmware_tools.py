@@ -73,6 +73,7 @@ def search_files_by_name(pattern: str, max_results: int = 50) -> str:
         # Use fd for fast file searching
         cmd = [
             "fd",
+            "--glob",  # Enable glob-based pattern matching (*.conf, lib*.so, etc.)
             "--max-results", str(max_results),
             "--type", "f",  # Files only
             pattern,
@@ -373,6 +374,7 @@ def find_binaries_with_symbol(symbol_name: str, binary_pattern: str = "*") -> st
         # First, find all potential binary files
         cmd = [
             "fd",
+            "--glob",  # Enable glob-based pattern matching (usr/bin/*, lib*.so, etc.)
             "--type", "f",
             binary_pattern,
             str(FIRMWARE_ROOT)
