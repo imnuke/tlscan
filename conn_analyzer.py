@@ -8,6 +8,8 @@ import subprocess
 import time
 import requests
 import logging
+import hashlib
+from pathlib import Path
 
 # Suppress verbose HTTP logs from MCP client (SSE transport)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -44,6 +46,39 @@ console = Console()
 
 # Global flag to track connection failures
 connection_failed = False
+
+def compute_call_graph_path(binary_path: str) -> str:
+    """
+    Compute unique call graph path based on binary content hash.
+
+    Uses MD5 hash of binary contents to generate a unique filename.
+    Format: temp_files/{basename}_{hash6}_call_graph.json
+
+    Args:
+        binary_path: Path to binary file
+
+    Returns:
+        Unique call graph path in temp_files/ directory
+    """
+    # Extract binary basename (without directory)
+    basename = os.path.basename(binary_path)
+
+    # Compute MD5 hash of binary contents
+    md5_hash = hashlib.md5()
+    with open(binary_path, 'rb') as f:
+        # Read in chunks to handle large files efficiently
+        for chunk in iter(lambda: f.read(8192), b''):
+            md5_hash.update(chunk)
+
+    # Get first 6 characters of hex digest
+    hash6 = md5_hash.hexdigest()[:6]
+
+    # Ensure temp_files directory exists
+    temp_dir = Path("temp_files")
+    temp_dir.mkdir(exist_ok=True)
+
+    # Return unique path
+    return str(temp_dir / f"{basename}_{hash6}_call_graph.json")
 
 def count_tokens(text: str, model: str = "gpt-4") -> int:
     """
@@ -584,13 +619,13 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
 
     return result
 
-def generate_call_graph_for_binary(binary_path: str, output_json_path: str = "temp_files/call_graph.json", enable_ida_msg: bool = False) -> dict:
+def generate_call_graph_for_binary(binary_path: str, output_json_path: str, enable_ida_msg: bool = False) -> dict:
     """
     Generate call graph for SSL/TLS functions in the binary.
 
     Args:
         binary_path: Path to the binary file to analyze
-        output_json_path: Path to output JSON file (default: "temp_files/call_graph.json")
+        output_json_path: Path to output JSON file (required)
         enable_ida_msg: Enable IDA console messages (default: False)
 
     Returns:
@@ -669,16 +704,21 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str = "te
             console.print("[green]✓[/green] Database closed")
             console.print()
 
-async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "plugin", call_graph_path: str = "call_graph.json", firmware_path: str = None, rules: str = "openssl", port: int = 8800):
+async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "plugin", call_graph_path: str = None, firmware_path: str = None, rules: str = "openssl", port: int = 8800):
     """
     Main function to analyze SSL/TLS connections using multi-agent system.
 
     Args:
         model: LLM model to use (default: "deepseek-chat")
-        call_graph_path: Path to call graph JSON file (default: "call_graph.json")
+        call_graph_path: Path to call graph JSON file (default: auto-generated based on binary hash)
         firmware_path: Path to firmware filesystem root (optional, enables firmware agent)
         rules: SSL/TLS library rules to use (default: "openssl")
     """
+    # Auto-generate unique call graph path if not provided
+    if call_graph_path is None:
+        call_graph_path = compute_call_graph_path(file_path)
+        console.print(f"[dim]📊 Call graph path: {call_graph_path}[/dim]")
+
     # Load security rules for the specified library
     security_rules_content = load_security_rules(rules)
 
@@ -1114,8 +1154,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "-g", "--call-graph",
         type=str,
-        default="call_graph.json",
-        help="Path to call graph JSON file (default: call_graph.json)"
+        default=None,
+        help="Path to call graph JSON file (default: auto-generated in temp_files/)"
     )
     parser.add_argument(
         "-f", "--firmware-path",
