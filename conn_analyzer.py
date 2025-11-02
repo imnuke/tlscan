@@ -190,14 +190,14 @@ def load_security_rules(library_name: str = "openssl") -> str:
         console.print(f"[yellow]⚠[/yellow]  Security rules file not found: {rule_file}")
         return ""
 
-def start_headless_ida_server(binary_path: str, host: str = "localhost", port: int = 8745) -> subprocess.Popen:
+def start_headless_ida_server(binary_path: str, host: str = "localhost", port: int = 8800) -> subprocess.Popen:
     """
     Start headless IDA server process.
 
     Args:
         binary_path: Path to binary to analyze
         host: Server host (default: localhost)
-        port: Server port (default: 8745)
+        port: Server port (default: 8800)
 
     Returns:
         Server process handle
@@ -267,7 +267,7 @@ def start_headless_ida_server(binary_path: str, host: str = "localhost", port: i
             # Still running but not responding
             process.terminate()
             console.print(f"[bold red]✗[/bold red] Server did not respond within 30 seconds (process still running)")
-            console.print("[yellow]⚠[/yellow]  Check if port 8745 is already in use or server is slow to start")
+            console.print(f"[yellow]⚠[/yellow]  Check if port {port} is already in use or server is slow to start")
             raise TimeoutError(f"Headless IDA server did not start within 30 seconds")
 
     except Exception as e:
@@ -669,7 +669,7 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str = "te
             console.print("[green]✓[/green] Database closed")
             console.print()
 
-async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "plugin", call_graph_path: str = "call_graph.json", firmware_path: str = None, rules: str = "openssl"):
+async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "plugin", call_graph_path: str = "call_graph.json", firmware_path: str = None, rules: str = "openssl", port: int = 8800):
     """
     Main function to analyze SSL/TLS connections using multi-agent system.
 
@@ -703,12 +703,12 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
 
             # Now start headless IDA server (database is closed from graph generation)
             # Auto-start headless IDA server
-            server_process = start_headless_ida_server(file_path)
+            server_process = start_headless_ida_server(file_path, port=port)
 
             server_config = {
                 "idapro": {
                     "transport": "sse",
-                    "url": "http://localhost:8745/sse"
+                    "url": f"http://localhost:{port}/sse"
                 }
             }
         elif conn_type == 'plugin':
@@ -1130,6 +1130,12 @@ if __name__ == "__main__":
         choices=["openssl", "curl", "libcurl", "gnutls", "mbedtls", "php_curl", "wget"],
         help="SSL/TLS library rules to use (default: openssl)"
     )
+    parser.add_argument(
+        "-p", "--port",
+        type=int,
+        default=8800,
+        help="IDA headless server port (default: 8800, supports multiple instances)"
+    )
     args = parser.parse_args()
 
     asyncio.run(main(
@@ -1138,5 +1144,6 @@ if __name__ == "__main__":
         conn_type=args.conn_type,
         call_graph_path=args.call_graph,
         firmware_path=args.firmware_path,
-        rules=args.rules
+        rules=args.rules,
+        port=args.port
     ))
