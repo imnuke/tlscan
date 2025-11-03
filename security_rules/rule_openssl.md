@@ -35,22 +35,24 @@
 3. Look for plaintext fallback paths (non-SSL socket operations)
 4. If conditional, trace to configuration source (file/env/hardcoded)
 
-## 2. Certificate Chain Checking
+## 2. Certificate Chain and Validity Checking
 **Priority**: MUST
-**Description**: Verify the server's certificate chain against trusted CA certificates
+**Description**: Verify the server's certificate chain against trusted CA certificates AND check certificate validity period (expiration dates)
 
 **Implementation**:
 - Use `SSL_CTX_set_verify()` or `SSL_set_verify()` with `SSL_VERIFY_PEER` to enable OpenSSL's default verification
-- When `SSL_VERIFY_NONE` is used:
+  - This automatically checks BOTH certificate chain validity AND validity period (expiration dates)
+- When `SSL_VERIFY_PEER` is used: Both chain and validity verification are automatic, but `SSL_get_verify_result()` can provide additional details
+- When `SSL_VERIFY_NONE` is used, ALL of the following MUST be manually implemented:
   - `SSL_get_peer_certificate()` MUST be called and checked (returns NULL if no cert provided)
-  - `SSL_get_verify_result()` MUST be called and checked (returns X509_V_OK if valid)
+  - `SSL_get_verify_result()` MUST be called and checked (returns X509_V_OK if all checks pass, including chain AND validity period)
   - Note: `SSL_get_verify_result()` returns X509_V_OK even without a certificate, hence the peer certificate check is required first
-- When `SSL_VERIFY_PEER` is used: verification is automatic, but `SSL_get_verify_result()` can provide additional details
+  - OR manually check validity period using `X509_get_notBefore()` and `X509_get_notAfter()` to get validity period, then compare with current time using `X509_cmp_time()` or `X509_cmp_current_time()`
 
 **Detection Patterns**:
-- Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`
+- Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`, `X509_get_notAfter`, `X509_get_notBefore`, `X509_cmp_time`, `X509_cmp_current_time`
 - Constants: `SSL_VERIFY_PEER`, `SSL_VERIFY_NONE`, `X509_V_OK`
-- Vulnerability: Using `SSL_VERIFY_NONE` without manual verification
+- Vulnerability: Using `SSL_VERIFY_NONE` without manual verification of both chain and validity
 
 ## 3. Hostname Verification
 **Priority**: MUST
@@ -66,20 +68,7 @@
 - Functions: `X509_check_host`, `SSL_set1_host`, `SSL_set_hostflags`, `X509_get_subject_name`
 - Vulnerability: Missing hostname verification after certificate chain validation
 
-## 4. Certificate Validity Period
-**Priority**: RECOMMENDED
-**Description**: Check certificate expiration and not-before dates
-
-**Implementation**:
-- Use `X509_get_notBefore()` and `X509_get_notAfter()` to get validity period
-- Compare with current time using `X509_cmp_time()` or `X509_cmp_current_time()`
-- Note: OpenSSL's default verification includes validity period checks when using `SSL_VERIFY_PEER`
-
-**Detection Patterns**:
-- Functions: `X509_get_notAfter`, `X509_get_notBefore`, `X509_cmp_time`, `X509_cmp_current_time`
-- Automatic when using `SSL_VERIFY_PEER`
-
-## 5. Certificate Revocation Status
+## 4. Certificate Revocation Status
 **Priority**: RECOMMENDED
 **Description**: Check if certificate has been revoked via OCSP or CRL
 
@@ -93,7 +82,7 @@
 - Constants: `X509_V_FLAG_CRL_CHECK`, `X509_V_FLAG_CRL_CHECK_ALL`
 - Vulnerability: Missing revocation checks entirely
 
-## 6. Protocol Version
+## 5. Protocol Version
 **Priority**: MUST
 **Description**: Enforce TLS 1.2 or higher, disable older insecure protocols
 
@@ -107,7 +96,7 @@
 - Constants: `TLS1_2_VERSION`, `TLS1_3_VERSION`, `SSL_OP_NO_SSLv2`, `SSL_OP_NO_SSLv3`, `SSL_OP_NO_TLSv1`, `SSL_OP_NO_TLSv1_1`
 - Vulnerability: Allowing SSLv2, SSLv3, TLS 1.0, or TLS 1.1
 
-## 7. Cipher Suite Selection
+## 6. Cipher Suite Selection
 **Priority**: MUST
 **Description**: Use strong cipher suites, avoid weak or export ciphers
 
@@ -121,7 +110,7 @@
 - Functions: `SSL_CTX_set_cipher_list`, `SSL_CTX_set_ciphersuites`, `SSL_get_cipher_name`, `SSL_get_cipher_list`
 - Vulnerability: Using weak cipher strings or not restricting ciphers
 
-## 8. Certificate Signature Algorithm and Key Strength
+## 7. Certificate Signature Algorithm and Key Strength
 **Priority**: RECOMMENDED
 **Description**: Verify certificate uses strong signature algorithms and key lengths
 
@@ -135,7 +124,7 @@
 - Functions: `X509_get_signature_nid`, `X509_get_pubkey`, `EVP_PKEY_bits`, `EVP_PKEY_id`
 - Weakness: MD5, SHA1 signatures or RSA keys < 2048 bits
 
-## 9. Certificate Pinning
+## 8. Certificate Pinning
 **Priority**: OPTIONAL (HIGH SECURITY)
 **Description**: Pin specific certificates or public keys to prevent MITM attacks
 
