@@ -43,6 +43,7 @@
 - Use `SSL_CTX_set_verify()` or `SSL_set_verify()` with `SSL_VERIFY_PEER` to enable OpenSSL's default verification
   - This automatically checks BOTH certificate chain validity AND validity period (expiration dates)
 - When `SSL_VERIFY_PEER` is used: Both chain and validity verification are automatic, but `SSL_get_verify_result()` can provide additional details
+- If a custom callback is provided to `SSL_CTX_set_verify()` or `SSL_set_verify()`: The callback MUST check the `preverify_ok` parameter and call `X509_STORE_CTX_get_error()` to retrieve error codes. Critical errors (self-signed, expired, untrusted, revocation, etc.) must cause the callback to return 0. Callbacks that unconditionally return 1 or ignore certificate errors bypass all validation
 - When `SSL_VERIFY_NONE` is used, ALL of the following MUST be manually implemented:
   - `SSL_get_peer_certificate()` MUST be called and checked (returns NULL if no cert provided)
   - `SSL_get_verify_result()` MUST be called and checked (returns X509_V_OK if all checks pass, including chain AND validity period)
@@ -50,9 +51,9 @@
   - OR manually check validity period using `X509_get_notBefore()` and `X509_get_notAfter()` to get validity period, then compare with current time using `X509_cmp_time()` or `X509_cmp_current_time()`
 
 **Detection Patterns**:
-- Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`, `X509_get_notAfter`, `X509_get_notBefore`, `X509_cmp_time`, `X509_cmp_current_time`
+- Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`, `X509_STORE_CTX_get_error`, `X509_get_notAfter`, `X509_get_notBefore`, `X509_cmp_time`, `X509_cmp_current_time`
 - Constants: `SSL_VERIFY_PEER`, `SSL_VERIFY_NONE`, `X509_V_OK`
-- Vulnerability: Using `SSL_VERIFY_NONE` without manual verification of both chain and validity
+- Vulnerability: Using `SSL_VERIFY_NONE` without manual verification of both chain and validity, or callback that unconditionally returns 1 or ignores critical X509_V_ERR_* errors
 
 ## 3. Hostname Verification
 **Priority**: MUST
