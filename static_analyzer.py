@@ -15,13 +15,50 @@ import networkx as nx
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# SSL/TLS function patterns to filter
-ssl_function_patterns = [
-    r"\.?X509_.*",
-    r"\.?SSL_.*",
-    r"\.?DTLS_.*",
-    r"\.?TLS_.*",
-]
+# Library-specific function patterns for call graph filtering
+LIBRARY_PATTERNS = {
+    "openssl": [r"\.?SSL_.*", r"\.?X509_.*", r"\.?TLS_.*", r"\.?DTLS_.*"],
+    "libcurl": [r"curl_easy_.*", r"curl_multi_.*", r"curl_global_.*", r"curl_.*"],
+    "gnutls": [r"gnutls_.*"],
+    "mbedtls": [r"mbedtls_.*"],
+    "php_curl": [],  # Script-based, no binary patterns needed
+    "curl": [],      # Command-line tool, no binary patterns needed
+    "wget": [],      # Command-line tool, no binary patterns needed
+    "socket": [r"socket", r"connect", r"bind", r"listen", r"accept", r"send", r"recv"],
+}
+
+# Libraries that require binary analysis (IDA-based call graph)
+BINARY_LIBRARIES = {"openssl", "libcurl", "gnutls", "mbedtls", "socket"}
+
+# Libraries that use script analysis (no call graph needed)
+SCRIPT_LIBRARIES = {"php_curl", "curl", "wget"}
+
+# Legacy name for backward compatibility
+ssl_function_patterns = LIBRARY_PATTERNS["openssl"]
+
+
+def get_function_patterns(library: str) -> list[str]:
+    """Get function patterns for a specific library.
+
+    Args:
+        library: Library name (e.g., "openssl", "libcurl", "gnutls")
+
+    Returns:
+        List of regex patterns for filtering library functions
+    """
+    return LIBRARY_PATTERNS.get(library, LIBRARY_PATTERNS["openssl"])
+
+
+def requires_binary_analysis(library: str) -> bool:
+    """Check if library requires binary analysis (call graph generation).
+
+    Args:
+        library: Library name
+
+    Returns:
+        True if library needs binary analysis, False for script-based libraries
+    """
+    return library in BINARY_LIBRARIES
 
 
 class IDABackend:
@@ -168,6 +205,15 @@ class IDABackend:
         logger.debug("Generated call graph with %d nodes", len(call_graph))
         return call_graph
 
+    # ============================================================================
+    # EXTENSIBILITY POINT: Future static analysis methods
+    # ============================================================================
+    # Add additional analysis methods here for future expansion:
+    # - def extract_strings(self, patterns: list[str]) -> dict
+    # - def analyze_control_flow(self, func_addr: int) -> ControlFlowGraph
+    # - def trace_dataflow(self, var_name: str, func_addr: int) -> DataflowTrace
+    # ============================================================================
+
 
 def export_to_json(graph: nx.DiGraph, binary_path: str, output_path: str):
     """Export call graph to JSON format for LangChain consumption.
@@ -232,7 +278,7 @@ def draw_call_graph(call_graph: nx.DiGraph, root=None, output_file: Optional[str
 
 
 def main():
-    """Main entry point for the script."""
+    """Main entry point for the script (CLI usage)."""
     parser = argparse.ArgumentParser(
         description="Generate call graph for SSL/TLS functions in a binary using IDA Pro"
     )
@@ -247,6 +293,13 @@ def main():
         help="Output JSON file path (default: call_graph.json)"
     )
     parser.add_argument(
+        "--library",
+        type=str,
+        default="openssl",
+        choices=list(LIBRARY_PATTERNS.keys()),
+        help="SSL/TLS library to analyze (default: openssl)"
+    )
+    parser.add_argument(
         "--enable-ida-msg",
         action="store_true",
         help="Enable IDA console messages"
@@ -259,16 +312,22 @@ def main():
         logger.info(f"Opening binary: {args.binary}")
         backend = IDABackend(args.binary, enable_ida_msg=args.enable_ida_msg)
 
-        # Filter SSL/TLS functions
-        logger.info("Filtering SSL/TLS functions...")
-        pattern = re.compile("|".join(ssl_function_patterns))
-        ssl_functions = [f for f in backend.get_func_list_in_name() if pattern.search(f)]
-        logger.info(f'Found {len(ssl_functions)} functions in total.')
-        logger.info(f'SSL functions: {ssl_functions}')
+        # Filter library-specific functions
+        logger.info(f"Filtering {args.library} functions...")
+        patterns = get_function_patterns(args.library)
+        if not patterns:
+            logger.warning(f"No function patterns defined for library '{args.library}'. Analyzing all functions.")
+            filtered_functions = backend.get_func_list_in_name()
+        else:
+            pattern = re.compile("|".join(patterns))
+            filtered_functions = [f for f in backend.get_func_list_in_name() if pattern.search(f)]
+
+        logger.info(f'Found {len(filtered_functions)} {args.library} functions in total.')
+        logger.info(f'Functions: {filtered_functions}')
 
         # Generate call graph
         logger.info("Generating call graph...")
-        call_graph = backend.generate_call_graph(filtered_functions=ssl_functions)
+        call_graph = backend.generate_call_graph(filtered_functions=filtered_functions)
 
         # Export to JSON
         logger.info(f"Exporting to {args.output}...")
@@ -279,13 +338,14 @@ def main():
         print("Call Graph Generation Complete")
         print("="*50)
         print(f"Binary: {args.binary}")
+        print(f"Library: {args.library}")
         print(f"Output: {args.output}")
         print(f"Nodes (functions): {len(call_graph.nodes)}")
         print(f"Edges (calls): {len(call_graph.edges)}")
         print("="*50)
 
         # Draw the call graph
-        draw_call_graph(call_graph, output_file="call_graph.pdf", highlight_nodes=ssl_functions)
+        draw_call_graph(call_graph, output_file="call_graph.pdf", highlight_nodes=filtered_functions)
 
     except Exception as e:
         logger.error(f"Error: {e}")

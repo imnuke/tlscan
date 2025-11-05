@@ -26,15 +26,16 @@ from rich.markdown import Markdown, Heading
 from rich.panel import Panel
 from rich import box
 
-# Import firmware_tools BEFORE generate_call_graph
+# Import firmware_tools BEFORE static_analyzer
 # (IDA modules modify sys.path and remove current directory)
 import firmware_tools
 
-from generate_call_graph import (
+from static_analyzer import (
     IDABackend,
     export_to_json,
     draw_call_graph,
-    ssl_function_patterns
+    get_function_patterns,
+    requires_binary_analysis
 )
 
 # multiple agents:
@@ -619,13 +620,14 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
 
     return result
 
-def generate_call_graph_for_binary(binary_path: str, output_json_path: str, enable_ida_msg: bool = False) -> dict:
+def generate_call_graph_for_binary(binary_path: str, output_json_path: str, library: str = "openssl", enable_ida_msg: bool = False) -> dict:
     """
     Generate call graph for SSL/TLS functions in the binary.
 
     Args:
         binary_path: Path to the binary file to analyze
         output_json_path: Path to output JSON file (required)
+        library: SSL/TLS library name for pattern filtering (default: "openssl")
         enable_ida_msg: Enable IDA console messages (default: False)
 
     Returns:
@@ -647,12 +649,16 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str, enab
         console.print(f"[cyan]⚙[/cyan]  Opening binary with IDA: [bold]{binary_path}[/bold]...")
         backend = IDABackend(binary_path, enable_ida_msg=enable_ida_msg)
 
-        # Filter SSL/TLS functions
-        console.print("[cyan]🔍[/cyan]  Filtering SSL/TLS functions...")
-        pattern = re.compile("|".join(ssl_function_patterns))
+        # Filter library-specific functions
+        console.print(f"[cyan]🔍[/cyan]  Filtering {library} functions...")
+        patterns = get_function_patterns(library)
         all_functions = backend.get_func_list_in_name()
-        ssl_functions = [f for f in all_functions if pattern.search(f)]
-        console.print(f"[green]✓[/green] Found [bold]{len(ssl_functions)}[/bold] SSL/TLS functions")
+        if patterns:
+            pattern = re.compile("|".join(patterns))
+            ssl_functions = [f for f in all_functions if pattern.search(f)]
+        else:
+            ssl_functions = all_functions
+        console.print(f"[green]✓[/green] Found [bold]{len(ssl_functions)}[/bold] {library} functions")
 
         if ssl_functions:
             console.print(f"[dim]   Functions: {', '.join(ssl_functions[:5])}{'...' if len(ssl_functions) > 5 else ''}[/dim]")
@@ -727,19 +733,27 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
     server_process = None  # Track server process for cleanup
     server_script = '/home/peng/Projects/others/ida-pro-mcp/src/ida_pro_mcp/server.py'
 
+    # Check if library requires binary analysis (call graph generation)
+    needs_call_graph = requires_binary_analysis(rules)
+    if not needs_call_graph:
+        console.print(f"[cyan]ℹ[/cyan]  Library '{rules}' is script-based, skipping call graph generation")
+        console.print()
+
     try:
         if conn_type == 'headless_ida':
-            # Generate call graph BEFORE starting MCP server
+            # Generate call graph BEFORE starting MCP server (only for binary libraries)
             # (Both use idalib and can't run simultaneously)
-            try:
-                call_graph_data = generate_call_graph_for_binary(
-                    binary_path=file_path,
-                    output_json_path=call_graph_path,
-                    enable_ida_msg=False
-                )
-            except Exception as e:
-                console.print(f"[bold red]✗[/bold red] Cannot continue without call graph. Exiting.")
-                raise
+            if needs_call_graph:
+                try:
+                    call_graph_data = generate_call_graph_for_binary(
+                        binary_path=file_path,
+                        output_json_path=call_graph_path,
+                        library=rules,
+                        enable_ida_msg=False
+                    )
+                except Exception as e:
+                    console.print(f"[bold red]✗[/bold red] Cannot continue without call graph. Exiting.")
+                    raise
 
             # Now start headless IDA server (database is closed from graph generation)
             # Auto-start headless IDA server
@@ -753,17 +767,17 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             }
         elif conn_type == 'plugin':
             # Use IDA GUI plugin (manual startup required)
-            # Load call graph from existing file (user should generate separately)
-            if call_graph_path and os.path.exists(call_graph_path):
+            # Load call graph from existing file (only for binary libraries)
+            if needs_call_graph and call_graph_path and os.path.exists(call_graph_path):
                 try:
                     with open(call_graph_path, 'r') as f:
                         call_graph_data = json.load(f)
                     console.print(f"[green]✓[/green] Loaded call graph from [bold]{call_graph_path}[/bold]")
                 except Exception as e:
                     console.print(f"[yellow]⚠[/yellow]  Failed to load call graph: {e}")
-            elif call_graph_path:
+            elif needs_call_graph and call_graph_path:
                 console.print(f"[yellow]⚠[/yellow]  Call graph file not found: {call_graph_path}")
-                console.print(f"[dim]   ℹ  Run generate_call_graph.py separately or use --conn-type=headless_ida for auto-generation[/dim]")
+                console.print(f"[dim]   ℹ  Run static_analyzer.py separately or use --conn-type=headless_ida for auto-generation[/dim]")
 
             server_config = {
                 "idapro": {
