@@ -24,7 +24,7 @@
 - Conditional SSL based on user-controllable input
 - Default to plaintext with optional SSL upgrade
 
-## 2. Certificate Chain Checking
+## 2. Certificate Chain and Validity Checking
 **Priority**: MUST
 **Description**: Verify the server's certificate chain against trusted CA certificates
 
@@ -51,7 +51,20 @@
 - Options: `CURLOPT_SSL_VERIFYHOST`
 - Vulnerability: `curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L)` or `1L`
 
-## 4. Protocol Version
+## 4. Certificate Revocation Status
+**Priority**: RECOMMENDED
+**Description**: Check certificate revocation status
+
+**Implementation**:
+- Use `CURLOPT_SSL_OPTIONS` with `CURLSSLOPT_REVOKE_BEST_EFFORT` (checks CRL if available)
+- Not all SSL backends support revocation checking
+- Consider OCSP stapling support (backend-dependent)
+
+**Detection Patterns**:
+- Options: `CURLOPT_SSL_OPTIONS`
+- Constants: `CURLSSLOPT_REVOKE_BEST_EFFORT`
+
+## 5. Protocol Version
 **Priority**: MUST
 **Description**: Enforce TLS 1.2 or higher, disable older insecure protocols
 
@@ -65,7 +78,7 @@
 - Constants: `CURL_SSLVERSION_TLSv1_2`, `CURL_SSLVERSION_TLSv1_3`, `CURL_SSLVERSION_MAX_*`
 - Vulnerability: Not setting minimum TLS version or allowing SSLv2/SSLv3/TLS1.0/TLS1.1
 
-## 5. Cipher Suite Selection
+## 6. Cipher Suite Selection
 **Priority**: RECOMMENDED
 **Description**: Restrict cipher suites to strong algorithms
 
@@ -78,7 +91,7 @@
 - Options: `CURLOPT_SSL_CIPHER_LIST`
 - Vulnerability: Not restricting cipher suites or allowing weak ciphers
 
-## 6. Certificate Pinning
+## 7. Certificate Pinning
 **Priority**: OPTIONAL (HIGH SECURITY)
 **Description**: Pin specific certificates or public keys
 
@@ -90,29 +103,3 @@
 **Detection Patterns**:
 - Options: `CURLOPT_PINNEDPUBLICKEY`
 - Implementation: Presence of public key hashes or pinned certificate files
-
-## 7. Certificate Revocation
-**Priority**: RECOMMENDED
-**Description**: Check certificate revocation status
-
-**Implementation**:
-- Use `CURLOPT_SSL_OPTIONS` with `CURLSSLOPT_REVOKE_BEST_EFFORT` (checks CRL if available)
-- Not all SSL backends support revocation checking
-- Consider OCSP stapling support (backend-dependent)
-
-**Detection Patterns**:
-- Options: `CURLOPT_SSL_OPTIONS`
-- Constants: `CURLSSLOPT_REVOKE_BEST_EFFORT`
-
-## 8. SSL/TLS Backend Configuration
-**Priority**: INFORMATIONAL
-**Description**: Be aware of which SSL/TLS library libcurl is compiled against
-
-**Implementation**:
-- Check with `curl_version_info()` to determine SSL backend (OpenSSL, GnuTLS, NSS, etc.)
-- Different backends have different security characteristics
-- Backend-specific options via `CURLOPT_SSL_CTX_FUNCTION` (OpenSSL) or similar
-
-**Detection Patterns**:
-- Functions: `curl_version_info()`, `CURLOPT_SSL_CTX_FUNCTION`
-- Backend-specific initialization code
