@@ -17,6 +17,27 @@ except ImportError:
     raise SystemExit("Missing dependency: pyelftools\nInstall with: pip install pyelftools")
 
 # ============================================================================
+# Default ignore list
+# ============================================================================
+
+# Files to ignore - libraries that export functions (not import them) and noisy binaries
+DEFAULT_IGNORE_FILES = [
+    "busybox",        # Multi-call binary, too noisy
+    "wget",           # The wget tool itself
+    "curl",           # The curl tool itself
+    "openvpn",        # OpenVPN binary
+    "openssl",        # OpenSSL binary
+    "libssl.so",      # OpenSSL library (exports SSL functions)
+    "libcrypto.so",   # OpenSSL crypto library
+    "libcurl.so",     # curl library (exports curl functions)
+    "libgnutls.so",   # GnuTLS library
+    "libmbedtls.so",  # mbed TLS library
+    "libmbedcrypto",  # mbed crypto library
+    "libc.so",        # Standard C library
+    "ld-linux",       # Dynamic linker
+]
+
+# ============================================================================
 # Library-specific indicator sets
 # ============================================================================
 
@@ -290,6 +311,18 @@ def get_file_type(path: str) -> str:
     return "unknown"
 
 
+def should_ignore_file(path: str) -> bool:
+    """
+    Check if file should be ignored based on DEFAULT_IGNORE_FILES.
+    Uses substring matching on the basename.
+    """
+    basename = os.path.basename(path)
+    for pattern in DEFAULT_IGNORE_FILES:
+        if pattern in basename:
+            return True
+    return False
+
+
 # ============================================================================
 # Library applicability mapping
 # ============================================================================
@@ -515,6 +548,10 @@ LIBRARIES = {
 def scan_file(path: str, libraries: List[str], min_strlen: int) -> Optional[Dict]:
     """Scan a single file for network client usage."""
     if not is_regular_file(path):
+        return None
+
+    # Skip ignored files (libraries that export functions, not import them)
+    if should_ignore_file(path):
         return None
 
     # Determine file type to apply appropriate detection methods
