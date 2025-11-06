@@ -135,7 +135,8 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
     try:
         cmd = [
             "rg",
-            "--max-count", str(max_results),
+            "--max-count", str(max_results), # Limit number of matches per file
+            "--max-columns", "100", # Do not display long matched lines, like minified JS
             "--line-number",
             "--no-heading",
             "--color", "never",
@@ -153,6 +154,7 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
             "--glob", "!*.htm",
             "--glob", "!*.css",
             "--glob", "!*.svg",
+            "--glob", "!*.txt",
             # Exclude metadata/documentation files
             "--glob", "!ChangeLog*",
             "--glob", "!CHANGES*",
@@ -161,6 +163,42 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
             "--glob", "!NEWS*",
             "--glob", "!README*",
             "--glob", "!*manifest*",
+            # Exclude files produced by IDA
+            "--glob", "!*.idb",
+            "--glob", "!*.i64",
+            "--glob", "!*.id0",
+            "--glob", "!*.id1",
+            "--glob", "!*.id2",
+            "--glob", "!*.nam",
+            "--glob", "!*.til",
+            "--glob", "!*.sig",
+            # Exclude language/localization files
+            "--glob", "!*Danish*",
+            "--glob", "!*Czech*",
+            "--glob", "!*English*",
+            "--glob", "!*Dutch*",
+            "--glob", "!*Croatian*",
+            "--glob", "!*Chinese*",
+            "--glob", "!*Bulgarian*",
+            "--glob", "!*Arabic*",
+            "--glob", "!*Russian*",
+            "--glob", "!*Spanish*",
+            "--glob", "!*French*",
+            "--glob", "!*German*",
+            "--glob", "!*Italian*",
+            "--glob", "!*Japanese*",
+            "--glob", "!*Korean*",
+            "--glob", "!*Portuguese*",
+            "--glob", "!*Turkish*",
+            "--glob", "!*Romanian*",
+            "--glob", "!*Greek*",
+            "--glob", "!*Slovak*",
+            "--glob", "!*Slovenian*",
+            "--glob", "!*Polish*",
+            "--glob", "!*Hungarian*",
+            "--glob", "!*Swedish*",
+            "--glob", "!*Norwegian*",
+            "--glob", "!*Finnish*",
         ])
 
         cmd.extend([pattern, str(FIRMWARE_ROOT)])
