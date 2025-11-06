@@ -170,6 +170,23 @@ def format_token_count(count: int, threshold: int = TOKEN_WARNING_THRESHOLD) -> 
     else:
         return f"{count:,}"
 
+def format_duration(seconds: float) -> str:
+    """
+    Format duration in seconds to human-readable string.
+
+    Args:
+        seconds: Duration in seconds
+
+    Returns:
+        Formatted string like "2m 34s" or "15.3s"
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    else:
+        minutes = int(seconds // 60)
+        remaining_seconds = seconds % 60
+        return f"{minutes}m {remaining_seconds:.1f}s"
+
 # Custom Heading class with left alignment instead of center
 class LeftAlignedHeading(Heading):
     """Custom heading that renders left-aligned instead of centered."""
@@ -291,6 +308,7 @@ def start_headless_ida_server(binary_path: str, host: str = "localhost", port: i
     """
     ida_pro_mcp_dir = '/home/peng/Projects/others/ida-pro-mcp'
 
+    start_time = time.perf_counter()
     console.print(f"[cyan]⚙[/cyan]  Starting headless IDA server for [bold]{binary_path}[/bold]...")
 
     cmd = [
@@ -333,7 +351,8 @@ def start_headless_ida_server(binary_path: str, host: str = "localhost", port: i
             try:
                 response = requests.head(url, timeout=1)
                 if response.status_code in [200, 405, 400]:  # Server responding
-                    console.print(f"[green]✓[/green] Headless IDA server ready")
+                    elapsed = time.perf_counter() - start_time
+                    console.print(f"[green]✓[/green] Headless IDA server ready ({format_duration(elapsed)})")
                     return process
             except requests.RequestException:
                 pass
@@ -478,6 +497,8 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
     ))
     console.print()
 
+    start_time = time.perf_counter()
+
     # Prune message history if it's getting long to save context
     if len(messages) > 10:
         original_count = len(messages)
@@ -535,8 +556,9 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                     console.print()
                     final_content = last_message.content
 
+    elapsed = time.perf_counter() - start_time
     console.print(Panel.fit(
-        f"[bold green]✓ {agent_name} Complete[/bold green]",
+        f"[bold green]✓ {agent_name} Complete ({format_duration(elapsed)})[/bold green]",
         border_style="green"
     ))
     console.print()
@@ -694,6 +716,7 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str, libr
     ))
     console.print()
 
+    start_time = time.perf_counter()
     backend = None
     try:
         # Initialize IDA backend (opens database)
@@ -734,9 +757,10 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str, libr
         with open(output_json_path, 'r') as f:
             call_graph_data = json.load(f)
 
+        elapsed = time.perf_counter() - start_time
         console.print()
         console.print(Panel.fit(
-            f"[bold green]✓ Call Graph Generation Complete[/bold green]",
+            f"[bold green]✓ Call Graph Generation Complete ({format_duration(elapsed)})[/bold green]",
             border_style="green"
         ))
         console.print()
@@ -771,8 +795,14 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         firmware_path: Path to firmware filesystem root (optional, enables firmware agent)
         rules: SSL/TLS library rules to use (default: "openssl")
     """
+    total_start_time = time.perf_counter()
+
     # Resolve binary path (handles relative paths against firmware_path or CWD)
+    start_time = time.perf_counter()
     file_path = resolve_binary_path(file_path, firmware_path)
+    elapsed = time.perf_counter() - start_time
+    console.print(f"[dim]⏱  Binary path resolution: {format_duration(elapsed)}[/dim]")
+    console.print()
 
     # Auto-generate unique call graph path if not provided
     if call_graph_path is None:
@@ -780,7 +810,11 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         console.print(f"[dim]📊 Call graph path: {call_graph_path}[/dim]")
 
     # Load security rules for the specified library
+    start_time = time.perf_counter()
     security_rules_content = load_security_rules(rules)
+    elapsed = time.perf_counter() - start_time
+    console.print(f"[dim]⏱  Security rules loading: {format_duration(elapsed)}[/dim]")
+    console.print()
 
     # Generate or load call graph based on connection type
     call_graph_data = None
@@ -843,9 +877,11 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         else:
             raise ValueError(f"Invalid connection type: {conn_type}")
 
+        start_time = time.perf_counter()
         client = MultiServerMCPClient(server_config)
         tools = await client.get_tools()
-        console.print(f"[green]✓[/green] Successfully loaded [bold]{len(tools)}[/bold] tools from MCP server")
+        elapsed = time.perf_counter() - start_time
+        console.print(f"[green]✓[/green] Successfully loaded [bold]{len(tools)}[/bold] tools from MCP server ({format_duration(elapsed)})")
 
     except Exception as e:
         if server_process:
@@ -1234,6 +1270,15 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             except subprocess.TimeoutExpired:
                 console.print("[yellow]⚠[/yellow]  Server did not terminate, forcing kill...")
                 server_process.kill()
+
+        # Display total elapsed time
+        total_elapsed = time.perf_counter() - total_start_time
+        console.print()
+        console.print(Panel.fit(
+            f"[bold blue]⏱  Total Analysis Time: {format_duration(total_elapsed)}[/bold blue]",
+            border_style="blue"
+        ))
+        console.print()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
