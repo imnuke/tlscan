@@ -81,6 +81,57 @@ def compute_call_graph_path(binary_path: str) -> str:
     # Return unique path
     return str(temp_dir / f"{basename}_{hash6}_call_graph.json")
 
+def resolve_binary_path(binary_path: str, firmware_path: str = None) -> str:
+    """
+    Resolve binary path to absolute path with validation.
+
+    If binary_path is absolute, use as-is.
+    If binary_path is relative:
+      - Combine with firmware_path if provided
+      - Otherwise resolve from current working directory
+
+    Args:
+        binary_path: Path to binary (absolute or relative)
+        firmware_path: Optional firmware root path for relative resolution
+
+    Returns:
+        Absolute path to binary
+
+    Raises:
+        FileNotFoundError: If resolved path does not exist
+    """
+    # Check if path is already absolute
+    if os.path.isabs(binary_path):
+        resolved_path = binary_path
+    else:
+        # Relative path - combine with firmware_path or CWD
+        if firmware_path:
+            resolved_path = os.path.join(firmware_path, binary_path)
+            console.print(f"[dim]📍 Resolving relative path: {binary_path} → {resolved_path}[/dim]")
+        else:
+            resolved_path = os.path.abspath(binary_path)
+            console.print(f"[dim]📍 Resolving from CWD: {binary_path} → {resolved_path}[/dim]")
+
+    # Validate that the binary exists
+    if not os.path.exists(resolved_path):
+        console.print()
+        console.print(Panel(
+            f"[bold red]✗ Binary Not Found[/bold red]\n\n"
+            f"Resolved path: {resolved_path}\n"
+            f"Original path: {binary_path}\n"
+            + (f"Firmware root: {firmware_path}\n" if firmware_path else "") +
+            "\nPlease check:\n"
+            "• Binary path is correct\n"
+            "• Firmware path is correct (if using relative path)\n"
+            "• File has not been moved or deleted",
+            border_style="red",
+            title="[bold]File Error[/bold]"
+        ))
+        console.print()
+        raise FileNotFoundError(f"Binary not found: {resolved_path}")
+
+    return resolved_path
+
 def count_tokens(text: str, model: str = "gpt-4") -> int:
     """
     Count tokens in text using tiktoken.
@@ -720,6 +771,9 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         firmware_path: Path to firmware filesystem root (optional, enables firmware agent)
         rules: SSL/TLS library rules to use (default: "openssl")
     """
+    # Resolve binary path (handles relative paths against firmware_path or CWD)
+    file_path = resolve_binary_path(file_path, firmware_path)
+
     # Auto-generate unique call graph path if not provided
     if call_graph_path is None:
         call_graph_path = compute_call_graph_path(file_path)
@@ -1188,7 +1242,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "binary_path",
         type=str,
-        help="Path to binary file to analyze"
+        help="Path to binary file to analyze (absolute or relative). Relative paths are resolved against --firmware-path if provided, otherwise against current working directory."
     )
     parser.add_argument(
         "-c", "--conn-type",
