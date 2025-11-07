@@ -527,7 +527,9 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                 console.print(f"[bold magenta]🔧 {agent_name} TOOL CALLS:[/bold magenta]")
                 for tool_call in last_message.tool_calls:
                     console.print(f"  • [cyan]{tool_call['name']}[/cyan]")
-                    console.print(f"    [dim]Args: {json.dumps(tool_call['args'], indent=6)}[/dim]")
+                    # Escape square brackets in JSON output to prevent Rich markup parsing errors
+                    args_json = json.dumps(tool_call['args'], indent=6).replace("[", r"\[").replace("]", r"\]")
+                    console.print(f"    [dim]Args: {args_json}[/dim]")
                 console.print()
 
             # Check if it's a tool message (result)
@@ -535,13 +537,17 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                 # Check if it's an error result
                 if hasattr(last_message, "status") and last_message.status == "error":
                     console.print(f"[bold yellow]⚠️  {agent_name} TOOL ERROR ({last_message.name}):[/bold yellow]")
-                    console.print(f"  [yellow]{last_message.content}[/yellow]")
+                    # Escape square brackets in error messages to prevent Rich markup parsing errors
+                    escaped_error = last_message.content.replace("[", r"\[").replace("]", r"\]")
+                    console.print(f"  [yellow]{escaped_error}[/yellow]")
                 else:
                     # Count tokens in tool result
                     tool_tokens = count_tokens(last_message.content)
                     console.print(f"[bold green]📊 {agent_name} TOOL RESULT ([cyan]{last_message.name}[/cyan]) - {format_token_count(tool_tokens)} tokens:[/bold green]")
                     content_preview = last_message.content[:500] if len(last_message.content) > 500 else last_message.content
-                    console.print(f"  [dim]{content_preview}{'...' if len(last_message.content) > 500 else ''}[/dim]")
+                    # Escape square brackets to prevent Rich markup parsing errors
+                    escaped_preview = content_preview.replace("[", r"\[").replace("]", r"\]")
+                    console.print(f"  [dim]{escaped_preview}{'...' if len(last_message.content) > 500 else ''}[/dim]")
                 console.print()
 
             # Check if it's an AI message with content (thinking)
@@ -735,7 +741,9 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str, libr
         console.print(f"[green]✓[/green] Found [bold]{len(ssl_functions)}[/bold] {library} functions")
 
         if ssl_functions:
-            console.print(f"[dim]   Functions: {', '.join(ssl_functions[:5])}{'...' if len(ssl_functions) > 5 else ''}[/dim]")
+            # Escape square brackets in function names to prevent Rich markup parsing errors
+            escaped_functions = [func.replace("[", r"\[").replace("]", r"\]") for func in ssl_functions[:5]]
+            console.print(f"[dim]   Functions: {', '.join(escaped_functions)}{'...' if len(ssl_functions) > 5 else ''}[/dim]")
 
         # Generate call graph
         console.print("[cyan]🕸[/cyan]  Generating call graph...")
