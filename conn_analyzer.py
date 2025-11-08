@@ -1269,15 +1269,16 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
     )
 
     # Format call graph for system prompt if available
+    # DISABLED: Call graph context removed to reduce token usage and improve performance
     call_graph_context = ""
-    if call_graph_data:
-        call_graph_text = format_call_graph(call_graph_data)
-        call_graph_context = (
-            "\n\nCALL GRAPH CONTEXT:\n"
-            "Below is the call graph extracted from the binary showing SSL/TLS function usage and call relationships. "
-            "Use this to guide your analysis and avoid unnecessary exploration.\n\n"
-            + call_graph_text
-        )
+    # if call_graph_data:
+    #     call_graph_text = format_call_graph(call_graph_data)
+    #     call_graph_context = (
+    #         "\n\nCALL GRAPH CONTEXT:\n"
+    #         "Below is the call graph extracted from the binary showing SSL/TLS function usage and call relationships. "
+    #         "Use this to guide your analysis and avoid unnecessary exploration.\n\n"
+    #         + call_graph_text
+    #     )
 
     # 3. Supervisor Agent - orchestrates SSL analysis and coordinates helper agents
     # Build supervisor tools list conditionally
