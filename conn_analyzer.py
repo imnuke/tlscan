@@ -619,6 +619,7 @@ async def handle_tool_errors(request, handler):
 # Global agent instances - will be initialized in main()
 supervisor_agent = None
 dataflow_agent = None
+ssl_analyzing_agent = None
 firmware_traverse_agent = None
 
 # Tool wrappers for supervisor to call worker agents
@@ -658,6 +659,54 @@ async def call_dataflow_agent(request: str, context: str = "") -> str:
     console.print()
     console.print(f"[dim]📥 Dataflow Agent Response: {format_token_count(response_tokens)} tokens[/dim]")
     console.print(f"[dim]💰 Total Dataflow Round: {format_token_count(request_tokens + response_tokens)} tokens[/dim]")
+    console.print()
+
+    return result
+
+@tool
+async def call_ssl_agent(request: str, call_graph_context: str = "") -> str:
+    """
+    Perform SSL/TLS security analysis on the binary.
+
+    Use this tool to:
+    - Validate binary contains client-side SSL/TLS code
+    - Check compliance with SSL/TLS security rules
+    - Identify conditional security behavior
+    - Get rule-by-rule security analysis results
+
+    The SSL agent can request help (dataflow tracing or firmware analysis) if needed.
+    It will return one of these statuses:
+    - STATUS: COMPLETE - Full analysis results ready
+    - STATUS: NEED_DATAFLOW - Needs variable tracing
+    - STATUS: NEED_FIRMWARE - Needs config/script analysis
+    - STATUS: NOT_APPLICABLE - Binary doesn't contain client SSL code
+
+    Args:
+        request: SSL analysis request (usually "Analyze SSL/TLS security")
+        call_graph_context: Call graph summary to guide analysis
+
+    Returns:
+        SSL security analysis results or help request
+    """
+    full_request = f"{request}\n\nCall Graph Context:\n{call_graph_context}" if call_graph_context else request
+
+    # Log request token count
+    request_tokens = count_tokens(full_request)
+    console.print(f"[dim]📤 SSL Agent Request: {format_token_count(request_tokens)} tokens[/dim]")
+    console.print()
+
+    result = await stream_and_log_agent(
+        agent=ssl_analyzing_agent,
+        messages=[{"role": "user", "content": full_request}],
+        agent_name="SSL Security Analyzing Agent",
+        agent_emoji="🔐"
+    )
+
+    # Log response token count
+    response_tokens = count_tokens(result)
+    console.print()
+    console.print(f"[dim]📥 SSL Agent Response: {format_token_count(response_tokens)} tokens[/dim]")
+    console.print(f"[dim]💰 Total SSL Analysis Round: {format_token_count(request_tokens + response_tokens)} tokens[/dim]")
     console.print()
 
     return result
@@ -930,7 +979,7 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         raise  # Re-raise exception to terminate
 
     # Initialize all agents
-    global dataflow_agent, supervisor_agent, firmware_traverse_agent
+    global dataflow_agent, ssl_analyzing_agent, supervisor_agent, firmware_traverse_agent
 
     # 1. Dataflow Analysis Agent - performs slicing and dataflow analysis
     dataflow_agent = create_agent(
@@ -990,6 +1039,111 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             "- Source Type: UNDETERMINED | Source Details: Tracking stopped at indirect call via vtable at 0x407890"
         )
     )
+
+    # 2. SSL/TLS Security Analyzing Agent - specialized SSL security expert
+    console.print("[cyan]🔐[/cyan]  Creating SSL analyzing agent...")
+    ssl_analyzing_agent = create_agent(
+        model=model,
+        tools=tools,
+        middleware=[handle_tool_errors],
+        system_prompt=(
+            "You are an SSL/TLS security analysis expert with direct access to IDA Pro MCP tools. "
+            "Your SOLE responsibility is to analyze binaries for SSL/TLS security vulnerabilities and check compliance with security rules.\n\n"
+            "IDA TOOLS AVAILABLE:\n"
+            "You have direct access to all IDA Pro tools to query the binary as needed:\n"
+            "- Get function details, decompilation, disassembly\n"
+            "- Find cross-references (xrefs), callers, and callees\n"
+            "- Search for SSL/TLS functions, strings, and globals\n"
+            "- Analyze structures, variables, and data types\n\n"
+            + (security_rules_content + "\n\n" if security_rules_content else "") +
+            "CRITICAL INITIAL CHECK - Client Code Validation:\n"
+            "Before detailed SSL/TLS analysis, FIRST verify this binary contains client code:\n\n"
+            "CLIENT CODE INDICATORS (search using IDA tools):\n"
+            "- SSL_connect() - Client TLS handshake\n"
+            "- TLS_client_method(), DTLS_client_method() - Client SSL methods\n"
+            "- curl_easy_perform(), curl_multi_perform() - libcurl client\n"
+            "- X509_check_host(), SSL_set1_host() - Hostname verification\n"
+            "- connect() to remote servers\n\n"
+            "SERVER CODE INDICATORS (to exclude):\n"
+            "- SSL_accept() - Server TLS handshake\n"
+            "- bind(), listen(), accept() - Server socket setup\n"
+            "- TLS_server_method(), DTLS_server_method() - Server SSL methods\n\n"
+            "VALIDATION WORKFLOW:\n"
+            "1. Search for client functions: use list_functions() or search for SSL_connect/curl_*\n"
+            "2. Search for server functions: use list_functions() or search for SSL_accept/bind/listen\n\n"
+            "IF SERVER-ONLY (has SSL_accept but no SSL_connect):\n"
+            "   - TERMINATE analysis immediately\n"
+            "   - Return: 'STATUS: NOT_APPLICABLE\\nThis binary contains server-side SSL code only.'\n\n"
+            "IF NO SSL/TLS CODE AT ALL:\n"
+            "   - TERMINATE with: 'STATUS: NOT_APPLICABLE\\nNo SSL/TLS code detected in binary'\n\n"
+            "IF MIXED (both client and server) OR CLIENT-ONLY:\n"
+            "   - Continue analysis\n"
+            "   - Focus ONLY on client-side code paths\n\n"
+            "ANALYSIS WORKFLOW:\n"
+            "1. Use IDA tools to search for SSL/TLS functions and analyze their usage\n"
+            "2. Leverage the call graph context (provided by supervisor) to focus analysis\n"
+            "3. Decompile relevant functions to examine SSL/TLS code\n"
+            "4. Check each security rule systematically\n"
+            "5. For each rule, determine: PASS | FAIL | CONDITIONAL\n"
+            "6. When you encounter CONDITIONAL behavior:\n"
+            "   - Identify the controlling variable/parameter\n"
+            "   - Analyze the code to understand what values are possible\n"
+            "   - Determine if you can trace the variable yourself OR need help:\n"
+            "     * If variable source is UNCLEAR: Request dataflow help\n"
+            "     * If variable comes from CONFIG/ENV/ARG but you don't have firmware access: Request firmware help\n"
+            "     * If you can determine everything with IDA tools alone: Complete the analysis\n\n"
+            "REQUESTING HELP FROM OTHER AGENTS:\n"
+            "You can request help from supervisor-coordinated agents when needed:\n\n"
+            "Request Dataflow Help (when variable source is unclear):\n"
+            "  Format: STATUS: NEED_DATAFLOW\n"
+            "          Variable: [variable_name]\n"
+            "          Context: [where/how it's used]\n"
+            "          Reason: [why tracing is needed]\n"
+            "          [Your analysis so far]\n\n"
+            "Request Firmware Help (when you need external files):\n"
+            "  Format: STATUS: NEED_FIRMWARE\n"
+            "          Request: [what you need - config file, startup script, etc.]\n"
+            "          Context: [why you need it]\n"
+            "          [Your analysis so far]\n\n"
+            "Complete Analysis (when all rules checked):\n"
+            "  Format: STATUS: COMPLETE\n"
+            "          [Full analysis results]\n\n"
+            "OUTPUT FORMAT FOR COMPLETE ANALYSIS:\n"
+            "When STATUS: COMPLETE, provide these sections:\n\n"
+            "SECTION 1 - Client Summary:\n"
+            "  * Purpose: What this client is used for\n"
+            "  * Connection flow: Steps to establish SSL/TLS connection\n"
+            "  * Dependencies: Config files or command-line arguments (if identified)\n\n"
+            "SECTION 2 - Rule Checking Results:\n"
+            "  * Rule-by-rule analysis with status: PASS | FAIL | CONDITIONAL\n"
+            "  * ALL results MUST include Evidence field:\n"
+            "    - For PASS: Show function calls, parameters proving secure implementation\n"
+            "    - For FAIL: Show missing security calls, insecure parameters\n"
+            "    - For CONDITIONAL: Show conditional logic, controlling variables\n\n"
+            "  * For CONDITIONAL rules, include these 3 parts:\n"
+            "    1. Condition Statement: Clear statement of what determines behavior\n"
+            "       ✗ BAD: 'Depends on v58'\n"
+            "       ✓ GOOD: 'Certificate verification depends on verify_mode in /etc/ssl.conf'\n\n"
+            "    2. Value-Result Mapping: Complete mapping of each value to security result\n"
+            "       ✓ REQUIRED:\n"
+            "         - verify_mode=0 (SSL_VERIFY_NONE): FAIL - Disables verification\n"
+            "         - verify_mode=1 (SSL_VERIFY_PEER): PASS - Enables verification\n\n"
+            "    3. Firmware Default: Actual default value and its security result\n"
+            "       ✓ GOOD: 'Default: FAIL - verify_mode=0 configured in /etc/ssl.conf (line 34)'\n"
+            "       ✓ ACCEPTABLE: 'Default: Not determined - Need firmware access'\n\n"
+            "    CRITICAL: Never use cryptic variable names like 'v58' in final output!\n\n"
+            "SECTION 3 - Dataflow Analysis:\n"
+            "  * Complete dataflow traces for security-critical variables (if any were traced)\n"
+            "  * Show: source → transformations → sink\n\n"
+            "IMPORTANT GUIDELINES:\n"
+            "- Focus on SSL/TLS security analysis ONLY - don't suggest improvements or recommendations\n"
+            "- Use IDA tools extensively to understand code behavior\n"
+            "- Request help when you need variable tracing or external file access\n"
+            "- Provide clear, actionable results with specific evidence\n"
+            "- When uncertain about variable sources, request dataflow help rather than guessing\n"
+        )
+    )
+    console.print("[green]✓[/green] SSL analyzing agent created")
 
     # Conditionally create firmware agent if firmware path provided
     if firmware_path:
@@ -1125,9 +1279,9 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             + call_graph_text
         )
 
-    # 3. Supervisor Agent - performs SSL analysis and coordinates dataflow analysis
+    # 3. Supervisor Agent - orchestrates SSL analysis and coordinates helper agents
     # Build supervisor tools list conditionally
-    supervisor_tools = tools + [call_dataflow_agent]
+    supervisor_tools = tools + [call_ssl_agent, call_dataflow_agent]
     if firmware_traverse_agent is not None:
         supervisor_tools.append(call_firmware_agent)
 
@@ -1334,157 +1488,76 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         tools=supervisor_tools,
         middleware=[handle_tool_errors],
         system_prompt=(
-            "You are an SSL/TLS security analyst with direct access to IDA Pro tools and specialized worker agents.\n\n"
-            "YOUR CAPABILITIES:\n"
-            "1. Direct IDA Pro MCP access for binary analysis:\n"
-            "   - Get function details, decompilation, disassembly\n"
-            "   - Find cross-references (xrefs), callers, and callees\n"
-            "   - Search for SSL/TLS functions, strings, and globals\n"
-            "   - Analyze structures, variables, and data types\n\n"
-            "2. Delegate dataflow analysis to specialized agent:\n"
-            "   - Call call_dataflow_agent to trace variables to their sources\n"
-            "   - Get forward/backward slicing results\n"
-            "   - Track data across function boundaries\n\n"
+            "You are the SUPERVISOR AGENT - an orchestrator coordinating specialized agents to analyze SSL/TLS security.\n\n"
+            "YOUR ROLE: Orchestration and Validation (NOT direct SSL analysis)\n"
+            "You do NOT perform SSL analysis yourself. Instead, you:\n"
+            "1. Fetch basic binary information using IDA tools\n"
+            "2. Instruct the SSL analyzing agent to perform security analysis\n"
+            "3. Validate results for completeness and clarity\n"
+            "4. Coordinate helper agents (dataflow, firmware) when SSL agent requests assistance\n"
+            "5. Synthesize the final comprehensive report\n\n"
+            "AVAILABLE AGENTS:\n"
+            "1. call_ssl_agent(request, call_graph_context) - SSL security expert\n"
+            "   Returns: STATUS: COMPLETE | NEED_DATAFLOW | NEED_FIRMWARE | NOT_APPLICABLE\n\n"
+            "2. call_dataflow_agent(request, context) - Variable tracing expert\n"
+            "   Returns: Dataflow traces with categorized source types\n\n"
             + firmware_capability +
-            firmware_trigger_section +
-            (security_rules_content + "\n\n" if security_rules_content else "") +
-            "CRITICAL INITIAL CHECK - Client Code Validation:\n"
-            "Before detailed SSL/TLS analysis, FIRST verify this binary contains client code:\n\n"
-            "CLIENT CODE INDICATORS (search using IDA tools):\n"
-            "- SSL_connect() - Client TLS handshake\n"
-            "- TLS_client_method(), DTLS_client_method() - Client SSL methods\n"
-            "- curl_easy_perform(), curl_multi_perform() - libcurl client\n"
-            "- X509_check_host(), SSL_set1_host() - Hostname verification\n"
-            "- connect() to remote servers\n\n"
-            "SERVER CODE INDICATORS (to exclude):\n"
-            "- SSL_accept() - Server TLS handshake\n"
-            "- bind(), listen(), accept() - Server socket setup\n"
-            "- TLS_server_method(), DTLS_server_method() - Server SSL methods\n\n"
-            "VALIDATION WORKFLOW:\n"
-            "1. Search for client functions: use list_functions() or search for SSL_connect/curl_*\n"
-            "2. Search for server functions: use list_functions() or search for SSL_accept/bind/listen\n\n"
-            "IF SERVER-ONLY (has SSL_accept but no SSL_connect):\n"
-            "   - TERMINATE analysis immediately\n"
-            "   - Report: 'This binary contains server-side SSL code only. Analysis focuses on client code.'\n"
-            "   - List what was found: 'Found: SSL_accept(), bind(), listen()'\n\n"
-            "IF NO SSL/TLS CODE AT ALL:\n"
-            "   - TERMINATE with: 'No SSL/TLS code detected in binary'\n\n"
-            "IF MIXED (both client and server):\n"
-            "   - Continue analysis\n"
-            "   - Focus ONLY on client-side code paths\n"
-            "   - Explicitly ignore server code (SSL_accept paths)\n"
-            "   - Note in report: 'Binary contains both client and server code; analyzed client only'\n\n"
-            "IF CLIENT-ONLY:\n"
-            "   - Continue normal analysis\n\n"
-            "ANALYSIS WORKFLOW:\n"
-            "1. Use IDA tools to search for SSL/TLS functions and analyze their usage\n"
-            "   - Leverage the call graph context below to focus your analysis\n"
-            "   - Decompile relevant functions to examine SSL/TLS code\n"
-            "   - Check each security rule systematically\n\n"
-            + firmware_workflow +
-            ("2" if not firmware_workflow else "3") + ". Identify conditional security behavior:\n"
-            "   - Flag parameters/variables that control security decisions\n"
-            "   - Note when verification depends on runtime values (config flags, parameters, etc.)\n\n"
-            + ("3" if not firmware_workflow else "4") + ". When you find conditional security:\n"
-            "   - Call call_dataflow_agent to trace the controlling variable to its source"
-            + firmware_dataflow_note + "\n"
-            "   - Determine ultimate source: config file, command-line arg, hardcoded, etc.\n\n"
-            "CONDITIONAL RULE ANALYSIS WORKFLOW (MANDATORY PROCESS):\n"
-            "When a security rule depends on runtime values (variables, config, etc.), follow this EXACT 6-step workflow:\n\n"
-            "STEP 1: Identify the Conditional Variable\n"
-            "   - Find the variable/parameter that controls the security decision\n"
-            "   - Note its name and where it's used (function, address)\n"
-            "   - Example: 'verify_mode parameter at SSL_CTX_set_verify() call in init_ssl() at 0x401234'\n\n"
-            "STEP 2: Call Dataflow Agent for Backward Slicing\n"
-            "   - Request: 'Trace [variable_name] backward to its ultimate source'\n"
-            "   - Dataflow agent will trace until it reaches one of 6 termination types\n"
-            "   - Wait for complete dataflow report with categorized source type\n\n"
-            "STEP 3: Classify Dataflow Result\n"
-            "   The dataflow agent will report one of these Source Types:\n"
-            "   - CONSTANT: Value is hardcoded in binary\n"
-            "   - EXPORTED_FUNCTION_PARAM: Traced to exported function parameter (library boundary)\n"
-            "   - CONFIG_FILE: Value read from configuration file\n"
-            "   - ENVIRONMENT_VARIABLE: Value from environment variable (getenv)\n"
-            "   - COMMAND_LINE_ARG: Value from command-line argument (argv)\n"
-            "   - UNDETERMINED: Tracking stopped but source unclear\n\n"
-            "STEP 4: Decide Next Action Based on Classification\n"
-            "   Based on the Source Type from Step 3, take the appropriate action:\n\n"
-            "   IF Source Type = CONSTANT:\n"
-            "      → Use the constant value directly to determine PASS/FAIL\n"
-            "      → No firmware agent call needed\n"
-            "      → Report as fixed behavior (not truly conditional)\n"
-            "      → Example: 'verify_mode = SSL_VERIFY_NONE (constant 0) → FAIL'\n\n"
-            "   IF Source Type = EXPORTED_FUNCTION_PARAM:\n"
-            "      → This binary is a library; the value comes from caller\n"
-            + ("      → Call call_firmware_agent: 'Find all binaries that call [function_name] and analyze how they pass the parameter'\n"
-                 "      → Firmware agent will search for caller binaries and their implementations\n"
-                 "      → Analyze each caller to determine what values they pass\n"
-                 "      → Report as CONDITIONAL with caller-specific results\n\n" if firmware_path else
-                 "      → Cannot trace further without firmware access\n"
-                 "      → Report as CONDITIONAL: 'Depends on caller's parameter value'\n"
-                 "      → Mark firmware default as 'Not determined: Requires firmware analysis'\n\n") +
-            "   IF Source Type = CONFIG_FILE:\n"
-            + ("      → Call call_firmware_agent: 'Find configuration file [path] and extract the value of [key]'\n"
-               "      → Firmware agent will locate the config file and read its contents\n"
-               "      → Parse the config value from firmware agent's response\n"
-               "      → Determine what each possible config value means for security\n"
-               "      → Report as CONDITIONAL with actual firmware default\n"
-               "      → Example: 'verify_mode from /etc/ssl.conf: value=0 → FAIL'\n\n" if firmware_path else
-               "      → Cannot access firmware files\n"
-               "      → Report as CONDITIONAL with config file path\n"
-               "      → Mark firmware default as 'Not determined: Config file not accessible'\n\n") +
-            "   IF Source Type = ENVIRONMENT_VARIABLE:\n"
-            + ("      → Call call_firmware_agent: 'Search startup scripts and environment files for [variable_name] default value'\n"
-               "      → Firmware agent will search /etc/profile, init scripts, .bashrc, systemd files, etc.\n"
-               "      → Determine default value set in startup scripts\n"
-               "      → Report as CONDITIONAL with startup script default\n"
-               "      → Example: 'SSL_VERIFY from /etc/profile: export SSL_VERIFY=0 → FAIL'\n\n" if firmware_path else
-               "      → Cannot access firmware scripts\n"
-               "      → Report as CONDITIONAL with environment variable name\n"
-               "      → Mark firmware default as 'Not determined: Startup scripts not accessible'\n\n") +
-            "   IF Source Type = COMMAND_LINE_ARG:\n"
-            + ("      → Call call_firmware_agent: 'Search startup scripts and service files for how [binary] is invoked'\n"
-               "      → Firmware agent will search init scripts, systemd units, cron jobs, etc.\n"
-               "      → Determine default command-line arguments in firmware\n"
-               "      → Report as CONDITIONAL with startup command default\n"
-               "      → Example: '/etc/init.d/app starts with --verify-ssl=false → FAIL'\n\n" if firmware_path else
-               "      → Cannot access firmware scripts\n"
-               "      → Report as CONDITIONAL with argument info\n"
-               "      → Mark firmware default as 'Not determined: Startup scripts not accessible'\n\n") +
-            "   IF Source Type = UNDETERMINED:\n"
-            "      → Dataflow tracking failed (indirect call, complex logic, etc.)\n"
-            "      → Mark as FAIL with clear explanation\n"
-            "      → Explanation: 'Could not verify [security property] is implemented correctly. '\n"
-            "                    'Dataflow tracking stopped at [location] due to [reason]'\n"
-            "      → Conservative security posture: unknown = insecure\n\n"
-            "STEP 5: Gather Complete Evidence\n"
-            "   - Collect all information from IDA analysis, dataflow agent, and firmware agent (if called)\n"
-            "   - Identify ALL possible values for the conditional variable\n"
-            "   - Determine what EACH value means for security (PASS or FAIL)\n"
-            "   - Identify the actual default value from firmware (if accessible)\n\n"
-            "STEP 6: Synthesize Final CONDITIONAL Result\n"
-            "   You MUST provide ALL THREE required parts:\n"
-            "   1. Condition Statement: Clear, concrete statement of what the condition is\n"
-            "      ✗ BAD: 'Depends on v58' or 'Depends on config'\n"
-            "      ✓ GOOD: 'Certificate verification depends on verify_mode in /etc/ssl.conf'\n"
-            "      ✓ GOOD: 'TLS version depends on min_tls_version command-line argument'\n\n"
-            "   2. Value-Result Mapping: Complete mapping of each possible value to security result\n"
-            "      ✗ BAD: 'verify_mode: varies'\n"
-            "      ✓ GOOD:\n"
-            "        - verify_mode=0 (SSL_VERIFY_NONE): FAIL - Disables all certificate verification\n"
-            "        - verify_mode=1 (SSL_VERIFY_PEER): PASS - Verifies certificate chain and validity\n"
-            "        - verify_mode=3 (SSL_VERIFY_PEER|FAIL_IF_NO_PEER_CERT): PASS - Strict verification\n\n"
-            "   3. Firmware Default: The actual configured default value and its security result\n"
-            "      ✗ BAD: 'Depends on configuration' or 'See config file'\n"
-            "      ✓ GOOD: 'Default: FAIL - verify_mode=0 configured in /etc/ssl.conf (line 34)'\n"
-            "      ✓ GOOD: 'Default: PASS - /etc/init.d/daemon starts with --strict-tls=true'\n"
-            "      ✓ ACCEPTABLE: 'Default: Not determined - Configuration file not accessible'\n\n"
-            "CRITICAL REMINDERS:\n"
-            "   - NEVER report 'depends on v58' or similar cryptic variable names in final output\n"
-            "   - ALWAYS translate technical details into clear security implications\n"
-            "   - If you cannot determine defaults, explicitly state why (not just omit the field)\n"
-            "   - Conservative approach: If truly undetermined after all steps, mark as FAIL\n\n"
-            + ("4" if not firmware_workflow else "5") + ". Synthesize security analysis report with EXACTLY these 3 sections:\n"
+            "\nORCHESTRATION WORKFLOW:\n\n"
+            "STEP 1: Call SSL Analyzing Agent IMMEDIATELY\n"
+            "   - YOUR FIRST ACTION MUST BE: call_ssl_agent('Analyze SSL/TLS security for this binary', call_graph_context)\n"
+            "   - Do NOT gather info yourself first - the SSL agent will do that with its IDA tools\n"
+            "   - The call graph context is already in your system prompt below - use it\n"
+            "   - This is NOT optional - you MUST call the SSL agent as your first action\n\n"
+            "STEP 2: Handle SSL Agent Response\n"
+            "   - After calling call_ssl_agent, it will return one of 4 statuses:\n"
+            "     * STATUS: COMPLETE - Analysis finished, results ready\n"
+            "     * STATUS: NEED_DATAFLOW - Needs variable tracing\n"
+            "     * STATUS: NEED_FIRMWARE - Needs config/script analysis\n"
+            "     * STATUS: NOT_APPLICABLE - Not a client SSL binary\n\n"
+            "   IF STATUS: COMPLETE:\n"
+            "      → Proceed to validation (STEP 3)\n\n"
+            "   IF STATUS: NEED_DATAFLOW:\n"
+            "      → SSL agent will specify: Variable name, Context, Reason\n"
+            "      → Call call_dataflow_agent with the request\n"
+            "      → Dataflow agent returns categorized source type\n"
+            "      → Pass dataflow results back to SSL agent by calling it again with:\n"
+            "        'Continue analysis with dataflow results: [paste dataflow output]'\n"
+            "      → SSL agent may return COMPLETE or request more help\n"
+            "      → Repeat until STATUS: COMPLETE\n\n"
+            "   IF STATUS: NEED_FIRMWARE:\n"
+            "      → SSL agent will specify what it needs (config file, startup script, etc.)\n"
+            + ("      → Call call_firmware_agent with the specific request\n"
+               "      → Firmware agent returns file contents, config values, or script analysis\n"
+               "      → Pass firmware results back to SSL agent by calling it again with:\n"
+               "        'Continue analysis with firmware results: [paste firmware output]'\n"
+               "      → SSL agent may return COMPLETE or request more help\n"
+               "      → Repeat until STATUS: COMPLETE\n\n" if firmware_path else
+               "      → Firmware agent not available\n"
+               "      → Inform SSL agent: 'Firmware analysis not available'\n"
+               "      → SSL agent will complete analysis with 'Not determined' for defaults\n\n") +
+            "   IF STATUS: NOT_APPLICABLE:\n"
+            "      → Binary is not an SSL client or has no SSL code\n"
+            "      → Terminate with SSL agent's message\n\n"
+            "STEP 3: Validate SSL Agent Results\n"
+            "   When STATUS: COMPLETE, check the results for quality:\n\n"
+            "   VALIDATION CHECKLIST:\n"
+            "   ✓ All security rules addressed?\n"
+            "   ✓ Each rule has PASS/FAIL/CONDITIONAL status?\n"
+            "   ✓ Each rule has Evidence field?\n"
+            "   ✓ For CONDITIONAL rules, all 3 parts present?\n"
+            "      - Condition Statement (clear, not cryptic like 'v58')\n"
+            "      - Value-Result Mapping (complete with security implications)\n"
+            "      - Firmware Default (actual value or 'Not determined' with reason)\n"
+            "   ✓ No cryptic variable names in final output?\n"
+            "   ✓ Dataflow section included if variables were traced?\n\n"
+            "   IF INCOMPLETE OR UNCLEAR:\n"
+            "      → Call SSL agent again: 'Results incomplete. Please address: [specific issues]'\n"
+            "      → Example: 'Rule 2 is marked CONDITIONAL but missing Firmware Default field'\n"
+            "      → Example: 'Condition statement says \"depends on v58\" - clarify what v58 represents'\n\n"
+            "   IF COMPLETE AND CLEAR:\n"
+            "      → Proceed to STEP 4\n\n"
+            "STEP 4: Synthesize Final Report\n"
+            "   Generate the final report with EXACTLY these 3 sections:\n\n"
             "   SECTION 1 - Client Summary:\n"
             "     * Purpose: What this client is used for (e.g., HTTP client, FTP client, custom protocol)\n"
             "     * Connection flow: Steps to establish SSL/TLS connection (function call sequence)\n"
@@ -1506,7 +1579,7 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             "         Example: \"SSL_CTX_set_verify at 0x401620: called with SSL_VERIFY_NONE (0), disables all verification\"\n"
             "       - For CONDITIONAL: Show conditional branch/check, controlling variables, dataflow trace, config values\n"
             "         Example: \"SSL_CTX_set_verify at 0x401700: mode parameter from verify_mode variable (traced to config file)\"\n"
-            "     * For CONDITIONAL: MUST include ALL three parts below (follow STEP 6 from workflow above):\n"
+            "     * For CONDITIONAL: MUST include ALL three parts below:\n"
             "       1. Condition Statement: CLEAR, CONCRETE statement - NOT cryptic variable names\n"
             "          ✗ UNACCEPTABLE: \"Condition: Depends on v58\" or \"Condition: Depends on config\"\n"
             "          ✓ REQUIRED: Specify exactly what determines the behavior:\n"
@@ -1537,7 +1610,6 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             "       - ALWAYS provide actual default PASS/FAIL determination, not just 'conditional'\n"
             "       - If any part cannot be determined, MUST state \"Not determined: [specific reason]\"\n"
             "       - Do NOT omit any of the 3 parts - state uncertainty explicitly rather than omitting\n"
-            "       - Reference the CONDITIONAL RULE ANALYSIS WORKFLOW above for guidance on determining these values\n"
             "   SECTION 3 - Dataflow Analysis:\n"
             "     * Complete dataflow traces for security-critical variables\n"
             "     * Show how data flows through the code (source → transformations → sink)\n"
@@ -1546,40 +1618,34 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
             "     * Overall assessment\n"
             "     * Improvements or suggestions\n"
             "     * Best practice advice\n\n"
-            + ("EXAMPLE WORKFLOW:\n" if not firmware_examples else "EXAMPLE WORKFLOWS:\n")
-            + firmware_examples
+            "IMPORTANT REMINDERS:\n"
+            "- You are an ORCHESTRATOR, not an SSL analyzer\n"
+            "- YOUR FIRST TOOL CALL MUST BE: call_ssl_agent('Analyze SSL/TLS security for this binary', call_graph_context)\n"
+            "- Do NOT use IDA tools yourself - the SSL agent has them and will use them\n"
+            "- After SSL agent responds, validate results for completeness and clarity\n"
+            "- Coordinate helper agents (dataflow/firmware) when SSL agent requests them\n"
+            "- Synthesize the final report from SSL agent's complete results\n\n"
             + call_graph_context
         )
     )
 
     # TODO: The LLM should ask for external file access if needed.
 
-    # Build user prompt conditionally based on firmware agent availability
-    dataflow_instruction = (
-        "3. When you find conditional security behavior (e.g., verification depends on a config flag), "
-        "use the dataflow agent to trace where the controlling variable comes from"
-    )
-
-    if firmware_traverse_agent is not None:
-        dataflow_instruction += (
-            "\n   **CRITICAL**: If dataflow traces to file I/O (fopen, read_config, etc.) or environment access (getenv), "
-            "you MUST use call_firmware_agent to find and analyze the configuration file or script. "
-            "Do not skip this step - config file analysis is essential for determining actual security behavior."
-        )
-
+    # Build user prompt for orchestrator role
     user_prompt = (
-        "Analyze the SSL/TLS security of this binary. The binary may use OpenSSL or similar libraries "
-        "to establish secure connections.\n\n"
-        "Your task:\n"
-        "1. Use IDA tools to analyze the SSL/TLS implementation (leverage the call graph context in your system prompt)\n"
-        "2. Check compliance with SSL/TLS security best practices\n"
-        + dataflow_instruction + "\n"
-        "4. Provide security analysis report with EXACTLY these 3 sections:\n"
-        "   SECTION 1 - Client Summary: Purpose, connection setup flow, config/args dependencies\n"
-        "   SECTION 2 - Rule Checking Results: Each rule as PASS/FAIL/CONDITIONAL\n"
-        "     - CONDITIONAL rules: Include (1) condition statement, (2) value-result mapping, (3) firmware default\n"
-        "   SECTION 3 - Dataflow Analysis: Complete traces for security variables\n"
-        "   OUTPUT ONLY THESE 3 SECTIONS (no recommendations or assessments)"
+        "Orchestrate SSL/TLS security analysis for this binary.\n\n"
+        "YOUR FIRST ACTION: Call call_ssl_agent with the call graph context from your system prompt.\n"
+        "Do this IMMEDIATELY - do not gather information yourself first.\n\n"
+        "After calling the SSL agent:\n"
+        "- If STATUS: COMPLETE → Validate results and synthesize final report\n"
+        "- If STATUS: NEED_DATAFLOW → Call dataflow agent, then return results to SSL agent\n"
+        "- If STATUS: NEED_FIRMWARE → Call firmware agent, then return results to SSL agent\n"
+        "- If STATUS: NOT_APPLICABLE → Report to user that binary is not applicable\n\n"
+        "Final report must have EXACTLY these 3 sections:\n"
+        "SECTION 1 - Client Summary\n"
+        "SECTION 2 - Rule Checking Results (PASS/FAIL/CONDITIONAL with evidence)\n"
+        "SECTION 3 - Dataflow Analysis\n\n"
+        "Remember: The SSL agent analyzes. You orchestrate."
     )
 
     try:
