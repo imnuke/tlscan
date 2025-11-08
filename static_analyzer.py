@@ -36,6 +36,11 @@ SCRIPT_LIBRARIES = {"php_curl", "curl", "wget"}
 # Legacy name for backward compatibility
 ssl_function_patterns = LIBRARY_PATTERNS["openssl"]
 
+# Call graph trimming configuration
+DEFAULT_MAX_HOPS = 3  # Maximum hops from SSL functions to keep
+TRIM_THRESHOLD_NODES = 100  # Auto-trim if graph exceeds this many nodes
+CENTRALITY_PERCENTILE = 0.80  # Keep nodes in top 20% by betweenness centrality
+
 
 def get_function_patterns(library: str) -> list[str]:
     """Get function patterns for a specific library.
@@ -215,22 +220,139 @@ class IDABackend:
     # ============================================================================
 
 
-def export_to_json(graph: nx.DiGraph, binary_path: str, output_path: str):
+def trim_call_graph(
+    graph: nx.DiGraph,
+    ssl_functions: list[str],
+    max_hops: int = DEFAULT_MAX_HOPS,
+    centrality_percentile: float = CENTRALITY_PERCENTILE
+) -> tuple[nx.DiGraph, dict]:
+    """Trim call graph to reduce complexity while preserving important nodes.
+
+    Uses a hybrid approach combining:
+    1. Hop distance from SSL functions (keep nodes within max_hops)
+    2. Betweenness centrality (keep important junction nodes)
+
+    Args:
+        graph: Original call graph
+        ssl_functions: List of SSL/TLS function names (leaf nodes)
+        max_hops: Maximum hops from SSL functions to keep (default: 3)
+        centrality_percentile: Percentile threshold for centrality (default: 0.80, keeps top 20%)
+
+    Returns:
+        Tuple of (trimmed_graph, statistics_dict)
+    """
+    if len(graph.nodes) == 0:
+        return graph, {"trimmed": False, "reason": "empty_graph"}
+
+    # Calculate hop distances from SSL functions using BFS
+    hop_distances = {}
+    for ssl_func in ssl_functions:
+        if ssl_func not in graph:
+            continue
+
+        # BFS backward from SSL function to find all callers
+        visited = {ssl_func: 0}
+        queue = [(ssl_func, 0)]
+
+        while queue:
+            node, dist = queue.pop(0)
+
+            # Find all callers (predecessors in the call graph)
+            for predecessor in graph.predecessors(node):
+                if predecessor not in visited:
+                    visited[predecessor] = dist + 1
+                    queue.append((predecessor, dist + 1))
+                else:
+                    # Update to minimum distance if we found a shorter path
+                    visited[predecessor] = min(visited[predecessor], dist + 1)
+
+        # Merge distances (keep minimum distance to any SSL function)
+        for node, dist in visited.items():
+            if node not in hop_distances:
+                hop_distances[node] = dist
+            else:
+                hop_distances[node] = min(hop_distances[node], dist)
+
+    # Calculate betweenness centrality (importance as junction points)
+    try:
+        centrality = nx.betweenness_centrality(graph)
+        # Calculate threshold for high centrality
+        centrality_values = list(centrality.values())
+        if centrality_values:
+            import numpy as np
+            centrality_threshold = np.percentile(centrality_values, centrality_percentile * 100)
+        else:
+            centrality_threshold = 0
+    except Exception as e:
+        logger.warning(f"Failed to calculate betweenness centrality: {e}. Using hop distance only.")
+        centrality = {}
+        centrality_threshold = 0
+
+    # Determine which nodes to keep
+    nodes_to_keep = set()
+    for node in graph.nodes():
+        # Always keep SSL functions
+        if node in ssl_functions:
+            nodes_to_keep.add(node)
+            continue
+
+        # Keep if within hop distance
+        if node in hop_distances and hop_distances[node] <= max_hops:
+            nodes_to_keep.add(node)
+            continue
+
+        # Keep if high centrality (important junction point)
+        if node in centrality and centrality[node] >= centrality_threshold:
+            nodes_to_keep.add(node)
+            continue
+
+    # Create trimmed graph
+    trimmed_graph = graph.subgraph(nodes_to_keep).copy()
+
+    # Collect statistics
+    stats = {
+        "trimmed": True,
+        "original_nodes": len(graph.nodes),
+        "original_edges": len(graph.edges),
+        "trimmed_nodes": len(trimmed_graph.nodes),
+        "trimmed_edges": len(trimmed_graph.edges),
+        "nodes_removed": len(graph.nodes) - len(trimmed_graph.nodes),
+        "edges_removed": len(graph.edges) - len(trimmed_graph.edges),
+        "max_hops_used": max_hops,
+        "centrality_percentile": centrality_percentile
+    }
+
+    logger.info(f"Call graph trimmed: {stats['original_nodes']} → {stats['trimmed_nodes']} nodes "
+                f"({stats['nodes_removed']} removed), "
+                f"{stats['original_edges']} → {stats['trimmed_edges']} edges "
+                f"({stats['edges_removed']} removed)")
+
+    return trimmed_graph, stats
+
+
+def export_to_json(graph: nx.DiGraph, binary_path: str, output_path: str, trim_stats: dict = None):
     """Export call graph to JSON format for LangChain consumption.
 
     Args:
         graph: NetworkX graph to export
         binary_path: Path to the binary file
         output_path: Path to output JSON file
+        trim_stats: Optional trimming statistics to include in metadata
     """
     # Prepare data structure
+    metadata = {
+        "binary": binary_path,
+        "node_count": len(graph.nodes),
+        "edge_count": len(graph.edges),
+        "ssl_patterns": ssl_function_patterns
+    }
+
+    # Add trimming information if available
+    if trim_stats:
+        metadata["trimming"] = trim_stats
+
     data = {
-        "metadata": {
-            "binary": binary_path,
-            "node_count": len(graph.nodes),
-            "edge_count": len(graph.edges),
-            "ssl_patterns": ssl_function_patterns
-        },
+        "metadata": metadata,
         "nodes": [],
         "edges": []
     }
@@ -304,6 +426,23 @@ def main():
         action="store_true",
         help="Enable IDA console messages"
     )
+    parser.add_argument(
+        "--max-hops",
+        type=int,
+        default=DEFAULT_MAX_HOPS,
+        help=f"Maximum hops from SSL functions to keep when trimming (default: {DEFAULT_MAX_HOPS})"
+    )
+    parser.add_argument(
+        "--trim-threshold",
+        type=int,
+        default=TRIM_THRESHOLD_NODES,
+        help=f"Auto-trim if graph exceeds this many nodes (default: {TRIM_THRESHOLD_NODES})"
+    )
+    parser.add_argument(
+        "--disable-trim",
+        action="store_true",
+        help="Disable automatic call graph trimming"
+    )
 
     args = parser.parse_args()
 
@@ -329,9 +468,24 @@ def main():
         logger.info("Generating call graph...")
         call_graph = backend.generate_call_graph(filtered_functions=filtered_functions)
 
+        # Auto-trim if enabled and threshold exceeded
+        trim_stats = None
+        if not args.disable_trim and len(call_graph.nodes) > args.trim_threshold:
+            logger.info(f"Call graph has {len(call_graph.nodes)} nodes (threshold: {args.trim_threshold}). Trimming...")
+            call_graph, trim_stats = trim_call_graph(
+                call_graph,
+                filtered_functions,
+                max_hops=args.max_hops,
+                centrality_percentile=CENTRALITY_PERCENTILE
+            )
+        elif args.disable_trim:
+            logger.info("Call graph trimming disabled by user.")
+        else:
+            logger.info(f"Call graph has {len(call_graph.nodes)} nodes (threshold: {args.trim_threshold}). No trimming needed.")
+
         # Export to JSON
         logger.info(f"Exporting to {args.output}...")
-        export_to_json(call_graph, args.binary, args.output)
+        export_to_json(call_graph, args.binary, args.output, trim_stats=trim_stats)
 
         # Print summary
         print("\n" + "="*50)
@@ -340,8 +494,14 @@ def main():
         print(f"Binary: {args.binary}")
         print(f"Library: {args.library}")
         print(f"Output: {args.output}")
-        print(f"Nodes (functions): {len(call_graph.nodes)}")
-        print(f"Edges (calls): {len(call_graph.edges)}")
+        if trim_stats:
+            print(f"Nodes (functions): {len(call_graph.nodes)} (trimmed from {trim_stats['original_nodes']})")
+            print(f"Edges (calls): {len(call_graph.edges)} (trimmed from {trim_stats['original_edges']})")
+            print(f"Trimming: {trim_stats['nodes_removed']} nodes, {trim_stats['edges_removed']} edges removed")
+            print(f"Max hops: {trim_stats['max_hops_used']}")
+        else:
+            print(f"Nodes (functions): {len(call_graph.nodes)}")
+            print(f"Edges (calls): {len(call_graph.edges)}")
         print("="*50)
 
         # Draw the call graph

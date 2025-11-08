@@ -35,7 +35,11 @@ from static_analyzer import (
     export_to_json,
     draw_call_graph,
     get_function_patterns,
-    requires_binary_analysis
+    requires_binary_analysis,
+    trim_call_graph,
+    DEFAULT_MAX_HOPS,
+    TRIM_THRESHOLD_NODES,
+    CENTRALITY_PERCENTILE
 )
 
 # multiple agents:
@@ -699,7 +703,7 @@ async def call_firmware_agent(request: str, context: str = "") -> str:
 
     return result
 
-def generate_call_graph_for_binary(binary_path: str, output_json_path: str, library: str = "openssl", enable_ida_msg: bool = False) -> dict:
+def generate_call_graph_for_binary(binary_path: str, output_json_path: str, library: str = "openssl", enable_ida_msg: bool = False, max_hops: int = DEFAULT_MAX_HOPS, trim_threshold: int = TRIM_THRESHOLD_NODES, disable_trim: bool = False) -> dict:
     """
     Generate call graph for SSL/TLS functions in the binary.
 
@@ -708,6 +712,9 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str, libr
         output_json_path: Path to output JSON file (required)
         library: SSL/TLS library name for pattern filtering (default: "openssl")
         enable_ida_msg: Enable IDA console messages (default: False)
+        max_hops: Maximum hops from SSL functions when trimming (default: DEFAULT_MAX_HOPS)
+        trim_threshold: Auto-trim if graph exceeds this many nodes (default: TRIM_THRESHOLD_NODES)
+        disable_trim: Disable automatic trimming (default: False)
 
     Returns:
         Call graph data as dictionary
@@ -750,9 +757,25 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str, libr
         call_graph = backend.generate_call_graph(filtered_functions=ssl_functions)
         console.print(f"[green]✓[/green] Call graph generated: [bold]{len(call_graph.nodes)}[/bold] nodes, [bold]{len(call_graph.edges)}[/bold] edges")
 
+        # Auto-trim if enabled and threshold exceeded
+        trim_stats = None
+        if not disable_trim and len(call_graph.nodes) > trim_threshold:
+            console.print(f"[cyan]✂[/cyan]  Graph has {len(call_graph.nodes)} nodes (threshold: {trim_threshold}). Trimming...")
+            call_graph, trim_stats = trim_call_graph(
+                call_graph,
+                ssl_functions,
+                max_hops=max_hops,
+                centrality_percentile=CENTRALITY_PERCENTILE
+            )
+            console.print(f"[green]✓[/green] Trimmed: [bold]{trim_stats['trimmed_nodes']}[/bold] nodes (removed {trim_stats['nodes_removed']}), [bold]{trim_stats['trimmed_edges']}[/bold] edges (removed {trim_stats['edges_removed']})")
+        elif disable_trim:
+            console.print("[dim]  Trimming disabled by user[/dim]")
+        else:
+            console.print(f"[dim]  Graph has {len(call_graph.nodes)} nodes (threshold: {trim_threshold}). No trimming needed[/dim]")
+
         # Export to JSON
         console.print(f"[cyan]💾[/cyan]  Exporting to [bold]{output_json_path}[/bold]...")
-        export_to_json(call_graph, binary_path, output_json_path)
+        export_to_json(call_graph, binary_path, output_json_path, trim_stats=trim_stats)
         console.print(f"[green]✓[/green] Exported to JSON")
 
         # Draw PDF
@@ -793,7 +816,7 @@ def generate_call_graph_for_binary(binary_path: str, output_json_path: str, libr
             console.print("[green]✓[/green] Database closed")
             console.print()
 
-async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "plugin", call_graph_path: str = None, firmware_path: str = None, rules: str = "openssl", port: int = 8800):
+async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "plugin", call_graph_path: str = None, firmware_path: str = None, rules: str = "openssl", port: int = 8800, max_hops: int = DEFAULT_MAX_HOPS, trim_threshold: int = TRIM_THRESHOLD_NODES, disable_trim: bool = False):
     """
     Main function to analyze SSL/TLS connections using multi-agent system.
 
@@ -802,6 +825,9 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         call_graph_path: Path to call graph JSON file (default: auto-generated based on binary hash)
         firmware_path: Path to firmware filesystem root (optional, enables firmware agent)
         rules: SSL/TLS library rules to use (default: "openssl")
+        max_hops: Maximum hops from SSL functions when trimming (default: DEFAULT_MAX_HOPS)
+        trim_threshold: Auto-trim if graph exceeds this many nodes (default: TRIM_THRESHOLD_NODES)
+        disable_trim: Disable automatic call graph trimming (default: False)
     """
     total_start_time = time.perf_counter()
 
@@ -845,7 +871,10 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
                         binary_path=file_path,
                         output_json_path=call_graph_path,
                         library=rules,
-                        enable_ida_msg=False
+                        enable_ida_msg=False,
+                        max_hops=max_hops,
+                        trim_threshold=trim_threshold,
+                        disable_trim=disable_trim
                     )
                 except Exception as e:
                     console.print(f"[bold red]✗[/bold red] Cannot continue without call graph. Exiting.")
@@ -1629,6 +1658,23 @@ if __name__ == "__main__":
         default=8800,
         help="IDA headless server port (default: 8800, supports multiple instances)"
     )
+    parser.add_argument(
+        "--max-hops",
+        type=int,
+        default=DEFAULT_MAX_HOPS,
+        help=f"Maximum hops from SSL functions when trimming call graph (default: {DEFAULT_MAX_HOPS})"
+    )
+    parser.add_argument(
+        "--trim-threshold",
+        type=int,
+        default=TRIM_THRESHOLD_NODES,
+        help=f"Auto-trim call graph if it exceeds this many nodes (default: {TRIM_THRESHOLD_NODES})"
+    )
+    parser.add_argument(
+        "--disable-trim",
+        action="store_true",
+        help="Disable automatic call graph trimming"
+    )
     args = parser.parse_args()
 
     asyncio.run(main(
@@ -1638,5 +1684,8 @@ if __name__ == "__main__":
         call_graph_path=args.call_graph,
         firmware_path=args.firmware_path,
         rules=args.rules,
-        port=args.port
+        port=args.port,
+        max_hops=args.max_hops,
+        trim_threshold=args.trim_threshold,
+        disable_trim=args.disable_trim
     ))
