@@ -134,10 +134,7 @@ async def main(
     console.print()
 
     # Load security rules
-    start_time = time.perf_counter()
     security_rules_content = load_security_rules(rules)
-    elapsed = time.perf_counter() - start_time
-    console.print(f"[dim]⏱  Security rules loading: {format_duration(elapsed)}[/dim]")
     console.print()
 
     # Parse model
