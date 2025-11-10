@@ -43,11 +43,11 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
     start_time = time.perf_counter()
 
     # Prune message history if it's getting long to save context
-    if len(messages) > 10:
-        original_count = len(messages)
-        messages = prune_message_history(messages, max_recent=5)
-        console.print(f"[dim]  ℹ  Message history pruned: {original_count} → {len(messages)} messages (context management)[/dim]")
-        console.print()
+    # if len(messages) > 10:
+    #     original_count = len(messages)
+    #     messages = prune_message_history(messages, max_recent=5)
+    #     console.print(f"[dim]  ℹ  Message history pruned: {original_count} → {len(messages)} messages (context management)[/dim]")
+    #     console.print()
 
     final_content = ""
     config = config or {"recursion_limit": 100}

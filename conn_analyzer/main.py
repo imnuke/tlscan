@@ -9,6 +9,7 @@ import sys
 import json
 import time
 import logging
+import subprocess
 from pathlib import Path
 
 # Add project root to path for importing project modules
@@ -66,11 +67,7 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
     total_start_time = time.perf_counter()
 
     # Resolve binary path (handles relative paths against firmware_path or CWD)
-    start_time = time.perf_counter()
     file_path = resolve_binary_path(file_path, firmware_path)
-    elapsed = time.perf_counter() - start_time
-    console.print(f"[dim]⏱  Binary path resolution: {format_duration(elapsed)}[/dim]")
-    console.print()
 
     # Auto-generate unique call graph path if not provided
     if call_graph_path is None:
@@ -96,57 +93,33 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         console.print()
 
     try:
-        if conn_type == 'headless_ida':
-            # Generate call graph BEFORE starting MCP server (only for binary libraries)
-            # (Both use idalib and can't run simultaneously)
-            if needs_call_graph:
-                try:
-                    call_graph_data = generate_call_graph_for_binary(
-                        binary_path=file_path,
-                        output_json_path=call_graph_path,
-                        library=rules,
-                        enable_ida_msg=False,
-                        max_hops=max_hops,
-                        trim_threshold=trim_threshold,
-                        disable_trim=disable_trim
-                    )
-                except Exception as e:
-                    console.print(f"[bold red]✗[/bold red] Cannot continue without call graph. Exiting.")
-                    raise
+        # Generate call graph BEFORE starting MCP server (only for binary libraries)
+        # (Both use idalib and can't run simultaneously)
+        if needs_call_graph:
+            try:
+                call_graph_data = generate_call_graph_for_binary(
+                    binary_path=file_path,
+                    output_json_path=call_graph_path,
+                    library=rules,
+                    enable_ida_msg=False,
+                    max_hops=max_hops,
+                    trim_threshold=trim_threshold,
+                    disable_trim=disable_trim
+                )
+            except Exception as e:
+                console.print(f"[bold red]✗[/bold red] Cannot continue without call graph. Exiting.")
+                raise
 
-            # Now start headless IDA server (database is closed from graph generation)
-            # Auto-start headless IDA server
-            server_process = start_headless_ida_server(file_path, port=port)
+        # Now start headless IDA server (database is closed from graph generation)
+        # Auto-start headless IDA server
+        server_process = start_headless_ida_server(file_path, port=port)
 
-            server_config = {
-                "idapro": {
-                    "transport": "sse",
-                    "url": f"http://localhost:{port}/sse"
-                }
+        server_config = {
+            "idapro": {
+                "transport": "sse",
+                "url": f"http://localhost:{port}/sse"
             }
-        elif conn_type == 'plugin':
-            # Use IDA GUI plugin (manual startup required)
-            # Load call graph from existing file (only for binary libraries)
-            if needs_call_graph and call_graph_path and os.path.exists(call_graph_path):
-                try:
-                    with open(call_graph_path, 'r') as f:
-                        call_graph_data = json.load(f)
-                    console.print(f"[green]✓[/green] Loaded call graph from [bold]{call_graph_path}[/bold]")
-                except Exception as e:
-                    console.print(f"[yellow]⚠[/yellow]  Failed to load call graph: {e}")
-            elif needs_call_graph and call_graph_path:
-                console.print(f"[yellow]⚠[/yellow]  Call graph file not found: {call_graph_path}")
-                console.print(f"[dim]   ℹ  Run static_analyzer.py separately or use --conn-type=headless_ida for auto-generation[/dim]")
-
-            server_config = {
-                "idapro": {
-                    "transport": "stdio",
-                    "command": "python",
-                    "args": [server_script]
-                }
-            }
-        else:
-            raise ValueError(f"Invalid connection type: {conn_type}")
+        }
 
         start_time = time.perf_counter()
         client = MultiServerMCPClient(server_config)
@@ -217,7 +190,7 @@ async def main(file_path: str, model: str = "deepseek-chat", conn_type: str = "p
         )
     finally:
         # Clean up headless server
-        if conn_type == 'headless_ida' and server_process:
+        if server_process:
             console.print()
             console.print("[cyan]🛑[/cyan]  Shutting down headless IDA server...")
             server_process.terminate()
