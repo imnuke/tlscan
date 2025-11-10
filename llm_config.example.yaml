@@ -1,0 +1,23 @@
+# LLM API Configuration
+# Copy this file to llm_config.yaml and fill in your API keys
+
+providers:
+  # DeepSeek configuration
+  deepseek:
+    api_key: "your-deepseek-api-key-here"
+    api_base: "https://api.deepseek.com"  # Optional, uses default if not specified
+
+  # OpenAI configuration
+  openai:
+    api_key: "your-openai-api-key-here"
+    api_base: "https://api.openai.com/v1"  # Optional, for custom endpoints
+
+  # Anthropic configuration
+  anthropic:
+    api_key: "your-anthropic-api-key-here"
+
+# Usage:
+# 1. Copy this file: cp llm_config.example.yaml llm_config.yaml
+# 2. Edit llm_config.yaml and add your API keys
+# 3. The llm_config.yaml file is gitignored to prevent accidentally committing secrets
+# 4. Use --model flag to select provider: --model deepseek:deepseek-chat

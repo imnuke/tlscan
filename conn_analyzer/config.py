@@ -60,3 +60,16 @@ SECURITY_RULES_DIR = Path("security_rules")
 LOG_LEVEL_HTTPX = "WARNING"
 LOG_LEVEL_HTTPCORE = "WARNING"
 LOG_LEVEL_MCP = "WARNING"
+
+# ============================================================================
+# LLM Configuration
+# ============================================================================
+
+PROJECT_ROOT = Path(__file__).parent.parent
+"""Root directory of the project."""
+
+LLM_CONFIG_FILE = PROJECT_ROOT / "llm_config.yaml"
+"""Path to the LLM API configuration file."""
+
+LLM_CONFIG_EXAMPLE_FILE = PROJECT_ROOT / "llm_config.example.yaml"
+"""Path to the example LLM configuration file."""

@@ -6,10 +6,19 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "ida-domain>=0.2.0",
+    "idapro>=0.0.6",
     "langchain>=1.0.1",
     "langchain-deepseek>=1.0.0",
     "langchain-mcp-adapters>=0.1.11",
     "langchain-openai>=1.0.0",
+    "networkx>=3.5",
+    "numpy>=2.0.0",
     "pyelftools>=0.32",
+    "pygraphviz",
+    "pyyaml>=6.0.0",
     "rich>=14.1.0",
+    "tiktoken>=0.8.0",
 ]
+
+[tool.uv.sources]
+pygraphviz = { git = "https://github.com/pygraphviz/pygraphviz.git", rev = "2fa8af802aeecfe92e53425c2503587de9593d9e" }

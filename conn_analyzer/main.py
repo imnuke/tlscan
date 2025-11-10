@@ -59,17 +59,37 @@ def parse_model_string(model: str):
     Returns:
         Tuple of (llm_instance, model_name)
     """
+    from conn_analyzer.config_loader import get_config, ConfigurationError
+
     if ":" in model:
         provider, model_name = model.split(":", 1)
+
+        # Load provider configuration from YAML
+        try:
+            config = get_config()
+            provider_config = config.get_provider_config(provider)
+        except ConfigurationError as e:
+            console.print(f"[red]Configuration Error:[/red] {e}")
+            raise
+
+        api_key = provider_config['api_key']
+        api_base = provider_config.get('api_base')
+
         if provider == "openai":
             from langchain_openai import ChatOpenAI
-            return ChatOpenAI(model=model_name), model_name
+            kwargs = {"model": model_name, "api_key": api_key}
+            if api_base:
+                kwargs["base_url"] = api_base
+            return ChatOpenAI(**kwargs), model_name
         elif provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
-            return ChatAnthropic(model=model_name), model_name
+            return ChatAnthropic(model=model_name, api_key=api_key), model_name
         elif provider == "deepseek":
             from langchain_deepseek import ChatDeepSeek
-            return ChatDeepSeek(model=model_name), model_name
+            kwargs = {"model": model_name, "api_key": api_key}
+            if api_base:
+                kwargs["base_url"] = api_base
+            return ChatDeepSeek(**kwargs), model_name
         else:
             raise ValueError(f"Unknown provider: {provider}")
     else:

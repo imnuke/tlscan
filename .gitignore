@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+temp_files/
+
+# LLM API configuration (contains secrets)
+llm_config.yaml
