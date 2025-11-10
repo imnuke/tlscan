@@ -10,11 +10,9 @@ from conn_analyzer.utils.formatting import (
     format_duration,
     LeftAlignedHeading,
     create_markdown,
-    format_call_graph,
 )
 
 from conn_analyzer.utils.file_utils import (
-    compute_call_graph_path,
     resolve_binary_path,
     load_security_rules,
 )
@@ -26,9 +24,7 @@ __all__ = [
     "format_duration",
     "LeftAlignedHeading",
     "create_markdown",
-    "format_call_graph",
     # File utilities
-    "compute_call_graph_path",
     "resolve_binary_path",
     "load_security_rules",
 ]

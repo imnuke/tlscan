@@ -25,12 +25,61 @@ from conn_analyzer.agents.prompts import (
 import conn_analyzer.agents.tools.agent_wrappers as agent_wrappers
 
 
+async def create_agents_for_binary(
+    mcp_client: any,
+    binary_path: str,
+    llm: any,
+    security_rules_content: str = ""
+) -> dict:
+    """
+    Create agents for a specific binary (dataflow + SSL only).
+
+    This function is used by BinaryRegistry to create agents for dynamically
+    discovered binaries. Each binary gets its own set of agents with its own
+    MCP tools.
+
+    Args:
+        mcp_client: MCP client instance for this binary
+        binary_path: Path to the binary file
+        llm: Language model instance to use
+        security_rules_content: Security rules content (optional)
+
+    Returns:
+        Dictionary with agent instances: {
+            'dataflow': dataflow_agent,
+            'ssl': ssl_analyzing_agent
+        }
+    """
+    # Get tools from MCP client
+    tools = await mcp_client.get_tools()
+
+    # Create dataflow agent
+    dataflow_agent = create_agent(
+        model=llm,
+        tools=tools,
+        middleware=[handle_tool_errors],
+        system_prompt=DATAFLOW_SYSTEM_PROMPT
+    )
+
+    # Create SSL analyzing agent
+    ssl_analyzing_agent = create_agent(
+        model=llm,
+        tools=tools,
+        middleware=[handle_tool_errors],
+        system_prompt=get_ssl_system_prompt(security_rules_content)
+    )
+
+    return {
+        'dataflow': dataflow_agent,
+        'ssl': ssl_analyzing_agent
+    }
+
+
 def create_all_agents(
     model: str,
     tools: list,
     security_rules_content: str = "",
-    firmware_path: str | None = None,
-    call_graph_context: str = ""
+    firmware_path: str | None = None
 ) -> dict:
     """
     Create all agents with proper configuration.
@@ -40,7 +89,6 @@ def create_all_agents(
         tools: List of IDA Pro MCP tools
         security_rules_content: Security rules content (optional)
         firmware_path: Path to firmware root (optional)
-        call_graph_context: Call graph context string (optional)
 
     Returns:
         Dictionary with agent instances: {
@@ -108,8 +156,7 @@ def create_all_agents(
         tools=supervisor_tools,
         middleware=[handle_tool_errors],
         system_prompt=get_supervisor_system_prompt(
-            firmware_available=(firmware_path is not None),
-            call_graph_context=call_graph_context
+            firmware_available=(firmware_path is not None)
         )
     )
 

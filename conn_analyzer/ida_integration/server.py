@@ -12,7 +12,6 @@ from rich.panel import Panel
 
 from conn_analyzer.config import (
     IDA_SERVER_HOST,
-    IDA_SERVER_PORT,
     IDA_SERVER_STARTUP_TIMEOUT,
     IDA_SERVER_READINESS_CHECK_INTERVAL,
 )
@@ -25,7 +24,7 @@ console = Console()
 def start_headless_ida_server(
     binary_path: str,
     host: str = IDA_SERVER_HOST,
-    port: int = IDA_SERVER_PORT
+    port: int = 8800  # Default port, will be allocated by PortManager in practice
 ) -> subprocess.Popen:
     """
     Start headless IDA server process.

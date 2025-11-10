@@ -1,57 +1,18 @@
 """
 File utilities for conn_analyzer.
 
-Provides functions for path resolution, call graph path computation, and rule loading.
+Provides functions for path resolution and rule loading.
 """
 
 import os
-import hashlib
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from conn_analyzer.config import SECURITY_RULES_DIR, TEMP_FILES_DIR
+from conn_analyzer.config import SECURITY_RULES_DIR
 
 # Initialize console for output
 console = Console()
-
-# Libraries that require binary analysis (vs script-based libraries)
-BINARY_LIBRARIES = {"openssl", "libcurl", "gnutls", "mbedtls", "socket"}
-
-
-def requires_binary_analysis(library: str) -> bool:
-    """Check if library requires binary analysis (call graph generation).
-
-    Args:
-        library: Library name
-
-    Returns:
-        True if library needs binary analysis, False for script-based libraries
-    """
-    return library in BINARY_LIBRARIES
-
-
-def compute_call_graph_path(binary_path: str) -> str:
-    """
-    Compute unique call graph path based on binary content hash.
-
-    Uses MD5 hash of binary contents to generate a unique filename.
-    This ensures that different binaries get different call graph files,
-    even if they have the same name.
-
-    Args:
-        binary_path: Path to the binary file
-
-    Returns:
-        Path to the call graph JSON file (e.g., 'temp_files/callgraph_abc123.json')
-    """
-    with open(binary_path, 'rb') as f:
-        binary_hash = hashlib.md5(f.read()).hexdigest()[:8]
-
-    # Ensure temp directory exists
-    TEMP_FILES_DIR.mkdir(exist_ok=True)
-
-    return str(TEMP_FILES_DIR / f"callgraph_{binary_hash}.json")
 
 
 def resolve_binary_path(binary_path: str, firmware_path: str | None = None) -> str:

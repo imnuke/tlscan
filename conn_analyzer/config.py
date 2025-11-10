@@ -20,9 +20,6 @@ TOKEN_WARNING_THRESHOLD = 8000
 IDA_SERVER_HOST = "localhost"
 """Host for headless IDA server."""
 
-IDA_SERVER_PORT = 3002
-"""Port for headless IDA server."""
-
 IDA_SERVER_STARTUP_TIMEOUT = 30
 """Timeout in seconds for IDA server to start."""
 
@@ -30,24 +27,27 @@ IDA_SERVER_READINESS_CHECK_INTERVAL = 0.5
 """Interval in seconds between IDA server readiness checks."""
 
 # ============================================================================
-# Call Graph Configuration
+# Port Allocation
 # ============================================================================
 
-DEFAULT_MAX_HOPS = 3
-"""Maximum hops from SSL functions to keep when trimming call graphs."""
+PORT_RANGE_START = 8800
+"""Start of port range for dynamic MCP server allocation."""
 
-TRIM_THRESHOLD_NODES = 100
-"""Auto-trim call graph if it exceeds this many nodes."""
+PORT_RANGE_END = 8900
+"""End of port range for dynamic MCP server allocation."""
 
-CENTRALITY_PERCENTILE = 0.80
-"""Keep nodes in top 20% by betweenness centrality when trimming."""
+PORT_LOCK_TIMEOUT = 3600
+"""Timeout in seconds for port locks (1 hour). Locks older than this are considered stale."""
 
 # ============================================================================
 # File Paths
 # ============================================================================
 
 TEMP_FILES_DIR = Path("temp_files")
-"""Directory for temporary files (call graphs, etc.)."""
+"""Directory for temporary files."""
+
+PORT_LOCK_DIR = TEMP_FILES_DIR / "port_locks"
+"""Directory for port lock files used in multi-instance coordination."""
 
 SECURITY_RULES_DIR = Path("security_rules")
 """Directory containing security rule markdown files."""

@@ -61,7 +61,7 @@ async def call_dataflow_agent(request: str, context: str = "") -> str:
     return result
 
 @tool
-async def call_ssl_agent(request: str, call_graph_context: str = "") -> str:
+async def call_ssl_agent(request: str) -> str:
     """
     Perform SSL/TLS security analysis on the binary.
 
@@ -80,21 +80,18 @@ async def call_ssl_agent(request: str, call_graph_context: str = "") -> str:
 
     Args:
         request: SSL analysis request (usually "Analyze SSL/TLS security")
-        call_graph_context: Call graph summary to guide analysis
 
     Returns:
         SSL security analysis results or help request
     """
-    full_request = f"{request}\n\nCall Graph Context:\n{call_graph_context}" if call_graph_context else request
-
     # Log request token count
-    request_tokens = count_tokens(full_request)
+    request_tokens = count_tokens(request)
     console.print(f"[dim]📤 SSL Agent Request: {format_token_count(request_tokens)} tokens[/dim]")
     console.print()
 
     result = await stream_and_log_agent(
         agent=ssl_analyzing_agent,
-        messages=[{"role": "user", "content": full_request}],
+        messages=[{"role": "user", "content": request}],
         agent_name="SSL Security Analyzing Agent",
         agent_emoji="🔐"
     )

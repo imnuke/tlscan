@@ -1,7 +1,7 @@
 """
 Formatting utilities for conn_analyzer.
 
-Provides functions for formatting tokens, durations, markdown, and call graphs.
+Provides functions for formatting tokens, durations, and markdown.
 """
 
 from rich.markdown import Markdown, Heading
@@ -94,58 +94,3 @@ def create_markdown(content: str) -> Markdown:
     # Override the heading element to use our custom left-aligned version
     md.elements["heading_open"] = LeftAlignedHeading
     return md
-
-
-def format_call_graph(call_graph_data: dict) -> str:
-    """
-    Format call graph data into a readable text representation.
-
-    Args:
-        call_graph_data: Dictionary containing call graph metadata, nodes, and edges
-
-    Returns:
-        Formatted string representation of the call graph
-    """
-    if not call_graph_data:
-        return ""
-
-    output = ["# Call Graph Information\n"]
-
-    # Add metadata
-    metadata = call_graph_data.get("metadata", {})
-    output.append("## Metadata")
-    output.append(f"- Binary: {metadata.get('binary', 'N/A')}")
-    output.append(f"- Total functions: {metadata.get('node_count', 0)}")
-    output.append(f"- Total call relationships: {metadata.get('edge_count', 0)}")
-
-    ssl_patterns = metadata.get('ssl_patterns', [])
-    if ssl_patterns:
-        output.append(f"- SSL/TLS patterns: {', '.join(ssl_patterns)}")
-    output.append("")
-
-    # List all nodes
-    nodes = call_graph_data.get("nodes", [])
-    if nodes:
-        output.append("## Nodes (Functions)")
-        output.append(f"Total: {len(nodes)} functions")
-        output.append("")
-        for node in nodes:
-            name = node.get("name", "")
-            address = node.get("address", "")
-            output.append(f"- {name} ({address})")
-        output.append("")
-
-    # List all edges
-    edges = call_graph_data.get("edges", [])
-    if edges:
-        output.append("## Edges (Call Relationships)")
-        output.append(f"Total: {len(edges)} edges")
-        output.append("")
-        for edge in edges:
-            caller = edge.get("caller", "")
-            callee = edge.get("callee", "")
-            call_site = edge.get("call_site", "")
-            output.append(f"- {caller} → {callee} (at {call_site})")
-        output.append("")
-
-    return "\n".join(output)

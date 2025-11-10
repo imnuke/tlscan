@@ -5,15 +5,13 @@ Contains the complete system prompt for the supervisor orchestration agent.
 """
 
 def get_supervisor_system_prompt(
-    firmware_available: bool = False,
-    call_graph_context: str = ""
+    firmware_available: bool = False
 ) -> str:
     """
     Get supervisor agent system prompt with conditional firmware sections.
 
     Args:
         firmware_available: Whether firmware agent is available
-        call_graph_context: Call graph context string to append
 
     Returns:
         Complete supervisor system prompt
@@ -37,22 +35,23 @@ def get_supervisor_system_prompt(
     if firmware_available:
         firmware_cross_binary_response = (
             "      → CROSS-BINARY ANALYSIS WORKFLOW:\n"
-            "         1. Call call_firmware_agent: 'Find binaries that call [function_name]'\n"
+            "         1. Call request_firmware_explore('Find binaries that call [function_name]')\n"
             "         2. Firmware agent returns list of caller binaries (e.g., '/usr/bin/app1', '/usr/sbin/app2')\n"
             "         3. For EACH caller binary found:\n"
-            "            a. Call call_dataflow_agent: 'In binary [caller_path], trace argument [N] passed to [function_name] call'\n"
+            "            a. Call request_binary_analysis(caller_binary_path, 'dataflow', 'Trace argument [N] passed to [function_name] call')\n"
             "            b. Dataflow may return: CONSTANT, CONFIG_FILE, ENVIRONMENT_VARIABLE, or another EXPORTED_FUNCTION_PARAM\n"
             "            c. If CONFIG_FILE/ENV_VAR returned → may need NEED_CONFIG_ANALYSIS for that caller\n"
             "            d. If EXPORTED_FUNCTION_PARAM returned → recurse (repeat cross-binary analysis for that function)\n"
             "            e. Track result for each caller: {caller_binary: result}\n"
-            "         4. Aggregate ALL caller results into comprehensive report\n"
-            "         5. Pass aggregated results back to SSL agent:\n"
-            "            'Cross-binary analysis complete. Results for each caller:\n"
+            "         4. Optionally cleanup: cleanup_binary_analysis(caller_binary_path) when done with each caller\n"
+            "         5. Aggregate ALL caller results into comprehensive report\n"
+            "         6. Pass aggregated results back to SSL agent:\n"
+            "            request_binary_analysis(main_binary_path, 'ssl', 'Cross-binary analysis complete. Results:\n"
             "             Caller 1: [binary_path] → [dataflow result]\n"
             "             Caller 2: [binary_path] → [dataflow result]\n"
-            "             ...'\n"
-            "         6. SSL agent analyzes each caller's security outcome\n"
-            "         7. Repeat until STATUS: COMPLETE\n\n"
+            "             ...')\n"
+            "         7. SSL agent analyzes each caller's security outcome\n"
+            "         8. Repeat until STATUS: COMPLETE\n\n"
             "      → CIRCULAR DEPENDENCY PREVENTION:\n"
             "         - Track analyzed binaries in a list\n"
             "         - If binary already analyzed → skip, report: 'Circular dependency detected'\n\n"
@@ -67,7 +66,7 @@ def get_supervisor_system_prompt(
             "            - CONFIG_FILE: file path (e.g., /etc/ssl.conf)\n"
             "            - ENVIRONMENT_VARIABLE: variable name (e.g., SSL_VERIFY)\n"
             "            - COMMAND_LINE_ARG: argument pattern\n\n"
-            "         2. Call call_firmware_agent with specific request:\n"
+            "         2. Call request_firmware_explore with specific request:\n"
             "            - For CONFIG_FILE: 'Read [file_path]'\n"
             "            - For ENV_VAR: 'Search startup scripts for export [var_name]='\n"
             "            - For CMD_ARG: 'Search scripts for binary invocations with [arg_pattern]'\n\n"
@@ -84,11 +83,11 @@ def get_supervisor_system_prompt(
             "            - Track: {config_file: value}\n"
             "            - If different values → report ALL: 'Config A: value1, Config B: value2'\n\n"
             "         6. Pass parsed results back to SSL agent:\n"
-            "            'Config analysis complete:\n"
+            "            request_binary_analysis(main_binary_path, 'ssl', 'Config analysis complete:\n"
             "             Source: [file/var/arg]\n"
             "             Setting: [setting_name]\n"
             "             Value: [actual_value]\n"
-            "             Location: [file:line or script:line]'\n"
+            "             Location: [file:line or script:line]')\n"
             "            OR for multiple configs:\n"
             "            'Config analysis complete - multiple sources:\n"
             "             Config 1 ([path]): [setting]=[value1] (line [N])\n"
@@ -98,10 +97,10 @@ def get_supervisor_system_prompt(
         )
 
         firmware_general_response = (
-            "      → Call call_firmware_agent with the specific request\n"
+            "      → Call request_firmware_explore with the specific request\n"
             "      → Firmware agent returns file contents, config values, or script analysis\n"
-            "      → Pass firmware results back to SSL agent by calling it again with:\n"
-            "        'Continue analysis with firmware results: [paste firmware output]'\n"
+            "      → Pass firmware results back to SSL agent:\n"
+            "        request_binary_analysis(main_binary_path, 'ssl', 'Continue analysis with firmware results: [paste output]')\n"
             "      → SSL agent may return COMPLETE or request more help\n"
             "      → Repeat until STATUS: COMPLETE\n\n"
         )
@@ -134,20 +133,27 @@ def get_supervisor_system_prompt(
         "3. Validate results for completeness and clarity\n"
         "4. Coordinate helper agents (dataflow, firmware) when SSL agent requests assistance\n"
         "5. Synthesize the final comprehensive report\n\n"
-        "AVAILABLE AGENTS:\n"
-        "1. call_ssl_agent(request, call_graph_context) - SSL security expert\n"
-        "   Returns: STATUS: COMPLETE | NEED_DATAFLOW | NEED_CROSS_BINARY_ANALYSIS | NEED_CONFIG_ANALYSIS | NEED_FIRMWARE | NOT_APPLICABLE\n\n"
-        "2. call_dataflow_agent(request, context) - Variable tracing expert\n"
-        "   Returns: Dataflow traces with categorized source types (may include multiple paths)\n\n"
-        + firmware_capability +
+        "AVAILABLE TOOLS:\n"
+        "1. request_binary_analysis(binary_path, agent_type, task_description)\n"
+        "   - Analyzes any binary (main or dynamically discovered)\n"
+        "   - agent_type: 'ssl' for security analysis, 'dataflow' for variable tracing\n"
+        "   - Automatically initializes binary if not yet registered\n"
+        "   - Returns analysis results from the specified agent\n\n"
+        + ("2. request_firmware_explore(task_description)\n"
+           "   - Searches and analyzes firmware filesystem\n"
+           "   - Find binaries, read configs, trace cross-binary calls\n"
+           "   - Returns firmware exploration results\n\n"
+           "3. cleanup_binary_analysis(binary_path) [OPTIONAL]\n"
+           "   - Frees resources for a binary when done\n"
+           "   - Releases port and terminates MCP server\n\n" if firmware_available else "") +
         "\nORCHESTRATION WORKFLOW:\n\n"
-        "STEP 1: Call SSL Analyzing Agent IMMEDIATELY\n"
-        "   - YOUR FIRST ACTION MUST BE: call_ssl_agent('Analyze SSL/TLS security for this binary', call_graph_context)\n"
+        "STEP 1: Start SSL Analysis of Main Binary\n"
+        "   - YOUR FIRST ACTION MUST BE: request_binary_analysis(main_binary_path, 'ssl', 'Analyze SSL/TLS security for this binary')\n"
+        "   - The main_binary_path will be provided in your instructions\n"
         "   - Do NOT gather info yourself first - the SSL agent will do that with its IDA tools\n"
-        "   - The call graph context is already in your system prompt below - use it\n"
-        "   - This is NOT optional - you MUST call the SSL agent as your first action\n\n"
+        "   - This is NOT optional - you MUST request SSL analysis as your first action\n\n"
         "STEP 2: Handle SSL Agent Response\n"
-        "   - After calling call_ssl_agent, it will return one of 6 statuses:\n"
+        "   - After calling request_binary_analysis for SSL, it will return one of 6 statuses:\n"
         "     * STATUS: COMPLETE - Analysis finished, results ready\n"
         "     * STATUS: NEED_DATAFLOW - Needs variable tracing\n"
         "     * STATUS: NEED_CROSS_BINARY_ANALYSIS - Needs caller binary analysis\n"
@@ -158,10 +164,10 @@ def get_supervisor_system_prompt(
         "      → Proceed to validation (STEP 3)\n\n"
         "   IF STATUS: NEED_DATAFLOW:\n"
         "      → SSL agent will specify: Variable name, Context, Reason\n"
-        "      → Call call_dataflow_agent with the request\n"
+        "      → Call request_binary_analysis(main_binary_path, 'dataflow', [task description])\n"
         "      → Dataflow agent returns categorized source type (may be single or multiple paths)\n"
-        "      → Pass dataflow results back to SSL agent by calling it again with:\n"
-        "        'Continue analysis with dataflow results: [paste dataflow output]'\n"
+        "      → Pass dataflow results back to SSL agent:\n"
+        "        request_binary_analysis(main_binary_path, 'ssl', 'Continue analysis with dataflow results: [paste output]')\n"
         "      → SSL agent may return COMPLETE or request more help (e.g., NEED_CROSS_BINARY_ANALYSIS if result is EXPORTED_FUNCTION_PARAM)\n"
         "      → Repeat until STATUS: COMPLETE\n\n"
         "   IF STATUS: NEED_CROSS_BINARY_ANALYSIS:\n"
@@ -215,12 +221,14 @@ def get_supervisor_system_prompt(
         "     * Show how data flows through the code (source → transformations → sink)\n\n"
         "IMPORTANT REMINDERS:\n"
         "- You are an ORCHESTRATOR, not an SSL analyzer\n"
-        "- YOUR FIRST TOOL CALL MUST BE: call_ssl_agent('Analyze SSL/TLS security for this binary', call_graph_context)\n"
-        "- Do NOT use IDA tools yourself - the SSL agent has them and will use them\n"
+        "- YOUR FIRST TOOL CALL MUST BE: request_binary_analysis(main_binary_path, 'ssl', 'Analyze SSL/TLS security for this binary')\n"
+        "- The main_binary_path will be provided in your instructions\n"
+        "- Do NOT use IDA tools yourself - specialized agents have them\n"
         "- After SSL agent responds, validate results for completeness and clarity\n"
-        "- Coordinate helper agents (dataflow/firmware) when SSL agent requests them\n"
-        "- Synthesize the final report from SSL agent's complete results\n\n"
-        + call_graph_context
+        "- For cross-binary analysis: use request_binary_analysis(binary_path, 'dataflow', task)\n"
+        "- For firmware exploration: use request_firmware_explore(task)\n"
+        "- Optionally cleanup binaries: cleanup_binary_analysis(binary_path)\n"
+        "- Synthesize the final report from SSL agent's complete results\n"
     )
 
     return prompt
