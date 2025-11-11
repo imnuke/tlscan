@@ -136,6 +136,21 @@ class BinaryRegistry:
                 port = self._port_manager.allocate_port(binary_path=normalized_path)
                 console.print(f"[dim]  ├─ Allocated port: {port}[/dim]")
 
+                # Hack: Pre-initialize IDA database to avoid PySide6 errors
+                # When IDA opens a binary for the first time, it needs to do analysis
+                # which may trigger GUI-related code paths. By opening and closing
+                # the database first, the headless server can then open an existing database.
+                console.print(f"[dim]  ├─ Pre-initializing IDA database...[/dim]")
+                try:
+                    import idapro
+                    ida_db = idapro.open_database(normalized_path, enable_ida_msg=False)
+                    ida_db.close()
+                    console.print(f"[dim]  ├─ Database pre-initialized[/dim]")
+                except Exception as e:
+                    # Database might already exist or initialization might fail
+                    # Continue anyway as the headless server might still work
+                    console.print(f"[yellow]  ├─ Pre-init note: {e}[/yellow]")
+
                 # Start headless IDA server
                 server_process = start_headless_ida_server(normalized_path, port=port)
                 console.print(f"[dim]  ├─ Started MCP server on port {port}[/dim]")
@@ -157,7 +172,7 @@ class BinaryRegistry:
                 from conn_analyzer.agents.factory import create_agents_for_binary
 
                 agents = await create_agents_for_binary(
-                    mcp_client=client,
+                    tools=tools,
                     binary_path=normalized_path,
                     llm=self._llm
                 )

@@ -43,7 +43,7 @@ PORT_LOCK_TIMEOUT = 3600
 # File Paths
 # ============================================================================
 
-TEMP_FILES_DIR = Path("temp_files")
+TEMP_FILES_DIR = Path("/tmp/conn_analyzer")
 """Directory for temporary files."""
 
 PORT_LOCK_DIR = TEMP_FILES_DIR / "port_locks"

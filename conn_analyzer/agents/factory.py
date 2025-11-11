@@ -26,7 +26,7 @@ import conn_analyzer.agents.tools.agent_wrappers as agent_wrappers
 
 
 async def create_agents_for_binary(
-    mcp_client: any,
+    tools: list,
     binary_path: str,
     llm: any,
     security_rules_content: str = ""
@@ -39,7 +39,7 @@ async def create_agents_for_binary(
     MCP tools.
 
     Args:
-        mcp_client: MCP client instance for this binary
+        tools: List of IDA tools from MCP client
         binary_path: Path to the binary file
         llm: Language model instance to use
         security_rules_content: Security rules content (optional)
@@ -50,8 +50,6 @@ async def create_agents_for_binary(
             'ssl': ssl_analyzing_agent
         }
     """
-    # Get tools from MCP client
-    tools = await mcp_client.get_tools()
 
     # Create dataflow agent
     dataflow_agent = create_agent(
