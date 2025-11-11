@@ -143,8 +143,9 @@ class BinaryRegistry:
                 console.print(f"[dim]  ├─ Pre-initializing IDA database...[/dim]")
                 try:
                     import idapro
-                    ida_db = idapro.open_database(normalized_path, enable_ida_msg=False)
-                    ida_db.close()
+                    idapro.enable_console_messages(False)
+                    idapro.open_database(normalized_path, run_auto_analysis=True)
+                    idapro.close_database()
                     console.print(f"[dim]  ├─ Database pre-initialized[/dim]")
                 except Exception as e:
                     # Database might already exist or initialization might fail
