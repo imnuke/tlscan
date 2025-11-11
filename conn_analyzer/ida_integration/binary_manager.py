@@ -56,7 +56,8 @@ class BinaryRegistry:
         self,
         firmware_path: Optional[str],
         llm: any,
-        port_manager: PortManager
+        port_manager: PortManager,
+        security_rules_content: str = ""
     ):
         """Initialize the binary registry.
 
@@ -64,12 +65,14 @@ class BinaryRegistry:
             firmware_path: Path to firmware root (for resolving relative binary paths)
             llm: Language model instance to use for creating agents
             port_manager: PortManager instance for port allocation
+            security_rules_content: Security rules content to inject into SSL agent prompts
         """
         self._registry: Dict[str, BinaryEntry] = {}
         self._lock = Lock()  # Thread-safe operations
         self._firmware_path = firmware_path
         self._llm = llm
         self._port_manager = port_manager
+        self._security_rules_content = security_rules_content
 
     def _normalize_path(self, binary_path: str) -> str:
         """Normalize binary path to absolute path.
@@ -175,7 +178,8 @@ class BinaryRegistry:
                 agents = await create_agents_for_binary(
                     tools=tools,
                     binary_path=normalized_path,
-                    llm=self._llm
+                    llm=self._llm,
+                    security_rules_content=self._security_rules_content
                 )
                 console.print(f"[dim]  └─ Created agents: {', '.join(agents.keys())}[/dim]")
 

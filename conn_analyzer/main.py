@@ -155,7 +155,8 @@ async def main(
     binary_registry = BinaryRegistry(
         firmware_path=firmware_path,
         llm=llm,
-        port_manager=port_manager
+        port_manager=port_manager,
+        security_rules_content=security_rules_content
     )
     console.print()
 
