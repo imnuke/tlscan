@@ -104,6 +104,11 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                     console.print(md)
                     console.print()
                     final_content = last_message.content
+            else:
+                # Output unhandled message types for debugging
+                console.print(f"[dim]  ℹ  Unhandled message type in {agent_name}:[/dim]")
+                console.print(f"  [dim]{last_message}[/dim]")
+                console.print()
 
     elapsed = time.perf_counter() - start_time
     console.print(Panel.fit(
