@@ -1,8 +1,8 @@
 """
 Main orchestrator for conn_analyzer.
 
-Coordinates IDA integration, agent creation, and analysis execution with
-support for dynamic multi-binary analysis.
+Coordinates IDA integration, agent creation, and analysis execution using
+LangGraph-based workflow with support for dynamic multi-binary analysis.
 """
 
 import os
@@ -31,13 +31,8 @@ from conn_analyzer.utils.file_utils import (
 from conn_analyzer.utils.formatting import format_duration
 from conn_analyzer.ida_integration.port_manager import PortManager
 from conn_analyzer.ida_integration.binary_manager import BinaryRegistry
-from conn_analyzer.agents.factory import create_all_agents
-from conn_analyzer.agents.core.execution import stream_and_log_agent
-from conn_analyzer.agents.tools.analysis_requests import (
-    create_request_binary_analysis_tool,
-    create_request_firmware_explore_tool,
-    create_cleanup_binary_analysis_tool,
-)
+from conn_analyzer.graph.state import create_initial_state
+from conn_analyzer.graph.workflow import create_analysis_graph, run_analysis
 
 import firmware_tools
 
@@ -104,10 +99,10 @@ async def main(
     rules: str = "openssl"
 ):
     """
-    Main function to analyze SSL/TLS connections using multi-agent system.
+    Main function to analyze SSL/TLS connections using LangGraph-based multi-agent system.
 
-    This function implements a unified architecture where all binaries (main and
-    dynamically discovered) are treated uniformly through a BinaryRegistry.
+    This function implements a graph-based workflow architecture where all analysis
+    steps are orchestrated through LangGraph's StateGraph.
 
     Args:
         file_path: Path to binary file to analyze
@@ -120,7 +115,7 @@ async def main(
 
     console.print()
     console.print(Panel.fit(
-        "[bold cyan]🔍 conn-analyzer - Dynamic Multi-Binary SSL/TLS Security Analysis[/bold cyan]",
+        "[bold cyan]🔍 conn-analyzer - LangGraph-Based SSL/TLS Security Analysis[/bold cyan]",
         border_style="cyan"
     ))
     console.print()
@@ -161,7 +156,7 @@ async def main(
     console.print()
 
     try:
-        # 4. Register main binary (unified handling)
+        # 4. Register main binary
         console.print(f"[cyan]🚀 Registering main binary:[/cyan] {file_path}")
         main_entry = await binary_registry.register_binary(file_path)
         console.print()
@@ -196,80 +191,60 @@ async def main(
             console.print("[green]✓ Firmware agent ready[/green]")
             console.print()
 
-        # 6. Create supervisor agent with unified tools
-        console.print("[cyan]🎯 Creating supervisor agent...[/cyan]")
-
-        # Create unified supervisor tools
-        request_binary_analysis = create_request_binary_analysis_tool(binary_registry)
-        request_firmware_explore = create_request_firmware_explore_tool(firmware_agent)
-        cleanup_binary_analysis = create_cleanup_binary_analysis_tool(binary_registry)
-
-        supervisor_tools = [
-            request_binary_analysis,
-            request_firmware_explore,
-            cleanup_binary_analysis,
-        ]
-
-        # Import supervisor prompt
-        from langchain.agents import create_agent
-        from conn_analyzer.agents.core.middleware import handle_tool_errors
-        from conn_analyzer.agents.prompts import get_supervisor_system_prompt
-
-        supervisor_agent = create_agent(
-            model=llm,
-            tools=supervisor_tools,
-            middleware=[handle_tool_errors],
-            system_prompt=get_supervisor_system_prompt(
-                firmware_available=(firmware_path is not None)
-            )
+        # 6. Create LangGraph workflow
+        console.print("[cyan]🎯 Building analysis workflow graph...[/cyan]")
+        graph = create_analysis_graph(
+            binary_registry=binary_registry,
+            firmware_agent=firmware_agent
         )
-        console.print("[green]✓ Supervisor agent ready[/green]")
+        console.print("[green]✓ Workflow graph ready[/green]")
         console.print()
 
-        # 7. Define user prompt for supervisor
-        user_prompt = (
-            f"Orchestrate SSL/TLS security analysis for this binary: {file_path}\n\n"
-            f"Main binary path: {file_path}\n"
-            f"Library: {rules}\n\n"
-            "YOUR FIRST ACTION: Call request_binary_analysis('{main_binary_path}', 'ssl', 'Analyze SSL/TLS security for this binary')\n"
-            f"Use main_binary_path = '{file_path}'\n\n"
-            "Do this IMMEDIATELY - do not gather information yourself first.\n\n"
-            "After calling the SSL agent:\n"
-            "- If STATUS: COMPLETE → Validate results and synthesize final report\n"
-            "- If STATUS: NEED_DATAFLOW → Call request_binary_analysis with 'dataflow' agent type\n"
-            "- If STATUS: NEED_CROSS_BINARY_ANALYSIS → Use request_firmware_explore to find callers, then request_binary_analysis for each\n"
-            "- If STATUS: NEED_CONFIG_ANALYSIS → Use request_firmware_explore to read configs\n"
-            "- If STATUS: NEED_FIRMWARE → Use request_firmware_explore as needed\n"
-            "- If STATUS: NOT_APPLICABLE → Report that binary is not applicable\n\n"
-            "Final report must have EXACTLY these 3 sections:\n"
-            "SECTION 1 - Client Summary\n"
-            "SECTION 2 - Rule Checking Results (PASS/FAIL/CONDITIONAL with evidence)\n"
-            "SECTION 3 - Dataflow Analysis\n\n"
-            "Remember: The SSL and dataflow agents analyze. You orchestrate."
+        # 7. Create initial state
+        initial_state = create_initial_state(
+            binary_path=file_path,
+            security_rules=security_rules_content
         )
 
-        # 8. Execute supervisor agent
+        # 8. Execute workflow
         console.print()
         console.print(Panel.fit(
-            "[bold green]🚀 Starting Security Analysis[/bold green]",
+            "[bold green]🚀 Starting Graph-Based Security Analysis[/bold green]",
             border_style="green"
         ))
         console.print()
 
-        await stream_and_log_agent(
-            agent=supervisor_agent,
-            messages=[{"role": "user", "content": user_prompt}],
-            agent_name="Supervisor Agent",
-            agent_emoji="🎯"
+        final_state = await run_analysis(
+            graph=graph,
+            initial_state=initial_state,
+            config={"recursion_limit": 100}
         )
+
+        # 9. Display final report
+        console.print()
+        console.print(Panel.fit(
+            "[bold green]✓ Analysis Complete[/bold green]",
+            border_style="green"
+        ))
+        console.print()
+
+        final_report = final_state.get("final_report")
+        if final_report:
+            console.print("[bold cyan]📊 Final Security Report:[/bold cyan]")
+            console.print()
+            console.print(final_report)
+        else:
+            console.print("[yellow]⚠ No final report generated[/yellow]")
 
     except Exception as e:
         console.print()
         console.print(f"[bold red]✗ Analysis failed: {e}[/bold red]")
+        import traceback
+        traceback.print_exc()
         raise
 
     finally:
-        # 9. Cleanup all resources
+        # 10. Cleanup all resources
         console.print()
         console.print("[cyan]🧹 Cleaning up resources...[/cyan]")
 

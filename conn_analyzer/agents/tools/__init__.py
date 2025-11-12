@@ -1,17 +1,8 @@
 """
-Agent tool wrappers.
+Agent tools module.
 
-Provides wrapper functions for inter-agent communication.
+This module previously contained agent wrapper tools for inter-agent communication.
+With the LangGraph migration, these tools are no longer needed.
 """
 
-from conn_analyzer.agents.tools.agent_wrappers import (
-    call_dataflow_agent,
-    call_ssl_agent,
-    call_firmware_agent,
-)
-
-__all__ = [
-    "call_dataflow_agent",
-    "call_ssl_agent",
-    "call_firmware_agent",
-]
+__all__ = []
