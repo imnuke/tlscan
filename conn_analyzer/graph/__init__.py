@@ -2,20 +2,36 @@
 
 from conn_analyzer.graph.state import (
     AnalysisState,
-    AnalysisStatus,
     AnalysisPhase,
+    DataflowTask,
+    CrossBinaryTask,
     create_initial_state,
 )
-from conn_analyzer.graph.workflow import (
-    create_analysis_graph,
-    run_analysis,
+from conn_analyzer.graph.models import (
+    RuleStatus,
+    VariableSource,
+    RuleCondition,
+    RuleResult,
+    SSLAnalysisOutput,
+    VariableTrace,
+    DataflowAnalysisOutput,
+    FirmwareSearchResult,
 )
 
 __all__ = [
+    # State
     "AnalysisState",
-    "AnalysisStatus",
     "AnalysisPhase",
+    "DataflowTask",
+    "CrossBinaryTask",
     "create_initial_state",
-    "create_analysis_graph",
-    "run_analysis",
+    # Models
+    "RuleStatus",
+    "VariableSource",
+    "RuleCondition",
+    "RuleResult",
+    "SSLAnalysisOutput",
+    "VariableTrace",
+    "DataflowAnalysisOutput",
+    "FirmwareSearchResult",
 ]

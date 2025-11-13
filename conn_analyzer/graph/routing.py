@@ -1,151 +1,122 @@
-"""Routing logic for LangGraph-based SSL analysis workflow."""
+"""Routing logic for LangGraph-based SSL analysis workflow v2.
+
+This module implements all routing functions based on state analysis.
+Routing decisions are made by inspecting state fields (current_phase,
+pending tasks, etc.) rather than parsing agent responses.
+"""
 
 from typing import Literal
 
-from conn_analyzer.graph.state import AnalysisState, AnalysisStatus, AnalysisPhase
+from conn_analyzer.graph.state import AnalysisState, AnalysisPhase
 
 
 # Maximum recursion depth for cross-binary analysis
 MAX_DEPTH = 50
 
 
-def route_from_ssl_analysis(
+def route_after_ssl_analysis(
     state: AnalysisState
-) -> Literal["dataflow_analysis", "firmware_explore", "synthesis", "end"]:
-    """
-    Route from SSL analysis based on status.
+) -> Literal["dataflow_analysis", "synthesis", "__end__"]:
+    """Route after SSL analysis completes.
 
-    Determines the next node based on the SSL agent's status response.
+    The SSL agent runs ONCE and determines:
+    - If applicable=false → end workflow
+    - If has pending_dataflow_tasks → go to dataflow
+    - Otherwise → go to synthesis
 
     Args:
         state: Current analysis state
 
     Returns:
-        Next node name: "dataflow_analysis", "firmware_explore", "synthesis", or "end"
+        Next node: "dataflow_analysis", "synthesis", or "__end__"
     """
-    ssl_status = state.get("ssl_status")
-    depth = state.get("depth", 0)
+    # If not applicable, end immediately
+    if not state.get("applicable", True):
+        return "__end__"
 
-    # Check depth limit
-    if depth >= MAX_DEPTH:
-        print(f"⚠️  Max depth reached ({MAX_DEPTH}), ending analysis")
-        return "end"
-
-    # Route based on status
-    if ssl_status == AnalysisStatus.COMPLETE:
-        return "synthesis"
-
-    elif ssl_status == AnalysisStatus.NOT_APPLICABLE:
-        return "end"
-
-    elif ssl_status == AnalysisStatus.NEED_DATAFLOW:
+    # If dataflow tasks pending, route to dataflow
+    if state.get("pending_dataflow_tasks"):
         return "dataflow_analysis"
 
-    elif ssl_status == AnalysisStatus.NEED_CROSS_BINARY_ANALYSIS:
-        return "firmware_explore"
-
-    elif ssl_status == AnalysisStatus.NEED_CONFIG_ANALYSIS:
-        return "firmware_explore"
-
-    elif ssl_status == AnalysisStatus.NEED_FIRMWARE:
-        return "firmware_explore"
-
-    else:
-        # Unknown status or no status - default to synthesis
-        print(f"⚠️  Unknown SSL status: {ssl_status}, routing to synthesis")
-        return "synthesis"
+    # Otherwise, proceed to synthesis
+    return "synthesis"
 
 
 def route_after_dataflow(
     state: AnalysisState
-) -> Literal["ssl_analysis"]:
-    """
-    Route after dataflow analysis.
+) -> Literal["firmware_explore", "synthesis"]:
+    """Route after dataflow analysis completes.
 
-    Always returns to SSL analysis to process dataflow results.
+    Dataflow analysis determines:
+    - If cross-binary tasks created → go to firmware explore
+    - Otherwise → go to synthesis
 
     Args:
         state: Current analysis state
 
     Returns:
-        "ssl_analysis" - always return to SSL agent
+        Next node: "firmware_explore" or "synthesis"
     """
-    return "ssl_analysis"
+    # If cross-binary analysis needed, go to firmware explore to find binaries
+    if state.get("pending_cross_binary_tasks"):
+        return "firmware_explore"
+
+    # Otherwise, proceed to synthesis
+    return "synthesis"
 
 
 def route_after_firmware(
     state: AnalysisState
-) -> Literal["binary_analysis_dispatch", "ssl_analysis"]:
-    """
-    Route after firmware exploration.
+) -> Literal["binary_analysis_dispatch", "synthesis"]:
+    """Route after firmware exploration completes.
 
-    Determines whether to:
-    - Dispatch parallel binary analysis (if binaries discovered for cross-binary analysis)
-    - Return to SSL analysis (if config analysis or no binaries found)
-
-    Args:
-        state: Current analysis state
-
-    Returns:
-        "binary_analysis_dispatch" or "ssl_analysis"
-    """
-    ssl_status = state.get("ssl_status")
-    discovered_binaries = state.get("discovered_binaries", [])
-    analyzed_binaries = state.get("analyzed_binaries", set())
-
-    # If cross-binary analysis and we found new binaries, dispatch parallel analysis
-    if ssl_status == AnalysisStatus.NEED_CROSS_BINARY_ANALYSIS:
-        # Filter out already-analyzed binaries
-        new_binaries = [b for b in discovered_binaries if b not in analyzed_binaries]
-
-        if new_binaries:
-            return "binary_analysis_dispatch"
-
-    # Otherwise, return to SSL analysis (e.g., for config analysis results)
-    return "ssl_analysis"
-
-
-def route_after_binary_analysis(
-    state: AnalysisState
-) -> Literal["aggregate_results"]:
-    """
-    Route after binary analysis (parallel execution complete).
-
-    Always aggregates results from multiple binary analyses.
+    Firmware exploration determines:
+    - If found binaries for cross-binary analysis → dispatch parallel analysis
+    - Otherwise → go to synthesis
 
     Args:
         state: Current analysis state
 
     Returns:
-        "aggregate_results"
+        Next node: "binary_analysis_dispatch" or "synthesis"
     """
-    return "aggregate_results"
+    cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
+
+    if not cross_binary_tasks:
+        return "synthesis"
+
+    # Check if first task has binaries to analyze
+    task = cross_binary_tasks[0]
+    caller_binaries = task.get("caller_binaries", [])
+
+    if caller_binaries:
+        return "binary_analysis_dispatch"
+    else:
+        return "synthesis"
 
 
 def route_after_aggregation(
     state: AnalysisState
-) -> Literal["ssl_analysis"]:
-    """
-    Route after aggregating cross-binary results.
+) -> Literal["synthesis"]:
+    """Route after aggregating cross-binary results.
 
-    Returns to SSL analysis with aggregated findings.
+    Always proceeds to synthesis after cross-binary analysis completes.
 
     Args:
         state: Current analysis state
 
     Returns:
-        "ssl_analysis"
+        "synthesis"
     """
-    return "ssl_analysis"
+    return "synthesis"
 
 
-def should_end(
+def route_from_synthesis(
     state: AnalysisState
 ) -> Literal["__end__"]:
-    """
-    Determine if workflow should end.
+    """Route from synthesis node.
 
-    Called from synthesis node.
+    Synthesis is the final node - always ends workflow.
 
     Args:
         state: Current analysis state

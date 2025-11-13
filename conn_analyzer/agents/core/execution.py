@@ -18,7 +18,25 @@ import conn_analyzer.agents.core.middleware as middleware_module
 console = Console()
 
 
-async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None) -> str:
+def _normalize_enum_values(data):
+    """Normalize enum values to lowercase for case-insensitive parsing."""
+    if isinstance(data, dict):
+        normalized = {}
+        for key, value in data.items():
+            if key in ("status", "source") and isinstance(value, str):
+                # Normalize enum values to lowercase
+                normalized[key] = value.lower()
+            else:
+                # Recursively normalize nested dicts and lists
+                normalized[key] = _normalize_enum_values(value)
+        return normalized
+    elif isinstance(data, list):
+        return [_normalize_enum_values(item) for item in data]
+    else:
+        return data
+
+
+async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None, output_model=None):
     """
     Stream an agent's execution and log all intermediate steps.
 
@@ -28,9 +46,10 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
         agent_name: Display name of the agent (e.g., "Dataflow Agent")
         agent_emoji: Emoji to use for this agent (e.g., "🔍")
         config: Optional config dict for the agent
+        output_model: Optional Pydantic model class to parse the output into
 
     Returns:
-        The final AI message content
+        The final AI message content (string) or parsed Pydantic model if output_model is provided
     """
     # Print agent header
     console.print()
@@ -116,5 +135,30 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
         border_style="green"
     ))
     console.print()
+
+    # Parse output into Pydantic model if requested
+    if output_model:
+        try:
+            # Try to parse as JSON first
+            if final_content.strip().startswith("{") or final_content.strip().startswith("["):
+                data = json.loads(final_content)
+            else:
+                # Try to extract JSON from markdown code blocks
+                import re
+                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', final_content, re.DOTALL)
+                if json_match:
+                    data = json.loads(json_match.group(1))
+                else:
+                    # If no JSON found, try to parse the whole content as JSON
+                    data = json.loads(final_content)
+
+            # Normalize status values to lowercase for enum compatibility
+            data = _normalize_enum_values(data)
+
+            return output_model(**data)
+        except Exception as e:
+            console.print(f"[yellow]⚠️ Failed to parse output into {output_model.__name__}: {e}[/yellow]")
+            console.print(f"[dim]Raw output: {final_content[:500]}...[/dim]")
+            raise ValueError(f"Failed to parse agent output into {output_model.__name__}: {e}")
 
     return final_content

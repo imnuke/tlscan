@@ -172,16 +172,23 @@ class BinaryRegistry:
                 console.print(f"[dim]  ├─ Loaded {len(tools)} IDA tools from MCP server[/dim]")
 
                 # Create agents for this binary
-                # Import here to avoid circular dependency
-                from conn_analyzer.agents.factory import create_agents_for_binary
+                # DEPRECATED: This code path is no longer used. The new architecture uses
+                # StaticAnalysisEngine + AgentFactory instead of BinaryRegistry.
+                # See conn_analyzer/main.py for the current implementation.
+                #
+                # from conn_analyzer.agents.factory import create_agents_for_binary
+                # agents = await create_agents_for_binary(
+                #     tools=tools,
+                #     binary_path=normalized_path,
+                #     llm=self._llm,
+                #     security_rules_content=self._security_rules_content
+                # )
+                # console.print(f"[dim]  └─ Created agents: {', '.join(agents.keys())}[/dim]")
 
-                agents = await create_agents_for_binary(
-                    tools=tools,
-                    binary_path=normalized_path,
-                    llm=self._llm,
-                    security_rules_content=self._security_rules_content
+                raise NotImplementedError(
+                    "BinaryRegistry is deprecated. Use StaticAnalysisEngine + AgentFactory instead. "
+                    "See conn_analyzer/main.py for the current implementation."
                 )
-                console.print(f"[dim]  └─ Created agents: {', '.join(agents.keys())}[/dim]")
 
                 # Create entry
                 entry = BinaryEntry(

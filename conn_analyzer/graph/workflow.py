@@ -1,34 +1,51 @@
-"""LangGraph workflow construction for SSL analysis."""
+"""LangGraph workflow construction for SSL analysis v2.
+
+This module builds the analysis workflow graph using:
+- StaticAnalysisEngine for MCP server management
+- AgentFactory for agent creation with structured output
+- Dependency injection via functools.partial
+"""
 
 from functools import partial
-from typing import Any
+from typing import Any, List, Optional
 
 from langgraph.graph import StateGraph, END
 
 from conn_analyzer.graph.state import AnalysisState
 from conn_analyzer.graph import nodes
 from conn_analyzer.graph import routing
-from conn_analyzer.ida_integration.binary_manager import BinaryRegistry
+from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
+from conn_analyzer.agents.factory import AgentFactory
 
 
 def create_analysis_graph(
-    binary_registry: BinaryRegistry,
-    firmware_agent: Any = None
+    static_engine: StaticAnalysisEngine,
+    agent_factory: AgentFactory,
+    firmware_tools: Optional[List[Any]] = None,
+    firmware_path: Optional[str] = None
 ) -> StateGraph:
     """
-    Create the SSL analysis workflow graph.
+    Create the SSL analysis workflow graph v2.
+
+    New architecture features:
+    - Uses StaticAnalysisEngine for MCP management
+    - Uses AgentFactory for structured output agents
+    - Dependency injection with functools.partial
+    - Simplified routing based on state
 
     This graph coordinates:
-    1. SSL analysis (initial and iterative)
-    2. Dataflow analysis (when variables need tracing)
-    3. Firmware exploration (for cross-binary and config analysis)
-    4. Parallel binary analysis (for discovered binaries)
-    5. Result aggregation
-    6. Final synthesis
+    1. SSL analysis (runs ONCE, returns structured output)
+    2. Dataflow analysis (processes all pending tasks)
+    3. Firmware exploration (finds binaries, fetches configs)
+    4. Parallel binary analysis (analyzes discovered binaries)
+    5. Result aggregation (combines parallel results)
+    6. Final synthesis (generates report)
 
     Args:
-        binary_registry: Binary registry for managing binaries and agents
-        firmware_agent: Firmware agent instance (optional)
+        static_engine: Static Analysis Engine for MCP servers
+        agent_factory: Agent Factory for creating agents
+        firmware_tools: Firmware file system tools (optional)
+        firmware_path: Path to firmware root (optional)
 
     Returns:
         Compiled StateGraph ready for execution
@@ -37,50 +54,68 @@ def create_analysis_graph(
     graph = StateGraph(AnalysisState)
 
     # ========================================================================
-    # Add nodes with partial application for dependencies
+    # Add nodes with dependency injection
     # ========================================================================
 
-    # SSL analysis node (needs binary_registry)
+    # Node 1: SSL Analysis (runs ONCE with structured output)
     graph.add_node(
         "ssl_analysis",
-        partial(nodes.ssl_analysis_node, binary_registry=binary_registry)
+        partial(
+            nodes.ssl_analysis_node,
+            static_engine=static_engine,
+            agent_factory=agent_factory
+        )
     )
 
-    # Dataflow analysis node (needs binary_registry)
+    # Node 2: Dataflow Analysis (processes all pending dataflow tasks)
     graph.add_node(
         "dataflow_analysis",
-        partial(nodes.dataflow_analysis_node, binary_registry=binary_registry)
+        partial(
+            nodes.dataflow_analysis_node,
+            static_engine=static_engine,
+            agent_factory=agent_factory,
+            firmware_tools=firmware_tools or []
+        )
     )
 
-    # Firmware exploration node (needs firmware_agent)
-    if firmware_agent:
+    # Node 3: Firmware Exploration (if firmware tools available)
+    if firmware_tools and firmware_path:
         graph.add_node(
             "firmware_explore",
-            partial(nodes.firmware_explore_node, firmware_agent=firmware_agent)
+            partial(
+                nodes.firmware_explore_node,
+                agent_factory=agent_factory,
+                firmware_tools=firmware_tools,
+                firmware_path=firmware_path
+            )
         )
 
-    # Binary analysis dispatch (parallel)
+    # Node 4: Binary Analysis Dispatch (for parallel execution)
     graph.add_node(
         "binary_analysis_dispatch",
-        nodes.binary_analysis_dispatch_node
+        nodes.binary_analysis_dispatch
     )
 
-    # Single binary analysis (needs binary_registry)
+    # Node 5: Binary Analysis (individual binary in parallel execution)
     graph.add_node(
         "binary_analysis",
-        partial(nodes.binary_analysis_node, binary_registry=binary_registry)
+        partial(
+            nodes.binary_analysis_node,
+            static_engine=static_engine,
+            agent_factory=agent_factory
+        )
     )
 
-    # Aggregate results
+    # Node 6: Aggregate Cross-Binary Results
     graph.add_node(
         "aggregate_results",
-        nodes.aggregate_results_node
+        nodes.aggregate_cross_binary_results
     )
 
-    # Synthesis (final report) - needs binary_registry
+    # Node 7: Synthesis (final report generation)
     graph.add_node(
         "synthesis",
-        partial(nodes.synthesis_node, binary_registry=binary_registry)
+        nodes.synthesis_node
     )
 
     # ========================================================================
@@ -91,53 +126,61 @@ def create_analysis_graph(
     graph.set_entry_point("ssl_analysis")
 
     # Conditional routing from SSL analysis
-    if firmware_agent:
-        # With firmware agent - full routing
-        graph.add_conditional_edges(
-            "ssl_analysis",
-            routing.route_from_ssl_analysis,
-            {
-                "dataflow_analysis": "dataflow_analysis",
-                "firmware_explore": "firmware_explore",
-                "synthesis": "synthesis",
-                "end": END,
-            }
-        )
+    graph.add_conditional_edges(
+        "ssl_analysis",
+        routing.route_after_ssl_analysis,
+        {
+            "dataflow_analysis": "dataflow_analysis",
+            "synthesis": "synthesis",
+            "__end__": END,
+        }
+    )
 
-        # After firmware exploration
+    # Conditional routing after dataflow
+    graph.add_conditional_edges(
+        "dataflow_analysis",
+        routing.route_after_dataflow,
+        {
+            "firmware_explore": "firmware_explore",
+            "synthesis": "synthesis",
+        }
+    )
+
+    # Conditional routing after firmware (if firmware tools available)
+    if firmware_tools and firmware_path:
         graph.add_conditional_edges(
             "firmware_explore",
             routing.route_after_firmware,
             {
                 "binary_analysis_dispatch": "binary_analysis_dispatch",
-                "ssl_analysis": "ssl_analysis",
-            }
-        )
-
-        # After binary analysis dispatch → aggregate
-        graph.add_edge("binary_analysis_dispatch", "aggregate_results")
-
-        # After aggregation → back to SSL
-        graph.add_edge("aggregate_results", "ssl_analysis")
-
-    else:
-        # Without firmware agent - limited routing (dataflow only)
-        graph.add_conditional_edges(
-            "ssl_analysis",
-            routing.route_from_ssl_analysis,
-            {
-                "dataflow_analysis": "dataflow_analysis",
-                "firmware_explore": "synthesis",  # Fallback if firmware requested
                 "synthesis": "synthesis",
-                "end": END,
             }
         )
 
-    # After dataflow → back to SSL
-    graph.add_edge("dataflow_analysis", "ssl_analysis")
+        # After binary analysis dispatch → individual binary analyses (parallel)
+        # Note: binary_analysis_dispatch returns Send objects for parallel execution
+        # NO edge needed here - Send objects handle routing automatically
+
+        # After individual binary analysis → aggregate results
+        graph.add_edge("binary_analysis", "aggregate_results")
+
+        # After aggregation → synthesis
+        graph.add_conditional_edges(
+            "aggregate_results",
+            routing.route_after_aggregation,
+            {
+                "synthesis": "synthesis",
+            }
+        )
 
     # After synthesis → end
-    graph.add_edge("synthesis", END)
+    graph.add_conditional_edges(
+        "synthesis",
+        routing.route_from_synthesis,
+        {
+            "__end__": END,
+        }
+    )
 
     # ========================================================================
     # Compile graph

@@ -1,14 +1,34 @@
-"""Graph nodes for LangGraph-based SSL analysis workflow."""
+"""Graph nodes for LangGraph-based SSL analysis workflow v2.
 
-import re
-from typing import Dict, Any, Optional, Sequence
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+This module implements all graph nodes with:
+- Structured output (Pydantic models instead of text parsing)
+- State as single source of truth (no context passing through agents)
+- Integration with Static Analysis Engine and Agent Factory
+- Clean separation of concerns
+"""
+
+from typing import Dict, Any, List, Sequence
+from langchain_core.messages import HumanMessage
 
 from langgraph.types import Send
 
-from conn_analyzer.graph.state import AnalysisState, AnalysisStatus, AnalysisPhase
+from conn_analyzer.graph.state import (
+    AnalysisState,
+    AnalysisPhase,
+    DataflowTask,
+    CrossBinaryTask,
+)
+from conn_analyzer.graph.models import (
+    RuleStatus,
+    SSLAnalysisOutput,
+    DataflowAnalysisOutput,
+    FirmwareSearchResult,
+    VariableTrace,
+    RuleResult,
+)
+from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
+from conn_analyzer.agents.factory import AgentFactory
 from conn_analyzer.agents.core.execution import stream_and_log_agent
-from conn_analyzer.ida_integration.binary_manager import BinaryRegistry
 
 from rich.console import Console
 
@@ -16,218 +36,117 @@ console = Console()
 
 
 # ============================================================================
-# Helper Functions for Parsing Agent Responses
-# ============================================================================
-
-def parse_ssl_status(agent_response: str) -> Optional[AnalysisStatus]:
-    """
-    Parse the status from SSL agent response.
-
-    Args:
-        agent_response: The SSL agent's text response
-
-    Returns:
-        AnalysisStatus enum value, or None if no status found
-    """
-    # Look for "STATUS: <status_value>" pattern
-    match = re.search(r"STATUS:\s*(\w+)", agent_response)
-    if match:
-        status_str = match.group(1)
-        try:
-            return AnalysisStatus(status_str)
-        except ValueError:
-            console.print(f"[yellow]⚠ Unknown SSL status: {status_str}[/yellow]")
-            return None
-    return None
-
-
-def parse_dataflow_request(agent_response: str) -> Dict[str, Optional[str]]:
-    """
-    Parse dataflow request details from SSL agent response.
-
-    Extracts:
-    - Variable name
-    - Context information
-
-    Args:
-        agent_response: The SSL agent's text response
-
-    Returns:
-        Dict with 'variable', 'context'
-    """
-    result = {"variable": None, "context": None}
-
-    # Extract variable name
-    var_match = re.search(r"Variable:\s*(.+?)(?:\n|$)", agent_response)
-    if var_match:
-        result["variable"] = var_match.group(1).strip()
-
-    # Extract context
-    ctx_match = re.search(r"Context:\s*(.+?)(?:\n|$)", agent_response)
-    if ctx_match:
-        result["context"] = ctx_match.group(1).strip()
-
-    return result
-
-
-def parse_cross_binary_request(agent_response: str) -> Dict[str, Optional[str]]:
-    """
-    Parse cross-binary analysis request from SSL agent response.
-
-    Extracts:
-    - Function name
-    - Parameter position/name
-
-    Args:
-        agent_response: The SSL agent's text response
-
-    Returns:
-        Dict with 'function', 'parameter'
-    """
-    result = {"function": None, "parameter": None}
-
-    # Extract function name
-    func_match = re.search(r"Function:\s*(.+?)(?:\n|$)", agent_response)
-    if func_match:
-        result["function"] = func_match.group(1).strip()
-
-    # Extract parameter
-    param_match = re.search(r"Parameter:\s*(.+?)(?:\n|$)", agent_response)
-    if param_match:
-        result["parameter"] = param_match.group(1).strip()
-
-    return result
-
-
-def parse_config_request(agent_response: str) -> Dict[str, Optional[str]]:
-    """
-    Parse config analysis request from SSL agent response.
-
-    Extracts:
-    - Source type (CONFIG_FILE, ENVIRONMENT_VARIABLE, COMMAND_LINE_ARG)
-    - Source details (file path, var name, arg pattern)
-    - Setting name
-
-    Args:
-        agent_response: The SSL agent's text response
-
-    Returns:
-        Dict with 'source_type', 'source_details', 'setting_name'
-    """
-    result = {"source_type": None, "source_details": None, "setting_name": None}
-
-    # Extract source type
-    type_match = re.search(r"Source Type:\s*(.+?)(?:\n|$)", agent_response)
-    if type_match:
-        result["source_type"] = type_match.group(1).strip()
-
-    # Extract source details
-    details_match = re.search(r"Source Details:\s*(.+?)(?:\n|$)", agent_response)
-    if details_match:
-        result["source_details"] = details_match.group(1).strip()
-
-    # Extract setting name
-    setting_match = re.search(r"Setting:\s*(.+?)(?:\n|$)", agent_response)
-    if setting_match:
-        result["setting_name"] = setting_match.group(1).strip()
-
-    return result
-
-
-# ============================================================================
-# Node: SSL Analysis
+# Node: SSL Analysis (Runs Once)
 # ============================================================================
 
 async def ssl_analysis_node(
     state: AnalysisState,
-    binary_registry: BinaryRegistry
+    static_engine: StaticAnalysisEngine,
+    agent_factory: AgentFactory,
 ) -> Dict[str, Any]:
-    """
-    Execute SSL security analysis using SSL agent.
+    """Execute SSL security analysis - runs ONCE.
 
     This node:
-    1. Gets the SSL agent for current binary from registry
-    2. Calls the agent with current messages
-    3. Parses the status from the response
-    4. Extracts any request details (dataflow, cross-binary, config)
-    5. Returns state update
+    1. Gets IDA tools from Static Analysis Engine
+    2. Creates SSL agent with structured output
+    3. Calls agent to analyze SSL/TLS security
+    4. Processes structured output (SSLAnalysisOutput)
+    5. Updates state with rules, client_type, applicable status
+    6. Creates dataflow tasks for conditional rules
+
+    The SSL agent runs ONCE and returns complete analysis with:
+    - Rules marked as PASS/FAIL/CONDITIONAL/UNDETERMINED
+    - For CONDITIONAL: conditions list with variables to trace
+    - Summary text for final report
 
     Args:
         state: Current analysis state
-        binary_registry: Binary registry for accessing agents
+        static_engine: Static Analysis Engine for IDA tools
+        agent_factory: Agent factory for creating SSL agent
 
     Returns:
-        State update dict with ssl_analysis_result, ssl_status, and parsed request details
+        State update dict with rules, ssl_summary, client_type, etc.
     """
     binary_path = state["binary_path"]
+    security_rules = state["security_rules"]
 
-    # Get binary entry from registry
-    entry = binary_registry.get_binary_entry(binary_path)
-    if not entry:
-        raise ValueError(f"Binary not registered: {binary_path}")
+    console.print(f"[cyan]🔐 Running SSL analysis on: {binary_path}[/cyan]")
 
-    ssl_agent = entry.agents["ssl"]
+    # Get IDA tools from Static Analysis Engine
+    tools = await static_engine.get_tools(binary_path)
 
-    # Build message for SSL agent
-    messages = state.get("messages", [])
-    if not messages or not any(isinstance(m, HumanMessage) for m in messages):
-        # Add initial analysis request
-        messages = [
-            HumanMessage(
-                content=f"Analyze SSL/TLS security for binary: {binary_path}"
-            )
-        ]
+    # Create SSL agent with structured output
+    ssl_agent = agent_factory.create_ssl_agent(
+        tools=tools,
+        security_rules_content=security_rules
+    )
 
     # Execute SSL agent
-    result = await stream_and_log_agent(
+    messages = [HumanMessage(content=f"Analyze SSL/TLS security for binary: {binary_path}")]
+
+    result: SSLAnalysisOutput = await stream_and_log_agent(
         agent=ssl_agent,
         messages=messages,
         agent_name="SSL Agent",
-        agent_emoji="🔐"
+        agent_emoji="🔐",
+        output_model=SSLAnalysisOutput
     )
 
-    # Parse status
-    status = parse_ssl_status(result)
+    # Check if SSL/TLS analysis is applicable
+    if not result.applicable:
+        console.print(f"[yellow]ℹ SSL/TLS not applicable: {result.reason}[/yellow]")
+        return {
+            "applicable": False,
+            "ssl_summary": result.reason or "No SSL/TLS client code detected",
+            "current_phase": AnalysisPhase.COMPLETED,
+            "final_report": result.summary,
+        }
 
-    # Build state update
-    update: Dict[str, Any] = {
-        "ssl_analysis_result": result,
-        "ssl_status": status,
-        "current_phase": AnalysisPhase.INITIAL_SSL_ANALYSIS,
-        "messages": [AIMessage(content=result)],
+    console.print(f"[green]✓ SSL analysis complete: {result.client_type}[/green]")
+    console.print(f"[dim]  Rules analyzed: {len(result.rules)}[/dim]")
+
+    # Convert rules list to dict: rule_id -> RuleResult
+    rules_dict: Dict[str, RuleResult] = {
+        rule.rule_id: rule for rule in result.rules
     }
 
-    # Parse additional request details based on status
-    if status == AnalysisStatus.NEED_DATAFLOW:
-        dataflow_req = parse_dataflow_request(result)
-        update["requested_variable"] = dataflow_req["variable"]
-        update["current_phase"] = AnalysisPhase.DATAFLOW_ANALYSIS
+    # Create dataflow tasks for all CONDITIONAL rules
+    pending_dataflow_tasks: List[DataflowTask] = []
 
-    elif status == AnalysisStatus.NEED_CROSS_BINARY_ANALYSIS:
-        cross_binary_req = parse_cross_binary_request(result)
-        update["requested_function"] = cross_binary_req["function"]
-        update["requested_parameter"] = cross_binary_req["parameter"]
-        update["current_phase"] = AnalysisPhase.CROSS_BINARY_ANALYSIS
+    for rule in result.rules:
+        if rule.status == RuleStatus.CONDITIONAL and rule.conditions:
+            # Extract variables from conditions
+            variables = [
+                {
+                    "variable": cond.variable,
+                    "function": cond.function,
+                    "function_address": cond.function_address,
+                    "parameter_position": str(cond.parameter_position) if cond.parameter_position is not None else "",
+                    "security_mapping": cond.security_mapping,
+                }
+                for cond in rule.conditions
+            ]
 
-    elif status == AnalysisStatus.NEED_CONFIG_ANALYSIS:
-        config_req = parse_config_request(result)
-        update["config_source_type"] = config_req["source_type"]
-        update["config_source_details"] = config_req["source_details"]
-        update["config_setting_name"] = config_req["setting_name"]
-        update["current_phase"] = AnalysisPhase.CONFIG_ANALYSIS
+            # Create dataflow task for binary analysis
+            task = DataflowTask(
+                type="binary",
+                target=binary_path,
+                variables=variables
+            )
+            pending_dataflow_tasks.append(task)
 
-    elif status == AnalysisStatus.NEED_FIRMWARE:
-        update["current_phase"] = AnalysisPhase.FIRMWARE_EXPLORE
+    if pending_dataflow_tasks:
+        console.print(f"[dim]  Dataflow tasks created: {len(pending_dataflow_tasks)}[/dim]")
 
-    elif status == AnalysisStatus.COMPLETE:
-        update["current_phase"] = AnalysisPhase.SYNTHESIS
-        update["final_report"] = result
-
-    elif status == AnalysisStatus.NOT_APPLICABLE:
-        update["current_phase"] = AnalysisPhase.COMPLETED
-        update["final_report"] = result
-
-    return update
+    # Build state update
+    return {
+        "rules": rules_dict,
+        "ssl_summary": result.summary,
+        "client_type": result.client_type,
+        "applicable": True,
+        "pending_dataflow_tasks": pending_dataflow_tasks,
+        "current_phase": AnalysisPhase.DATAFLOW_ANALYSIS if pending_dataflow_tasks else AnalysisPhase.SYNTHESIS,
+    }
 
 
 # ============================================================================
@@ -236,52 +155,111 @@ async def ssl_analysis_node(
 
 async def dataflow_analysis_node(
     state: AnalysisState,
-    binary_registry: BinaryRegistry
+    static_engine: StaticAnalysisEngine,
+    agent_factory: AgentFactory,
+    firmware_tools: List[any],  # For reading scripts/configs if needed
 ) -> Dict[str, Any]:
-    """
-    Execute dataflow analysis using Dataflow agent.
+    """Execute dataflow analysis for all pending tasks.
 
     This node:
-    1. Gets the Dataflow agent for current binary
-    2. Analyzes the requested variable
-    3. Returns dataflow result
+    1. Processes all pending_dataflow_tasks from state
+    2. For each task:
+       - Gets appropriate tools (IDA for binary, firmware tools for scripts/configs)
+       - Creates dataflow agent
+       - Traces all variables in the task
+       - Processes structured output (DataflowAnalysisOutput)
+    3. Updates state with variable_traces
+    4. Creates cross-binary tasks if needed
+    5. Creates firmware fetch tasks for config values
 
     Args:
         state: Current analysis state
-        binary_registry: Binary registry for accessing agents
+        static_engine: Static Analysis Engine for IDA tools
+        agent_factory: Agent factory for creating dataflow agent
+        firmware_tools: Firmware file system tools
 
     Returns:
-        State update dict with dataflow_result
+        State update dict with variable_traces, pending_cross_binary_tasks
     """
-    binary_path = state["binary_path"]
-    variable = state.get("requested_variable", "unknown")
+    pending_tasks = state.get("pending_dataflow_tasks", [])
 
-    # Get binary entry from registry
-    entry = binary_registry.get_binary_entry(binary_path)
-    if not entry:
-        raise ValueError(f"Binary not registered: {binary_path}")
+    if not pending_tasks:
+        console.print("[yellow]⚠ No dataflow tasks to process[/yellow]")
+        return {"current_phase": AnalysisPhase.SYNTHESIS}
 
-    dataflow_agent = entry.agents["dataflow"]
+    console.print(f"[cyan]🔍 Running dataflow analysis: {len(pending_tasks)} tasks[/cyan]")
 
-    # Build dataflow request message
-    messages = [
-        HumanMessage(
-            content=f"Trace the dataflow for variable: {variable}"
+    all_traces: Dict[str, VariableTrace] = state.get("variable_traces", {}).copy()
+    cross_binary_tasks: List[CrossBinaryTask] = []
+    config_fetch_tasks: List[Dict[str, str]] = []
+
+    for task in pending_tasks:
+        task_type = task["type"]
+        target = task["target"]
+        variables = task["variables"]
+
+        console.print(f"[dim]  Processing {task_type} task: {target} ({len(variables)} variables)[/dim]")
+
+        # Get appropriate tools based on task type
+        if task_type == "binary":
+            tools = await static_engine.get_tools(target)
+            agent = agent_factory.create_dataflow_agent(tools=tools)
+        elif task_type == "script":
+            # For scripts, dataflow agent uses firmware tools to read script
+            agent = agent_factory.create_dataflow_agent(tools=firmware_tools)
+        else:
+            console.print(f"[yellow]⚠ Unknown task type: {task_type}[/yellow]")
+            continue
+
+        # Build request with all variables for this task
+        variables_desc = "\n".join([
+            f"  - Variable '{v['variable']}' in function '{v['function']}' at {v.get('function_address', 'unknown')}"
+            for v in variables
+        ])
+
+        request = f"Trace the following variables:\n{variables_desc}"
+        messages = [HumanMessage(content=request)]
+
+        # Execute dataflow agent
+        result: DataflowAnalysisOutput = await stream_and_log_agent(
+            agent=agent,
+            messages=messages,
+            agent_name="Dataflow Agent",
+            agent_emoji="🔍",
+            output_model=DataflowAnalysisOutput
         )
-    ]
 
-    # Execute dataflow agent
-    result = await stream_and_log_agent(
-        agent=dataflow_agent,
-        messages=messages,
-        agent_name="Dataflow Agent",
-        agent_emoji="🔍"
-    )
+        # Process traces
+        for trace in result.traces:
+            # Store trace in dict keyed by variable name
+            all_traces[trace.variable] = trace
 
-    # Store result
+            console.print(f"[dim]    ✓ {trace.variable}: {trace.source.value}[/dim]")
+
+        # Check if cross-binary analysis needed
+        if result.cross_binary_needed and result.cross_binary_details:
+            details = result.cross_binary_details
+            cross_binary_task = CrossBinaryTask(
+                function=details.get("function", ""),
+                caller_binaries=[],  # Will be populated by firmware agent
+                variables=variables  # Pass original variables for tracing in callers
+            )
+            cross_binary_tasks.append(cross_binary_task)
+            console.print(f"[dim]    → Cross-binary analysis needed for {details.get('function')}[/dim]")
+
+    console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces[/green]")
+
+    # Determine next phase
+    if cross_binary_tasks:
+        next_phase = AnalysisPhase.CROSS_BINARY_ANALYSIS
+    else:
+        next_phase = AnalysisPhase.SYNTHESIS
+
     return {
-        "dataflow_result": result,
-        "messages": [AIMessage(content=result)],
+        "variable_traces": all_traces,
+        "pending_cross_binary_tasks": cross_binary_tasks,
+        "pending_dataflow_tasks": [],  # Clear completed tasks
+        "current_phase": next_phase,
     }
 
 
@@ -291,81 +269,88 @@ async def dataflow_analysis_node(
 
 async def firmware_explore_node(
     state: AnalysisState,
-    firmware_agent: Any
+    agent_factory: AgentFactory,
+    firmware_tools: List[any],
+    firmware_path: str,
 ) -> Dict[str, Any]:
-    """
-    Execute firmware exploration using Firmware agent.
+    """Execute firmware exploration for various purposes.
 
     This node handles:
-    - Finding caller binaries (for cross-binary analysis)
-    - Reading config files (for config analysis)
-    - General firmware exploration requests
+    1. Finding caller binaries (for cross-binary analysis)
+    2. Fetching config values (when dataflow traces to CONFIG_FILE)
+    3. Reading scripts (when dataflow needs script content)
 
     Args:
         state: Current analysis state
-        firmware_agent: Firmware agent instance
+        agent_factory: Agent factory for creating firmware agent
+        firmware_tools: Firmware file system tools
+        firmware_path: Path to firmware root
 
     Returns:
-        State update dict with firmware_findings and discovered_binaries
+        State update dict with binaries, config_values, etc.
     """
-    # Determine request based on current phase
-    phase = state.get("current_phase")
-    ssl_status = state.get("ssl_status")
+    console.print(f"[cyan]📂 Firmware exploration[/cyan]")
 
-    if ssl_status == AnalysisStatus.NEED_CROSS_BINARY_ANALYSIS:
-        # Find caller binaries
-        function = state.get("requested_function", "unknown")
-        request = f"Find all binaries that call the function: {function}"
-
-    elif ssl_status == AnalysisStatus.NEED_CONFIG_ANALYSIS:
-        # Read config files
-        source_type = state.get("config_source_type", "unknown")
-        source_details = state.get("config_source_details", "unknown")
-        setting = state.get("config_setting_name", "unknown")
-        request = f"Find config for {source_type}: {source_details}, looking for setting: {setting}"
-
-    else:
-        # General firmware exploration
-        request = "Explore firmware filesystem"
-
-    # Execute firmware agent
-    messages = [HumanMessage(content=request)]
-
-    result = await stream_and_log_agent(
-        agent=firmware_agent,
-        messages=messages,
-        agent_name="Firmware Agent",
-        agent_emoji="🗂️"
+    # Create firmware agent
+    firmware_agent = agent_factory.create_firmware_agent(
+        firmware_tools=firmware_tools,
+        firmware_path=firmware_path
     )
 
-    # Parse discovered binaries (if cross-binary analysis)
-    discovered_binaries = []
-    if ssl_status == AnalysisStatus.NEED_CROSS_BINARY_ANALYSIS:
-        # Extract binary paths from firmware agent response
-        # Look for lines like "/usr/bin/app" or "/usr/sbin/service"
-        binary_pattern = r"/[^\s]+"
-        matches = re.findall(binary_pattern, result)
-        # Filter to only valid-looking paths (contain at least one /)
-        discovered_binaries = [m for m in matches if "/" in m and not m.startswith("//")]
+    # Determine what type of firmware operation is needed
+    cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
 
-    return {
-        "firmware_findings": result,
-        "discovered_binaries": discovered_binaries,
-        "messages": [AIMessage(content=result)],
-    }
+    if cross_binary_tasks:
+        # Find caller binaries for cross-binary analysis
+        task = cross_binary_tasks[0]  # Process first task
+        function_name = task["function"]
+
+        console.print(f"[dim]  Finding binaries that call: {function_name}[/dim]")
+
+        request = f"Find all binaries in firmware that call the function: {function_name}"
+        messages = [HumanMessage(content=request)]
+
+        result: FirmwareSearchResult = await stream_and_log_agent(
+            agent=firmware_agent,
+            messages=messages,
+            agent_name="Firmware Agent",
+            agent_emoji="📂",
+            output_model=FirmwareSearchResult
+        )
+
+        if result.found and result.binaries:
+            console.print(f"[green]✓ Found {len(result.binaries)} caller binaries[/green]")
+            # Update cross-binary task with found binaries
+            updated_task = CrossBinaryTask(
+                function=function_name,
+                caller_binaries=result.binaries,
+                variables=task["variables"]
+            )
+            return {
+                "pending_cross_binary_tasks": [updated_task],
+                "firmware_details": result.details,
+                "current_phase": AnalysisPhase.CROSS_BINARY_ANALYSIS,
+            }
+        else:
+            console.print(f"[yellow]⚠ No caller binaries found for {function_name}[/yellow]")
+            return {
+                "pending_cross_binary_tasks": [],
+                "firmware_details": result.details,
+                "current_phase": AnalysisPhase.SYNTHESIS,
+            }
+
+    # If no cross-binary tasks, proceed to synthesis
+    return {"current_phase": AnalysisPhase.SYNTHESIS}
 
 
 # ============================================================================
-# Node: Binary Analysis Dispatch (Parallel)
+# Node: Binary Analysis Dispatch (for parallel cross-binary analysis)
 # ============================================================================
 
-async def binary_analysis_dispatch_node(
-    state: AnalysisState
-) -> Sequence[Send]:
-    """
-    Dispatch parallel binary analysis tasks for discovered binaries.
+def binary_analysis_dispatch(state: AnalysisState) -> Sequence[Send]:
+    """Dispatch parallel binary analysis tasks.
 
-    Uses LangGraph's Send API to create parallel tasks.
+    Uses LangGraph Send API to analyze multiple binaries in parallel.
 
     Args:
         state: Current analysis state
@@ -373,205 +358,217 @@ async def binary_analysis_dispatch_node(
     Returns:
         Sequence of Send objects for parallel execution
     """
-    discovered_binaries = state.get("discovered_binaries", [])
-    analyzed_binaries = state.get("analyzed_binaries", set())
-    depth = state.get("depth", 0)
+    cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
 
-    # Filter out already-analyzed binaries (circular dependency prevention)
-    binaries_to_analyze = [
-        b for b in discovered_binaries
-        if b not in analyzed_binaries
-    ]
+    if not cross_binary_tasks:
+        return []
 
-    console.print(f"[cyan]🔀 Dispatching parallel analysis for {len(binaries_to_analyze)} binaries[/cyan]")
+    task = cross_binary_tasks[0]  # Get first task
+    caller_binaries = task.get("caller_binaries", [])
 
-    # Create parallel tasks using Send API
-    return [
-        Send(
-            "binary_analysis",
-            {
-                **state,
-                "binary_path": binary_path,
-                "depth": depth + 1,
-            }
+    if not caller_binaries:
+        return []
+
+    console.print(f"[cyan]🔀 Dispatching {len(caller_binaries)} parallel binary analyses[/cyan]")
+
+    # Create Send for each binary
+    sends = []
+    for binary_path in caller_binaries:
+        sends.append(
+            Send(
+                "binary_analysis",
+                {
+                    **state,
+                    "binary_path": binary_path,  # Override binary path for this analysis
+                    "cross_binary_function": task["function"],
+                    "cross_binary_variables": task["variables"],
+                }
+            )
         )
-        for binary_path in binaries_to_analyze
-    ]
+
+    return sends
 
 
 # ============================================================================
-# Node: Single Binary Analysis
+# Node: Binary Analysis (for individual binary in cross-binary analysis)
 # ============================================================================
 
 async def binary_analysis_node(
     state: AnalysisState,
-    binary_registry: BinaryRegistry
+    static_engine: StaticAnalysisEngine,
+    agent_factory: AgentFactory,
 ) -> Dict[str, Any]:
-    """
-    Analyze a single discovered binary.
+    """Analyze a single binary for cross-binary analysis.
 
     This node:
-    1. Registers the binary (if not already registered)
-    2. Runs dataflow analysis for the requested parameter
-    3. Stores the result in dataflow_results dict
-    4. Adds binary to analyzed_binaries set
-    5. Optionally cleans up resources
+    1. Gets IDA tools for the binary
+    2. Creates dataflow agent
+    3. Traces how this binary calls the target function
+    4. Returns traces for aggregation
 
     Args:
-        state: Current analysis state (with binary_path set to target binary)
-        binary_registry: Binary registry
+        state: Current analysis state (with overridden binary_path)
+        static_engine: Static Analysis Engine
+        agent_factory: Agent factory
 
     Returns:
-        State update dict with updated dataflow_results and analyzed_binaries
+        State update with cross_binary_traces for this binary
     """
     binary_path = state["binary_path"]
-    parameter = state.get("requested_parameter", "unknown")
+    function = state.get("cross_binary_function", "")
+    variables = state.get("cross_binary_variables", [])
 
-    console.print(f"[cyan]🔬 Analyzing binary: {binary_path}[/cyan]")
+    console.print(f"[dim]  Analyzing caller: {binary_path}[/dim]")
 
-    try:
-        # Register binary
-        await binary_registry.register_binary(binary_path)
+    # Get IDA tools
+    tools = await static_engine.get_tools(binary_path)
 
-        # Get dataflow agent
-        entry = binary_registry.get_binary_entry(binary_path)
-        if not entry:
-            raise ValueError(f"Failed to register binary: {binary_path}")
+    # Create dataflow agent
+    agent = agent_factory.create_dataflow_agent(tools=tools)
 
-        dataflow_agent = entry.agents["dataflow"]
+    # Build request to trace how this binary calls the function
+    request = f"Trace how this binary calls function '{function}' and analyze the arguments passed"
+    messages = [HumanMessage(content=request)]
 
-        # Execute dataflow analysis
-        messages = [
-            HumanMessage(
-                content=f"Trace argument {parameter} in this binary"
-            )
-        ]
+    result: DataflowAnalysisOutput = await stream_and_log_agent(
+        agent=agent,
+        messages=messages,
+        agent_name=f"Dataflow ({binary_path})",
+        agent_emoji="🔍",
+        output_model=DataflowAnalysisOutput
+    )
 
-        result = await stream_and_log_agent(
-            agent=dataflow_agent,
-            messages=messages,
-            agent_name=f"Dataflow Agent ({binary_path})",
-            agent_emoji="🔍"
-        )
-
-        # Update state
-        dataflow_results = state.get("dataflow_results", {})
-        dataflow_results[binary_path] = result
-
-        analyzed_binaries = state.get("analyzed_binaries", set())
-        analyzed_binaries.add(binary_path)
-
-        return {
-            "dataflow_results": dataflow_results,
-            "analyzed_binaries": analyzed_binaries,
-        }
-
-    finally:
-        # Cleanup binary resources
-        binary_registry.cleanup_binary(binary_path)
-
-
-# ============================================================================
-# Node: Aggregate Results
-# ============================================================================
-
-async def aggregate_results_node(
-    state: AnalysisState
-) -> Dict[str, Any]:
-    """
-    Aggregate results from multiple binary analyses.
-
-    This node:
-    1. Collects all dataflow_results
-    2. Formats them into a comprehensive report
-    3. Returns aggregated_findings
-
-    Args:
-        state: Current analysis state
-
-    Returns:
-        State update dict with aggregated_findings
-    """
-    dataflow_results = state.get("dataflow_results", {})
-
-    # Build aggregated report
-    aggregated = ["Cross-Binary Analysis Results:\n"]
-
-    for binary_path, result in dataflow_results.items():
-        aggregated.append(f"\nBinary: {binary_path}")
-        aggregated.append(f"Result: {result}")
-        aggregated.append("-" * 80)
-
-    aggregated_findings = "\n".join(aggregated)
-
-    console.print(f"[cyan]📊 Aggregated {len(dataflow_results)} binary analysis results[/cyan]")
+    # Store traces for this binary
+    traces_dict = {trace.variable: trace for trace in result.traces}
 
     return {
-        "aggregated_findings": aggregated_findings,
-        "current_phase": AnalysisPhase.AGGREGATING_RESULTS,
+        "cross_binary_traces": {binary_path: traces_dict}
     }
 
 
 # ============================================================================
-# Node: Synthesis (Final Report)
+# Node: Aggregate Cross-Binary Results
+# ============================================================================
+
+def aggregate_cross_binary_results(state: AnalysisState) -> Dict[str, Any]:
+    """Aggregate results from parallel cross-binary analyses.
+
+    This node collects all cross_binary_traces and prepares for synthesis.
+
+    Args:
+        state: Current analysis state
+
+    Returns:
+        State update moving to synthesis phase
+    """
+    cross_binary_traces = state.get("cross_binary_traces", {})
+
+    console.print(f"[green]✓ Cross-binary analysis complete: {len(cross_binary_traces)} binaries analyzed[/green]")
+
+    return {
+        "pending_cross_binary_tasks": [],  # Clear tasks
+        "current_phase": AnalysisPhase.SYNTHESIS,
+    }
+
+
+# ============================================================================
+# Node: Synthesis (Final Report Generation)
 # ============================================================================
 
 async def synthesis_node(
     state: AnalysisState,
-    binary_registry: BinaryRegistry
 ) -> Dict[str, Any]:
-    """
-    Synthesize final report.
+    """Generate final security analysis report.
 
-    This node is called when SSL analysis is complete.
-    It can optionally call the SSL agent one more time with
-    aggregated findings to generate a comprehensive report.
+    This node:
+    1. Takes all results from state (rules, variable_traces, cross_binary_traces)
+    2. Resolves CONDITIONAL rules using variable traces
+    3. Generates comprehensive security report
+    4. Updates state with final_report
 
     Args:
-        state: Current analysis state
-        binary_registry: Binary registry
+        state: Current analysis state with all results
 
     Returns:
-        State update dict with final_report
+        State update with final_report and COMPLETED phase
     """
-    # Check if we already have a final report
-    if state.get("final_report"):
-        return {
-            "current_phase": AnalysisPhase.COMPLETED,
-        }
+    console.print("[cyan]📝 Generating final report[/cyan]")
 
-    # If we have aggregated findings, send them to SSL agent for synthesis
-    aggregated_findings = state.get("aggregated_findings")
+    rules = state.get("rules", {})
+    variable_traces = state.get("variable_traces", {})
+    cross_binary_traces = state.get("cross_binary_traces", {})
+    ssl_summary = state.get("ssl_summary", "")
+    client_type = state.get("client_type", "Unknown")
 
-    if aggregated_findings:
-        main_binary_path = state["main_binary_path"]
-        entry = binary_registry.get_binary_entry(main_binary_path)
-        if not entry:
-            raise ValueError(f"Main binary not registered: {main_binary_path}")
+    # Build report sections
+    report_lines = []
 
-        ssl_agent = entry.agents["ssl"]
+    # Header
+    report_lines.append("=" * 80)
+    report_lines.append("SSL/TLS SECURITY ANALYSIS REPORT")
+    report_lines.append("=" * 80)
+    report_lines.append("")
 
-        # Build synthesis request
-        messages = [
-            HumanMessage(
-                content=f"Synthesize final security report.\n\n{aggregated_findings}"
-            )
-        ]
+    # Client summary
+    report_lines.append(f"Client Type: {client_type}")
+    report_lines.append("")
+    report_lines.append("Summary:")
+    report_lines.append(ssl_summary)
+    report_lines.append("")
 
-        result = await stream_and_log_agent(
-            agent=ssl_agent,
-            messages=messages,
-            agent_name="SSL Agent (Synthesis)",
-            agent_emoji="🔐"
-        )
+    # Rules section
+    report_lines.append("=" * 80)
+    report_lines.append("SECURITY RULES ANALYSIS")
+    report_lines.append("=" * 80)
+    report_lines.append("")
 
-        return {
-            "final_report": result,
-            "current_phase": AnalysisPhase.COMPLETED,
-        }
+    for rule_id, rule in rules.items():
+        report_lines.append(f"Rule: {rule.rule_name}")
+        report_lines.append(f"Status: {rule.status.value.upper()}")
+        report_lines.append(f"Evidence: {rule.evidence}")
 
-    # Otherwise, use existing SSL analysis result as final report
+        # If conditional, show variable traces
+        if rule.status == RuleStatus.CONDITIONAL and rule.conditions:
+            report_lines.append("Conditions:")
+            for cond in rule.conditions:
+                report_lines.append(f"  - Variable: {cond.variable} in {cond.function}")
+
+                # Look up trace
+                if cond.variable in variable_traces:
+                    trace = variable_traces[cond.variable]
+                    report_lines.append(f"    Source: {trace.source.value}")
+                    if trace.value:
+                        report_lines.append(f"    Value: {trace.value}")
+                        # Apply security mapping
+                        if trace.value in cond.security_mapping:
+                            outcome = cond.security_mapping[trace.value]
+                            report_lines.append(f"    Outcome: {outcome}")
+                    report_lines.append(f"    Trace: {trace.trace_path}")
+                else:
+                    report_lines.append(f"    [No trace available]")
+
+        report_lines.append("")
+
+    # Cross-binary findings
+    if cross_binary_traces:
+        report_lines.append("=" * 80)
+        report_lines.append("CROSS-BINARY ANALYSIS")
+        report_lines.append("=" * 80)
+        report_lines.append("")
+
+        for binary_path, traces in cross_binary_traces.items():
+            report_lines.append(f"Binary: {binary_path}")
+            for var_name, trace in traces.items():
+                report_lines.append(f"  - {var_name}: {trace.source.value}")
+                if trace.value:
+                    report_lines.append(f"    Value: {trace.value}")
+            report_lines.append("")
+
+    final_report = "\n".join(report_lines)
+
+    console.print("[green]✓ Final report generated[/green]")
+
     return {
-        "final_report": state.get("ssl_analysis_result", "Analysis complete"),
+        "final_report": final_report,
         "current_phase": AnalysisPhase.COMPLETED,
     }

@@ -1,68 +1,121 @@
-"""
-Agent factory.
+"""Agent Factory with structured output support.
 
-Creates and initializes agents for binary analysis.
+This factory creates agents that return Pydantic model outputs instead of
+free-form text. It works with the Static Analysis Engine to get tools.
 """
 
-import sys
-from pathlib import Path
+from typing import List, Optional
 from langchain.agents import create_agent
 
-# Add project root to path to import firmware_tools
-project_root = Path(__file__).parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 from conn_analyzer.agents.core.middleware import handle_tool_errors
-from conn_analyzer.agents.prompts import (
-    DATAFLOW_SYSTEM_PROMPT,
-    get_ssl_system_prompt,
+from conn_analyzer.graph.models import (
+    SSLAnalysisOutput,
+    DataflowAnalysisOutput,
+    FirmwareSearchResult,
 )
 
 
-async def create_agents_for_binary(
-    tools: list,
-    binary_path: str,
-    llm: any,
-    security_rules_content: str = ""
-) -> dict:
-    """
-    Create agents for a specific binary (dataflow + SSL only).
+class AgentFactory:
+    """Factory for creating agents with structured output.
 
-    This function is used by BinaryRegistry to create agents for dynamically
-    discovered binaries. Each binary gets its own set of agents with its own
-    MCP tools.
+    This factory creates specialized agents that return Pydantic models.
+    Each agent is configured with:
+    - Appropriate tools
+    - System prompt
+    - Structured output format (via .with_structured_output())
+    - Error handling middleware
 
-    Args:
-        tools: List of IDA tools from MCP client
-        binary_path: Path to the binary file
-        llm: Language model instance to use
-        security_rules_content: Security rules content (optional)
-
-    Returns:
-        Dictionary with agent instances: {
-            'dataflow': dataflow_agent,
-            'ssl': ssl_analyzing_agent
-        }
+    The factory does NOT manage MCP servers - that's the responsibility of
+    StaticAnalysisEngine.
     """
 
-    # Create dataflow agent
-    dataflow_agent = create_agent(
-        model=llm,
-        tools=tools,
-        middleware=[handle_tool_errors],
-        system_prompt=DATAFLOW_SYSTEM_PROMPT
-    )
+    def __init__(self, llm: any):
+        """Initialize the agent factory.
 
-    # Create SSL analyzing agent
-    ssl_analyzing_agent = create_agent(
-        model=llm,
-        tools=tools,
-        middleware=[handle_tool_errors],
-        system_prompt=get_ssl_system_prompt(security_rules_content)
-    )
+        Args:
+            llm: Language model instance to use for all agents
+        """
+        self._llm = llm
 
-    return {
-        'dataflow': dataflow_agent,
-        'ssl': ssl_analyzing_agent
-    }
+    def create_ssl_agent(
+        self,
+        tools: List[any],
+        security_rules_content: str = ""
+    ) -> any:
+        """Create SSL analysis agent with structured output.
+
+        Args:
+            tools: IDA tools from Static Analysis Engine
+            security_rules_content: Security rules to inject into prompt
+
+        Returns:
+            Agent that returns SSLAnalysisOutput Pydantic model
+        """
+        from conn_analyzer.agents.prompts.ssl_prompt import get_ssl_system_prompt
+
+        system_prompt = get_ssl_system_prompt(security_rules_content)
+
+        # Create base agent with raw LLM (not wrapped with structured output)
+        # The agent will output JSON that matches SSLAnalysisOutput schema
+        agent = create_agent(
+            model=self._llm,
+            tools=tools,
+            middleware=[handle_tool_errors],
+            system_prompt=system_prompt
+        )
+
+        return agent
+
+    def create_dataflow_agent(
+        self,
+        tools: List[any],
+    ) -> any:
+        """Create dataflow analysis agent with structured output.
+
+        Args:
+            tools: IDA tools from Static Analysis Engine
+
+        Returns:
+            Agent that returns DataflowAnalysisOutput Pydantic model
+        """
+        from conn_analyzer.agents.prompts.dataflow_prompt import DATAFLOW_SYSTEM_PROMPT
+
+        # Create base agent with raw LLM (not wrapped with structured output)
+        # The agent will output JSON that matches DataflowAnalysisOutput schema
+        agent = create_agent(
+            model=self._llm,
+            tools=tools,
+            middleware=[handle_tool_errors],
+            system_prompt=DATAFLOW_SYSTEM_PROMPT
+        )
+
+        return agent
+
+    def create_firmware_agent(
+        self,
+        firmware_tools: List[any],
+        firmware_path: str
+    ) -> any:
+        """Create firmware exploration agent with structured output.
+
+        Args:
+            firmware_tools: Firmware file system tools (not IDA tools)
+            firmware_path: Path to firmware root
+
+        Returns:
+            Agent that returns FirmwareSearchResult Pydantic model
+        """
+        from conn_analyzer.agents.prompts.firmware_prompt import get_firmware_system_prompt
+
+        system_prompt = get_firmware_system_prompt(firmware_path)
+
+        # Create base agent with raw LLM (not wrapped with structured output)
+        # The agent will output JSON that matches FirmwareSearchResult schema
+        agent = create_agent(
+            model=self._llm,
+            tools=firmware_tools,
+            middleware=[handle_tool_errors],
+            system_prompt=system_prompt
+        )
+
+        return agent

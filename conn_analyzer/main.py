@@ -1,8 +1,11 @@
 """
-Main orchestrator for conn_analyzer.
+Main orchestrator for conn_analyzer v2.
 
 Coordinates IDA integration, agent creation, and analysis execution using
-LangGraph-based workflow with support for dynamic multi-binary analysis.
+LangGraph-based workflow with new architecture:
+- StaticAnalysisEngine: Manages MCP servers
+- AgentFactory: Creates agents with structured output
+- Clean separation of concerns
 """
 
 import os
@@ -30,7 +33,8 @@ from conn_analyzer.utils.file_utils import (
 )
 from conn_analyzer.utils.formatting import format_duration
 from conn_analyzer.ida_integration.port_manager import PortManager
-from conn_analyzer.ida_integration.binary_manager import BinaryRegistry
+from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
+from conn_analyzer.agents.factory import AgentFactory
 from conn_analyzer.graph.state import create_initial_state
 from conn_analyzer.graph.workflow import create_analysis_graph, run_analysis
 
@@ -99,10 +103,12 @@ async def main(
     rules: str = "openssl"
 ):
     """
-    Main function to analyze SSL/TLS connections using LangGraph-based multi-agent system.
+    Main function to analyze SSL/TLS connections using LangGraph v2 architecture.
 
-    This function implements a graph-based workflow architecture where all analysis
-    steps are orchestrated through LangGraph's StateGraph.
+    New architecture features:
+    - StaticAnalysisEngine: Manages MCP servers independently
+    - AgentFactory: Creates agents with structured Pydantic output
+    - State-driven workflow: No context passing through agents
 
     Args:
         file_path: Path to binary file to analyze
@@ -115,7 +121,7 @@ async def main(
 
     console.print()
     console.print(Panel.fit(
-        "[bold cyan]🔍 conn-analyzer - LangGraph-Based SSL/TLS Security Analysis[/bold cyan]",
+        "[bold cyan]🔍 conn-analyzer v2 - Structured SSL/TLS Security Analysis[/bold cyan]",
         border_style="cyan"
     ))
     console.print()
@@ -145,30 +151,35 @@ async def main(
         console.print(f"[dim]  └─ Cleaned up {stale_count} stale port locks[/dim]")
     console.print()
 
-    # 3. Initialize binary registry
-    console.print("[cyan]📦 Initializing binary registry...[/cyan]")
-    binary_registry = BinaryRegistry(
+    # 3. Initialize Static Analysis Engine (v2 architecture)
+    console.print("[cyan]🔬 Initializing Static Analysis Engine...[/cyan]")
+    static_engine = StaticAnalysisEngine(
         firmware_path=firmware_path,
-        llm=llm,
-        port_manager=port_manager,
-        security_rules_content=security_rules_content
+        port_manager=port_manager
     )
+    console.print("[green]✓ Static Analysis Engine ready[/green]")
+    console.print()
+
+    # 4. Initialize Agent Factory (v2 architecture)
+    console.print("[cyan]🏭 Initializing Agent Factory...[/cyan]")
+    agent_factory = AgentFactory(llm=llm)
+    console.print("[green]✓ Agent Factory ready (structured output enabled)[/green]")
     console.print()
 
     try:
-        # 4. Register main binary
-        console.print(f"[cyan]🚀 Registering main binary:[/cyan] {file_path}")
-        main_entry = await binary_registry.register_binary(file_path)
+        # 5. Pre-start MCP session for main binary
+        console.print(f"[cyan]🚀 Starting MCP session for:[/cyan] {file_path}")
+        await static_engine.get_tools(file_path)
         console.print()
 
-        # 5. Create firmware agent (if firmware provided)
-        firmware_agent = None
+        # 6. Prepare firmware tools (if firmware provided)
+        firmware_tools_list = None
         if firmware_path:
-            console.print("[cyan]🗂️  Initializing firmware agent...[/cyan]")
+            console.print("[cyan]🗂️  Initializing firmware tools...[/cyan]")
             firmware_tools.set_firmware_root(firmware_path)
 
             # Get firmware analysis tools
-            fw_tools = [
+            firmware_tools_list = [
                 firmware_tools.search_files_by_name,
                 firmware_tools.search_files_by_content,
                 firmware_tools.read_file,
@@ -176,40 +187,30 @@ async def main(
                 firmware_tools.find_binaries_with_symbol,
                 firmware_tools.find_function_references
             ]
-
-            # Import here to avoid circular dependency
-            from langchain.agents import create_agent
-            from conn_analyzer.agents.core.middleware import handle_tool_errors
-            from conn_analyzer.agents.prompts import get_firmware_system_prompt
-
-            firmware_agent = create_agent(
-                model=llm,
-                tools=fw_tools,
-                middleware=[handle_tool_errors],
-                system_prompt=get_firmware_system_prompt(firmware_path)
-            )
-            console.print("[green]✓ Firmware agent ready[/green]")
+            console.print(f"[green]✓ Firmware tools ready ({len(firmware_tools_list)} tools)[/green]")
             console.print()
 
-        # 6. Create LangGraph workflow
+        # 7. Create LangGraph workflow with dependency injection
         console.print("[cyan]🎯 Building analysis workflow graph...[/cyan]")
         graph = create_analysis_graph(
-            binary_registry=binary_registry,
-            firmware_agent=firmware_agent
+            static_engine=static_engine,
+            agent_factory=agent_factory,
+            firmware_tools=firmware_tools_list,
+            firmware_path=firmware_path
         )
-        console.print("[green]✓ Workflow graph ready[/green]")
+        console.print("[green]✓ Workflow graph ready (v2 architecture)[/green]")
         console.print()
 
-        # 7. Create initial state
+        # 8. Create initial state
         initial_state = create_initial_state(
             binary_path=file_path,
             security_rules=security_rules_content
         )
 
-        # 8. Execute workflow
+        # 9. Execute workflow
         console.print()
         console.print(Panel.fit(
-            "[bold green]🚀 Starting Graph-Based Security Analysis[/bold green]",
+            "[bold green]🚀 Starting Structured Security Analysis[/bold green]",
             border_style="green"
         ))
         console.print()
@@ -220,7 +221,7 @@ async def main(
             config={"recursion_limit": 100}
         )
 
-        # 9. Display final report
+        # 10. Display final report
         console.print()
         console.print(Panel.fit(
             "[bold green]✓ Analysis Complete[/bold green]",
@@ -236,6 +237,16 @@ async def main(
         else:
             console.print("[yellow]⚠ No final report generated[/yellow]")
 
+        # Display analysis details
+        console.print()
+        console.print("[bold cyan]📈 Analysis Statistics:[/bold cyan]")
+        console.print(f"  - Client Type: {final_state.get('client_type', 'N/A')}")
+        console.print(f"  - Rules Analyzed: {len(final_state.get('rules', {}))}")
+        console.print(f"  - Variables Traced: {len(final_state.get('variable_traces', {}))}")
+        console.print(f"  - Binaries Analyzed: {len(final_state.get('analyzed_binaries', set())) + 1}")  # +1 for main
+        if final_state.get('errors'):
+            console.print(f"  - Errors Encountered: {len(final_state['errors'])}")
+
     except Exception as e:
         console.print()
         console.print(f"[bold red]✗ Analysis failed: {e}[/bold red]")
@@ -244,12 +255,12 @@ async def main(
         raise
 
     finally:
-        # 10. Cleanup all resources
+        # 11. Cleanup all resources
         console.print()
         console.print("[cyan]🧹 Cleaning up resources...[/cyan]")
 
-        if 'binary_registry' in locals():
-            binary_registry.cleanup_all()
+        if 'static_engine' in locals():
+            static_engine.cleanup_all()
 
         if 'port_manager' in locals():
             port_manager.cleanup_stale_locks()

@@ -1,115 +1,251 @@
-"""State schema for LangGraph-based SSL analysis workflow."""
+"""State schema for LangGraph-based SSL analysis workflow.
+
+This module defines the complete state structure that flows through
+the analysis graph. State is the single source of truth for all
+intermediate results.
+"""
 
 from enum import Enum
-from typing import TypedDict, Optional, Annotated
-from operator import add
-
-from langchain_core.messages import BaseMessage
+from typing import TypedDict, Optional, Dict, List, Set
+from conn_analyzer.graph.models import RuleResult, VariableTrace
 
 
-class AnalysisStatus(str, Enum):
-    """Status returned by SSL agent indicating next action needed."""
-
-    NOT_APPLICABLE = "NOT_APPLICABLE"
-    NEED_DATAFLOW = "NEED_DATAFLOW"
-    NEED_CROSS_BINARY_ANALYSIS = "NEED_CROSS_BINARY_ANALYSIS"
-    NEED_CONFIG_ANALYSIS = "NEED_CONFIG_ANALYSIS"
-    NEED_FIRMWARE = "NEED_FIRMWARE"
-    COMPLETE = "COMPLETE"
-
+# ============================================================================
+# Enums for Workflow Control
+# ============================================================================
 
 class AnalysisPhase(str, Enum):
     """Current phase of the analysis workflow."""
 
     INITIAL_SSL_ANALYSIS = "initial_ssl_analysis"
     DATAFLOW_ANALYSIS = "dataflow_analysis"
-    FIRMWARE_EXPLORE = "firmware_explore"
     CROSS_BINARY_ANALYSIS = "cross_binary_analysis"
-    CONFIG_ANALYSIS = "config_analysis"
-    AGGREGATING_RESULTS = "aggregating_results"
+    FIRMWARE_EXPLORATION = "firmware_exploration"
     SYNTHESIS = "synthesis"
     COMPLETED = "completed"
 
 
+# ============================================================================
+# Task Definitions
+# ============================================================================
+
+class DataflowTask(TypedDict):
+    """
+    Task specification for dataflow analysis.
+
+    Attributes:
+        type: Type of analysis - "binary", "script", or "config"
+        target: Path to binary, script, or config file
+        variables: List of variables to trace with their context
+    """
+
+    type: str  # "binary" | "script" | "config"
+    target: str
+    variables: List[Dict[str, str]]  # [{"variable": "name", "function": "func", ...}]
+
+
+class CrossBinaryTask(TypedDict):
+    """
+    Task for cross-binary analysis.
+
+    Attributes:
+        function: Function name to search for callers
+        caller_binaries: List of binaries that call this function
+        variables: Variables to trace in caller binaries
+    """
+
+    function: str
+    caller_binaries: List[str]
+    variables: List[Dict[str, str]]
+
+
+# ============================================================================
+# Main State Schema
+# ============================================================================
+
 class AnalysisState(TypedDict, total=False):
     """
-    State for the SSL analysis workflow graph.
+    Complete state for SSL analysis workflow.
 
-    Uses TypedDict with total=False to allow partial updates.
+    This state flows through all nodes in the graph. Each node reads from
+    state and returns updates to merge back into state.
+
+    Using TypedDict with total=False allows partial updates - nodes only
+    need to return the fields they want to update.
     """
 
-    # Input configuration
+    # ========================================================================
+    # Context & Configuration
+    # ========================================================================
+
     binary_path: str
-    """Path to the main binary being analyzed."""
+    """Path to the current binary being analyzed."""
 
     main_binary_path: str
     """Path to the original main binary (preserved during cross-binary analysis)."""
 
     security_rules: str
-    """Security rules content to check against."""
+    """Security rules content (from security_rules/*.md files)."""
 
-    # Workflow control
+    # ========================================================================
+    # Workflow Control
+    # ========================================================================
+
     current_phase: AnalysisPhase
-    """Current phase of the analysis."""
-
-    ssl_status: Optional[AnalysisStatus]
-    """Most recent status returned by SSL agent."""
+    """Current phase of the analysis workflow."""
 
     depth: int
-    """Depth of cross-binary recursion."""
+    """Depth of cross-binary recursion (for preventing infinite loops)."""
 
-    analyzed_binaries: set[str]
-    """Set of binary paths already analyzed (circular dependency prevention)."""
+    # ========================================================================
+    # SSL Analysis Results
+    # ========================================================================
 
-    # Results storage
-    ssl_analysis_result: Optional[str]
-    """Latest result from SSL agent analysis."""
+    rules: Dict[str, RuleResult]
+    """
+    Security rules analysis results.
 
-    dataflow_result: Optional[str]
-    """Result from dataflow agent (for current binary)."""
+    Key: rule_id (e.g., "rule_certificate_verification")
+    Value: RuleResult Pydantic model with status, evidence, conditions
 
-    dataflow_results: dict[str, str]
-    """Map of binary_path -> dataflow result (for cross-binary analysis)."""
+    Example:
+    {
+        "rule_certificate_verification": RuleResult(
+            rule_id="rule_certificate_verification",
+            rule_name="Certificate Verification Enabled",
+            status=RuleStatus.CONDITIONAL,
+            evidence="SSL_CTX_set_verify() found at 0x401234",
+            conditions=[
+                RuleCondition(
+                    variable="mode",
+                    function="SSL_CTX_set_verify",
+                    function_address="0x401234",
+                    parameter_position=1,
+                    security_mapping={"0": "FAIL", "1": "PASS"}
+                )
+            ]
+        )
+    }
+    """
 
-    firmware_findings: Optional[str]
-    """Result from firmware exploration."""
+    ssl_summary: str
+    """Human-readable summary from SSL analysis (for display in final report)."""
 
-    discovered_binaries: list[str]
-    """List of binaries discovered through firmware exploration."""
+    client_type: Optional[str]
+    """Type of SSL/TLS client detected (e.g., 'OpenSSL', 'libcurl')."""
 
-    aggregated_findings: Optional[str]
-    """Aggregated results from multiple binary analyses."""
+    applicable: bool
+    """Whether SSL/TLS security analysis is applicable to this binary."""
 
-    final_report: Optional[str]
-    """Final analysis report."""
+    # ========================================================================
+    # Dataflow Analysis
+    # ========================================================================
 
-    # Message history (for agent communication)
-    messages: Annotated[list[BaseMessage], add]
-    """Message history for agent interactions. Uses operator.add for updates."""
+    pending_dataflow_tasks: List[DataflowTask]
+    """
+    Queue of dataflow analysis tasks to execute.
 
-    # Analysis request details (parsed from SSL agent status)
-    requested_variable: Optional[str]
-    """Variable name requested for dataflow analysis."""
+    Populated by SSL analysis node when it finds conditional rules.
+    Consumed by dataflow analysis node.
+    """
 
-    requested_function: Optional[str]
-    """Function name for cross-binary analysis."""
+    variable_traces: Dict[str, VariableTrace]
+    """
+    Results of variable tracing.
 
-    requested_parameter: Optional[str]
-    """Parameter position/name for cross-binary analysis."""
+    Key: variable name (e.g., "verify_mode")
+    Value: VariableTrace Pydantic model with source, value, confidence
 
-    config_source_type: Optional[str]
-    """Type of config source: CONFIG_FILE, ENVIRONMENT_VARIABLE, COMMAND_LINE_ARG."""
+    Example:
+    {
+        "verify_mode": VariableTrace(
+            variable="verify_mode",
+            function="SSL_CTX_set_verify",
+            source=VariableSource.CONSTANT,
+            value="1",
+            source_details="SSL_VERIFY_PEER",
+            confidence="high",
+            trace_path="Traced from parameter 2 → local var → constant 1"
+        )
+    }
+    """
 
-    config_source_details: Optional[str]
-    """Details about config source (file path, var name, arg pattern)."""
+    # ========================================================================
+    # Cross-Binary Analysis
+    # ========================================================================
 
-    config_setting_name: Optional[str]
-    """Setting name to look for in config."""
+    analyzed_binaries: Set[str]
+    """
+    Set of binary paths already analyzed (prevents circular dependencies).
 
-    # Error tracking
-    error: Optional[str]
-    """Error message if analysis fails."""
+    Example: {"/usr/bin/app", "/lib/libcustom.so"}
+    """
 
+    pending_cross_binary_tasks: List[CrossBinaryTask]
+    """
+    Queue of cross-binary analysis tasks.
+
+    Populated when dataflow finds a variable comes from an exported function parameter.
+    """
+
+    cross_binary_traces: Dict[str, Dict[str, VariableTrace]]
+    """
+    Traces from cross-binary analysis.
+
+    Outer key: binary path
+    Inner key: variable name
+    Value: VariableTrace
+
+    Example:
+    {
+        "/usr/bin/app": {
+            "ssl_mode": VariableTrace(...)
+        },
+        "/lib/libcustom.so": {
+            "ssl_mode": VariableTrace(...)
+        }
+    }
+    """
+
+    # ========================================================================
+    # Firmware Context
+    # ========================================================================
+
+    config_values: Dict[str, str]
+    """
+    Configuration values fetched from firmware.
+
+    Key: setting name (e.g., "ssl_verify_mode")
+    Value: configured value (e.g., "1")
+
+    Example: {"ssl_verify_mode": "1", "tls_min_version": "1.2"}
+    """
+
+    firmware_details: Optional[str]
+    """Detailed findings from firmware exploration (for logging/display)."""
+
+    # ========================================================================
+    # Final Output
+    # ========================================================================
+
+    final_report: str
+    """Final security analysis report (generated by synthesis node)."""
+
+    # ========================================================================
+    # Error Tracking
+    # ========================================================================
+
+    errors: List[str]
+    """
+    List of errors encountered during analysis.
+
+    Non-critical errors are logged here instead of failing the entire analysis.
+    """
+
+
+# ============================================================================
+# State Factory
+# ============================================================================
 
 def create_initial_state(
     binary_path: str,
@@ -123,17 +259,40 @@ def create_initial_state(
         security_rules: Security rules content
 
     Returns:
-        Initial AnalysisState
+        Initial AnalysisState with all required fields initialized
     """
     return AnalysisState(
+        # Context
         binary_path=binary_path,
         main_binary_path=binary_path,
         security_rules=security_rules,
+
+        # Workflow control
         current_phase=AnalysisPhase.INITIAL_SSL_ANALYSIS,
-        ssl_status=None,
         depth=0,
+
+        # SSL results
+        rules={},
+        ssl_summary="",
+        client_type=None,
+        applicable=True,
+
+        # Dataflow
+        pending_dataflow_tasks=[],
+        variable_traces={},
+
+        # Cross-binary
         analyzed_binaries=set(),
-        dataflow_results={},
-        discovered_binaries=[],
-        messages=[],
+        pending_cross_binary_tasks=[],
+        cross_binary_traces={},
+
+        # Firmware
+        config_values={},
+        firmware_details=None,
+
+        # Final output
+        final_report="",
+
+        # Errors
+        errors=[]
     )
