@@ -347,8 +347,13 @@ async def firmware_explore_node(
 # Node: Binary Analysis Dispatch (for parallel cross-binary analysis)
 # ============================================================================
 
-def binary_analysis_dispatch(state: AnalysisState) -> Sequence[Send]:
-    """Dispatch parallel binary analysis tasks.
+def binary_analysis_dispatch(state: AnalysisState):
+    """Dispatch parallel binary analysis tasks OR route to synthesis.
+
+    This is used as a routing function in conditional_edges.
+    It can return either:
+    - Sequence[Send] for parallel binary analysis
+    - "synthesis" string to skip to synthesis
 
     Uses LangGraph Send API to analyze multiple binaries in parallel.
 
@@ -356,18 +361,18 @@ def binary_analysis_dispatch(state: AnalysisState) -> Sequence[Send]:
         state: Current analysis state
 
     Returns:
-        Sequence of Send objects for parallel execution
+        Sequence[Send] for parallel execution OR "synthesis" string
     """
     cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
 
     if not cross_binary_tasks:
-        return []
+        return "synthesis"
 
     task = cross_binary_tasks[0]  # Get first task
     caller_binaries = task.get("caller_binaries", [])
 
     if not caller_binaries:
-        return []
+        return "synthesis"
 
     console.print(f"[cyan]🔀 Dispatching {len(caller_binaries)} parallel binary analyses[/cyan]")
 
@@ -378,8 +383,9 @@ def binary_analysis_dispatch(state: AnalysisState) -> Sequence[Send]:
             Send(
                 "binary_analysis",
                 {
-                    **state,
                     "binary_path": binary_path,  # Override binary path for this analysis
+                    "main_binary_path": state["binary_path"],  # Keep original binary path
+                    "security_rules": state["security_rules"],
                     "cross_binary_function": task["function"],
                     "cross_binary_variables": task["variables"],
                 }

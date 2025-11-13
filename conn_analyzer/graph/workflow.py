@@ -90,13 +90,7 @@ def create_analysis_graph(
             )
         )
 
-    # Node 4: Binary Analysis Dispatch (for parallel execution)
-    graph.add_node(
-        "binary_analysis_dispatch",
-        nodes.binary_analysis_dispatch
-    )
-
-    # Node 5: Binary Analysis (individual binary in parallel execution)
+    # Node 4: Binary Analysis (individual binary in parallel execution)
     graph.add_node(
         "binary_analysis",
         partial(
@@ -106,13 +100,13 @@ def create_analysis_graph(
         )
     )
 
-    # Node 6: Aggregate Cross-Binary Results
+    # Node 5: Aggregate Cross-Binary Results
     graph.add_node(
         "aggregate_results",
         nodes.aggregate_cross_binary_results
     )
 
-    # Node 7: Synthesis (final report generation)
+    # Node 6: Synthesis (final report generation)
     graph.add_node(
         "synthesis",
         nodes.synthesis_node
@@ -148,18 +142,13 @@ def create_analysis_graph(
 
     # Conditional routing after firmware (if firmware tools available)
     if firmware_tools and firmware_path:
+        # Use binary_analysis_dispatch as routing function for dynamic fan-out
+        # It returns either "synthesis" (string) or Sequence[Send] for parallel execution
         graph.add_conditional_edges(
             "firmware_explore",
-            routing.route_after_firmware,
-            {
-                "binary_analysis_dispatch": "binary_analysis_dispatch",
-                "synthesis": "synthesis",
-            }
+            nodes.binary_analysis_dispatch,
+            # No path map needed - Send objects or string routing handle it
         )
-
-        # After binary analysis dispatch → individual binary analyses (parallel)
-        # Note: binary_analysis_dispatch returns Send objects for parallel execution
-        # NO edge needed here - Send objects handle routing automatically
 
         # After individual binary analysis → aggregate results
         graph.add_edge("binary_analysis", "aggregate_results")
