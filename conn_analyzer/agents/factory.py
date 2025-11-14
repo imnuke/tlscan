@@ -37,6 +37,29 @@ class AgentFactory:
         """
         self._llm = llm
 
+    def _prepare_llm_for_sequential_tools(self, llm: any, tools: List[any]) -> any:
+        """Prepare LLM to call tools sequentially (not in parallel).
+
+        This prevents SSE timeout issues when agents make parallel IDA tool calls.
+
+        Args:
+            llm: Language model instance
+            tools: Tools to bind to the LLM
+
+        Returns:
+            LLM configured for sequential tool calling, or original LLM if not supported
+        """
+        # Try to bind tools with parallel_tool_calls=False
+        # This works for OpenAI, DeepSeek, and other LLMs that support this parameter
+        if hasattr(llm, 'bind_tools'):
+            try:
+                return llm.bind_tools(tools, parallel_tool_calls=False)
+            except TypeError:
+                # LLM doesn't support parallel_tool_calls parameter
+                # Return original LLM (fall back to prompt-based instructions)
+                return llm
+        return llm
+
     def create_ssl_agent(
         self,
         tools: List[any],
@@ -55,10 +78,13 @@ class AgentFactory:
 
         system_prompt = get_ssl_system_prompt(security_rules_content)
 
+        # Prepare LLM for sequential tool calling (prevents SSE timeouts)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(self._llm, tools)
+
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches SSLAnalysisOutput schema
         agent = create_agent(
-            model=self._llm,
+            model=llm_with_tools,
             tools=tools,
             middleware=[handle_tool_errors],
             system_prompt=system_prompt
@@ -80,10 +106,13 @@ class AgentFactory:
         """
         from conn_analyzer.agents.prompts.dataflow_prompt import DATAFLOW_SYSTEM_PROMPT
 
+        # Prepare LLM for sequential tool calling (prevents SSE timeouts)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(self._llm, tools)
+
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches DataflowAnalysisOutput schema
         agent = create_agent(
-            model=self._llm,
+            model=llm_with_tools,
             tools=tools,
             middleware=[handle_tool_errors],
             system_prompt=DATAFLOW_SYSTEM_PROMPT
@@ -109,10 +138,13 @@ class AgentFactory:
 
         system_prompt = get_firmware_system_prompt(firmware_path)
 
+        # Prepare LLM for sequential tool calling (prevents SSE timeouts)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(self._llm, firmware_tools)
+
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches FirmwareSearchResult schema
         agent = create_agent(
-            model=self._llm,
+            model=llm_with_tools,
             tools=firmware_tools,
             middleware=[handle_tool_errors],
             system_prompt=system_prompt

@@ -344,137 +344,95 @@ async def firmware_explore_node(
 
 
 # ============================================================================
-# Node: Binary Analysis Dispatch (for parallel cross-binary analysis)
+# Node: Binary Analysis Sequential (for cross-binary analysis)
 # ============================================================================
 
-def binary_analysis_dispatch(state: AnalysisState):
-    """Dispatch parallel binary analysis tasks OR route to synthesis.
-
-    This is used as a routing function in conditional_edges.
-    It can return either:
-    - Sequence[Send] for parallel binary analysis
-    - "synthesis" string to skip to synthesis
-
-    Uses LangGraph Send API to analyze multiple binaries in parallel.
-
-    Args:
-        state: Current analysis state
-
-    Returns:
-        Sequence[Send] for parallel execution OR "synthesis" string
-    """
-    cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
-
-    if not cross_binary_tasks:
-        return "synthesis"
-
-    task = cross_binary_tasks[0]  # Get first task
-    caller_binaries = task.get("caller_binaries", [])
-
-    if not caller_binaries:
-        return "synthesis"
-
-    console.print(f"[cyan]🔀 Dispatching {len(caller_binaries)} parallel binary analyses[/cyan]")
-
-    # Create Send for each binary
-    sends = []
-    for binary_path in caller_binaries:
-        sends.append(
-            Send(
-                "binary_analysis",
-                {
-                    "binary_path": binary_path,  # Override binary path for this analysis
-                    "main_binary_path": state["binary_path"],  # Keep original binary path
-                    "security_rules": state["security_rules"],
-                    "cross_binary_function": task["function"],
-                    "cross_binary_variables": task["variables"],
-                }
-            )
-        )
-
-    return sends
-
-
-# ============================================================================
-# Node: Binary Analysis (for individual binary in cross-binary analysis)
-# ============================================================================
-
-async def binary_analysis_node(
+async def binary_analysis_sequential(
     state: AnalysisState,
     static_engine: StaticAnalysisEngine,
     agent_factory: AgentFactory,
 ) -> Dict[str, Any]:
-    """Analyze a single binary for cross-binary analysis.
+    """Analyze multiple binaries sequentially for cross-binary analysis.
 
-    This node:
-    1. Gets IDA tools for the binary
-    2. Creates dataflow agent
-    3. Traces how this binary calls the target function
-    4. Returns traces for aggregation
+    This node processes caller binaries one at a time to avoid deadlock issues
+    with parallel MCP session creation.
 
     Args:
-        state: Current analysis state (with overridden binary_path)
+        state: Current analysis state
         static_engine: Static Analysis Engine
         agent_factory: Agent factory
 
     Returns:
-        State update with cross_binary_traces for this binary
+        State update with cross_binary_traces for all binaries
     """
-    binary_path = state["binary_path"]
-    function = state.get("cross_binary_function", "")
-    variables = state.get("cross_binary_variables", [])
+    cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
 
-    console.print(f"[dim]  Analyzing caller: {binary_path}[/dim]")
+    if not cross_binary_tasks:
+        console.print("[yellow]⚠ No cross-binary tasks to process[/yellow]")
+        return {
+            "pending_cross_binary_tasks": [],
+            "current_phase": AnalysisPhase.SYNTHESIS,
+        }
 
-    # Get IDA tools
-    tools = await static_engine.get_tools(binary_path)
+    task = cross_binary_tasks[0]  # Get first task
+    caller_binaries = task.get("caller_binaries", [])
+    function = task.get("function", "")
+    variables = task.get("variables", [])
 
-    # Create dataflow agent
-    agent = agent_factory.create_dataflow_agent(tools=tools)
+    if not caller_binaries:
+        console.print("[yellow]⚠ No caller binaries to analyze[/yellow]")
+        return {
+            "pending_cross_binary_tasks": [],
+            "current_phase": AnalysisPhase.SYNTHESIS,
+        }
 
-    # Build request to trace how this binary calls the function
-    request = f"Trace how this binary calls function '{function}' and analyze the arguments passed"
-    messages = [HumanMessage(content=request)]
+    console.print(f"[cyan]🔄 Analyzing {len(caller_binaries)} caller binaries sequentially[/cyan]")
 
-    result: DataflowAnalysisOutput = await stream_and_log_agent(
-        agent=agent,
-        messages=messages,
-        agent_name=f"Dataflow ({binary_path})",
-        agent_emoji="🔍",
-        output_model=DataflowAnalysisOutput
-    )
+    # Analyze each binary sequentially
+    all_traces: Dict[str, Dict[str, VariableTrace]] = {}
 
-    # Store traces for this binary
-    traces_dict = {trace.variable: trace for trace in result.traces}
+    for binary_path in caller_binaries:
+        console.print(f"[dim]  Analyzing caller: {binary_path}[/dim]")
+
+        try:
+            # Get IDA tools for this binary
+            tools = await static_engine.get_tools(binary_path)
+
+            # Create dataflow agent
+            agent = agent_factory.create_dataflow_agent(tools=tools)
+
+            # Build request to trace how this binary calls the function
+            request = f"Trace how this binary calls function '{function}' and analyze the arguments passed"
+            messages = [HumanMessage(content=request)]
+
+            result: DataflowAnalysisOutput = await stream_and_log_agent(
+                agent=agent,
+                messages=messages,
+                agent_name=f"Dataflow ({binary_path})",
+                agent_emoji="🔍",
+                output_model=DataflowAnalysisOutput
+            )
+
+            # Store traces for this binary
+            traces_dict = {trace.variable: trace for trace in result.traces}
+            all_traces[binary_path] = traces_dict
+
+            console.print(f"[green]  ✓ {binary_path}: {len(traces_dict)} traces[/green]")
+
+        except Exception as e:
+            console.print(f"[red]  ✗ Error analyzing {binary_path}: {e}[/red]")
+            # Continue with other binaries even if one fails
+            all_traces[binary_path] = {}
+
+    console.print(f"[green]✓ Cross-binary analysis complete: {len(all_traces)} binaries analyzed[/green]")
 
     return {
-        "cross_binary_traces": {binary_path: traces_dict}
-    }
-
-
-# ============================================================================
-# Node: Aggregate Cross-Binary Results
-# ============================================================================
-
-def aggregate_cross_binary_results(state: AnalysisState) -> Dict[str, Any]:
-    """Aggregate results from parallel cross-binary analyses.
-
-    This node collects all cross_binary_traces and prepares for synthesis.
-
-    Args:
-        state: Current analysis state
-
-    Returns:
-        State update moving to synthesis phase
-    """
-    cross_binary_traces = state.get("cross_binary_traces", {})
-
-    console.print(f"[green]✓ Cross-binary analysis complete: {len(cross_binary_traces)} binaries analyzed[/green]")
-
-    return {
-        "pending_cross_binary_tasks": [],  # Clear tasks
+        "cross_binary_traces": all_traces,
+        "pending_cross_binary_tasks": [],
         "current_phase": AnalysisPhase.SYNTHESIS,
     }
+
+
 
 
 # ============================================================================

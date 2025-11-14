@@ -67,18 +67,18 @@ def route_after_dataflow(
 
 def route_after_firmware(
     state: AnalysisState
-) -> Literal["binary_analysis_dispatch", "synthesis"]:
+) -> Literal["binary_analysis_sequential", "synthesis"]:
     """Route after firmware exploration completes.
 
     Firmware exploration determines:
-    - If found binaries for cross-binary analysis → dispatch parallel analysis
+    - If found binaries for cross-binary analysis → sequential analysis
     - Otherwise → go to synthesis
 
     Args:
         state: Current analysis state
 
     Returns:
-        Next node: "binary_analysis_dispatch" or "synthesis"
+        Next node: "binary_analysis_sequential" or "synthesis"
     """
     cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
 
@@ -90,25 +90,9 @@ def route_after_firmware(
     caller_binaries = task.get("caller_binaries", [])
 
     if caller_binaries:
-        return "binary_analysis_dispatch"
+        return "binary_analysis_sequential"
     else:
         return "synthesis"
-
-
-def route_after_aggregation(
-    state: AnalysisState
-) -> Literal["synthesis"]:
-    """Route after aggregating cross-binary results.
-
-    Always proceeds to synthesis after cross-binary analysis completes.
-
-    Args:
-        state: Current analysis state
-
-    Returns:
-        "synthesis"
-    """
-    return "synthesis"
 
 
 def route_from_synthesis(

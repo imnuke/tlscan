@@ -90,23 +90,17 @@ def create_analysis_graph(
             )
         )
 
-    # Node 4: Binary Analysis (individual binary in parallel execution)
-    graph.add_node(
-        "binary_analysis",
-        partial(
-            nodes.binary_analysis_node,
-            static_engine=static_engine,
-            agent_factory=agent_factory
+        # Node 4: Binary Analysis Sequential (for cross-binary analysis)
+        graph.add_node(
+            "binary_analysis_sequential",
+            partial(
+                nodes.binary_analysis_sequential,
+                static_engine=static_engine,
+                agent_factory=agent_factory
+            )
         )
-    )
 
-    # Node 5: Aggregate Cross-Binary Results
-    graph.add_node(
-        "aggregate_results",
-        nodes.aggregate_cross_binary_results
-    )
-
-    # Node 6: Synthesis (final report generation)
+    # Node 5: Synthesis (final report generation)
     graph.add_node(
         "synthesis",
         nodes.synthesis_node
@@ -142,25 +136,18 @@ def create_analysis_graph(
 
     # Conditional routing after firmware (if firmware tools available)
     if firmware_tools and firmware_path:
-        # Use binary_analysis_dispatch as routing function for dynamic fan-out
-        # It returns either "synthesis" (string) or Sequence[Send] for parallel execution
+        # Route to sequential binary analysis
         graph.add_conditional_edges(
             "firmware_explore",
-            nodes.binary_analysis_dispatch,
-            # No path map needed - Send objects or string routing handle it
-        )
-
-        # After individual binary analysis → aggregate results
-        graph.add_edge("binary_analysis", "aggregate_results")
-
-        # After aggregation → synthesis
-        graph.add_conditional_edges(
-            "aggregate_results",
-            routing.route_after_aggregation,
+            routing.route_after_firmware,
             {
+                "binary_analysis_sequential": "binary_analysis_sequential",
                 "synthesis": "synthesis",
             }
         )
+
+        # After sequential binary analysis → synthesis
+        graph.add_edge("binary_analysis_sequential", "synthesis")
 
     # After synthesis → end
     graph.add_conditional_edges(
