@@ -159,18 +159,6 @@ class StaticAnalysisEngine:
             port = self._port_manager.allocate_port(binary_path=normalized_path)
             console.print(f"[dim]  ├─ Allocated port: {port}[/dim]")
 
-            # Pre-initialize IDA database to avoid PySide6 errors
-            console.print(f"[dim]  ├─ Pre-initializing IDA database...[/dim]")
-            try:
-                import idapro
-                idapro.enable_console_messages(False)
-                idapro.open_database(normalized_path, run_auto_analysis=True)
-                idapro.close_database()
-                console.print(f"[dim]  ├─ Database pre-initialized[/dim]")
-            except Exception as e:
-                # Continue anyway - headless server might still work
-                console.print(f"[yellow]  ├─ Pre-init note: {e}[/yellow]")
-
             # Start headless IDA server
             server_process = start_headless_ida_server(normalized_path, port=port)
             console.print(f"[dim]  ├─ Started MCP server on port {port}[/dim]")
