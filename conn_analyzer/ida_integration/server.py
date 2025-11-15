@@ -7,6 +7,8 @@ Provides functionality to start and manage headless IDA Pro server processes.
 import subprocess
 import time
 import requests
+from pathlib import Path
+from datetime import datetime
 from rich.console import Console
 from rich.panel import Panel
 
@@ -14,6 +16,7 @@ from conn_analyzer.config import (
     IDA_SERVER_HOST,
     IDA_SERVER_STARTUP_TIMEOUT,
     IDA_SERVER_READINESS_CHECK_INTERVAL,
+    IDA_SERVER_LOGS_DIR,
 )
 from conn_analyzer.utils.formatting import format_duration
 
@@ -46,6 +49,15 @@ def start_headless_ida_server(
     start_time = time.perf_counter()
     console.print(f"[cyan]⚙[/cyan]  Starting headless IDA server for [bold]{binary_path}[/bold]...")
 
+    # Create logs directory if it doesn't exist
+    IDA_SERVER_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Generate log filename based on binary name, port, and timestamp
+    binary_name = Path(binary_path).stem
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"ida_server_{binary_name}_{port}_{timestamp}.log"
+    log_path = IDA_SERVER_LOGS_DIR / log_filename
+
     cmd = [
         "uv", "run",
         "--directory", ida_pro_mcp_dir,
@@ -56,12 +68,19 @@ def start_headless_ida_server(
     ]
 
     try:
+        # Open log file for writing (both stdout and stderr)
+        log_file = open(log_path, 'w', buffering=1)  # Line buffered
+
         process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,  # Redirect stderr to stdout
             text=True
         )
+
+        # Store log file path and handle on the process object for later access
+        process._log_file = log_file
+        process._log_path = log_path
 
         # Wait for server to be ready (poll SSE endpoint)
         url = f"http://{host}:{port}/sse"
@@ -70,16 +89,22 @@ def start_headless_ida_server(
         for i in range(IDA_SERVER_STARTUP_TIMEOUT):
             # Check if process crashed
             if process.poll() is not None:
-                # Process exited, capture output
-                stdout, stderr = process.communicate()
+                # Process exited, read log file
+                log_file.close()
                 console.print(f"[bold red]✗[/bold red] Headless IDA server process exited with code {process.returncode}")
+                console.print(f"[cyan]📄[/cyan] Log file: {log_path}")
                 console.print()
-                if stderr:
-                    console.print("[bold red]Server Error Output:[/bold red]")
-                    console.print(Panel(stderr, border_style="red", title="stderr"))
-                if stdout:
-                    console.print("[bold yellow]Server Output:[/bold yellow]")
-                    console.print(Panel(stdout, border_style="yellow", title="stdout"))
+
+                # Read and display log contents
+                try:
+                    with open(log_path, 'r') as f:
+                        log_contents = f.read()
+                    if log_contents.strip():
+                        console.print("[bold yellow]Server Log Output:[/bold yellow]")
+                        console.print(Panel(log_contents, border_style="yellow", title="Log"))
+                except Exception as e:
+                    console.print(f"[yellow]⚠[/yellow] Could not read log file: {e}")
+
                 raise RuntimeError(f"Headless IDA server failed to start (exit code {process.returncode})")
 
             time.sleep(IDA_SERVER_READINESS_CHECK_INTERVAL)
@@ -88,6 +113,7 @@ def start_headless_ida_server(
                 if response.status_code in [200, 405, 400]:  # Server responding
                     elapsed = time.perf_counter() - start_time
                     console.print(f"[green]✓[/green] Headless IDA server ready ({format_duration(elapsed)})")
+                    console.print(f"[cyan]📄[/cyan] Server logs: {log_path}")
                     return process
             except requests.RequestException:
                 pass
@@ -95,22 +121,34 @@ def start_headless_ida_server(
         # Timeout - check if process is still running
         if process.poll() is not None:
             # Process died during wait
-            stdout, stderr = process.communicate()
+            log_file.close()
             console.print(f"[bold red]✗[/bold red] Server process died during startup (exit code {process.returncode})")
-            if stderr:
-                console.print("[bold red]Error Output:[/bold red]")
-                console.print(Panel(stderr, border_style="red"))
-            if stdout:
-                console.print("[bold yellow]Output:[/bold yellow]")
-                console.print(Panel(stdout, border_style="yellow"))
+            console.print(f"[cyan]📄[/cyan] Log file: {log_path}")
+            console.print()
+
+            # Read and display log contents
+            try:
+                with open(log_path, 'r') as f:
+                    log_contents = f.read()
+                if log_contents.strip():
+                    console.print("[bold yellow]Server Log Output:[/bold yellow]")
+                    console.print(Panel(log_contents, border_style="yellow", title="Log"))
+            except Exception as e:
+                console.print(f"[yellow]⚠[/yellow] Could not read log file: {e}")
+
             raise RuntimeError(f"Server process failed during startup (exit code {process.returncode})")
         else:
             # Still running but not responding
+            log_file.close()
             process.terminate()
             console.print(f"[bold red]✗[/bold red] Server did not respond within {IDA_SERVER_STARTUP_TIMEOUT} seconds (process still running)")
+            console.print(f"[cyan]📄[/cyan] Log file: {log_path}")
             console.print(f"[yellow]⚠[/yellow]  Check if port {port} is already in use or server is slow to start")
             raise TimeoutError(f"Headless IDA server did not start within {IDA_SERVER_STARTUP_TIMEOUT} seconds")
 
     except Exception as e:
+        # Ensure log file is closed on any exception
+        if 'log_file' in locals() and not log_file.closed:
+            log_file.close()
         console.print(f"[bold red]✗[/bold red] Failed to start headless IDA server: {e}")
         raise

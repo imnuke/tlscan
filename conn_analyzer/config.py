@@ -49,6 +49,9 @@ TEMP_FILES_DIR = Path("/tmp/conn_analyzer")
 PORT_LOCK_DIR = TEMP_FILES_DIR / "port_locks"
 """Directory for port lock files used in multi-instance coordination."""
 
+IDA_SERVER_LOGS_DIR = TEMP_FILES_DIR / "ida_server_logs"
+"""Directory for IDA MCP server log files."""
+
 SECURITY_RULES_DIR = Path("security_rules")
 """Directory containing security rule markdown files."""
 
