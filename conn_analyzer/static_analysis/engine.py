@@ -12,6 +12,7 @@ It does NOT create agents - that's the responsibility of AgentFactory.
 """
 
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -298,16 +299,27 @@ class StaticAnalysisEngine:
                 # Terminate server
                 if session.server_process:
                     try:
+                        # First try graceful termination (SIGTERM)
                         session.server_process.terminate()
                         session.server_process.wait(timeout=5)
-                    except:
-                        pass
+                        console.print(f"[dim]  ✓ Server for {Path(path).name} terminated gracefully[/dim]")
+                    except subprocess.TimeoutExpired:
+                        # Process didn't respond to SIGTERM, force kill (SIGKILL)
+                        console.print(f"[yellow]  ⚠ Server for {Path(path).name} unresponsive, forcing termination...[/yellow]")
+                        try:
+                            session.server_process.kill()
+                            session.server_process.wait(timeout=2)
+                            console.print(f"[dim]  ✓ Server forcefully terminated[/dim]")
+                        except Exception as e:
+                            console.print(f"[red]  ✗ Failed to kill server: {e}[/red]")
+                    except Exception as e:
+                        console.print(f"[yellow]  ⚠ Warning during server termination: {e}[/yellow]")
 
                 # Release port
                 try:
                     self._port_manager.release_port(session.port)
-                except:
-                    pass
+                except Exception as e:
+                    console.print(f"[yellow]  ⚠ Warning: Failed to release port {session.port}: {e}[/yellow]")
 
             # Clear sessions
             self._sessions.clear()

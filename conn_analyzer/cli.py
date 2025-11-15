@@ -8,6 +8,7 @@ import sys
 import argparse
 import asyncio
 from pathlib import Path
+from rich.console import Console
 
 # Add project root to path for importing project modules
 project_root = Path(__file__).parent.parent
@@ -15,6 +16,8 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from conn_analyzer.main import main
+
+console = Console()
 
 
 def parse_args():
@@ -64,13 +67,23 @@ def run():
     """Main entry point for CLI."""
     args = parse_args()
 
-    asyncio.run(main(
-        file_path=args.binary_path,
-        model=args.model,
-        conn_type=args.conn_type,
-        firmware_path=args.firmware_path,
-        rules=args.rules
-    ))
+    try:
+        asyncio.run(main(
+            file_path=args.binary_path,
+            model=args.model,
+            conn_type=args.conn_type,
+            firmware_path=args.firmware_path,
+            rules=args.rules
+        ))
+    except KeyboardInterrupt:
+        console.print()
+        console.print("[yellow]🛑 Analysis interrupted by user (Ctrl-C)[/yellow]")
+        console.print("[dim]Cleanup already completed[/dim]")
+        sys.exit(0)
+    except Exception as e:
+        console.print()
+        console.print(f"[red]✗ Fatal error: {e}[/red]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

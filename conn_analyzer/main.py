@@ -247,6 +247,11 @@ async def main(
         if final_state.get('errors'):
             console.print(f"  - Errors Encountered: {len(final_state['errors'])}")
 
+    except KeyboardInterrupt:
+        console.print()
+        console.print("[yellow]⚠ Analysis interrupted by user[/yellow]")
+        # Re-raise to be caught by CLI handler
+        raise
     except Exception as e:
         console.print()
         console.print(f"[bold red]✗ Analysis failed: {e}[/bold red]")
