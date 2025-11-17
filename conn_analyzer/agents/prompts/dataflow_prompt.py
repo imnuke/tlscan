@@ -9,7 +9,7 @@ Trace variable sources and output JSON matching this schema:
     {
       "variable": "verify_mode",
       "function": "SSL_CTX_set_verify",
-      "source": "HARDCODED|CONFIG_FILE|ENV_VAR|COMMAND_LINE_ARG|FUNCTION_PARAMETER|UNKNOWN",
+      "source": "CONSTANT|CONFIG_FILE|ENVIRONMENT_VARIABLE|COMMAND_LINE_ARG|FUNCTION_PARAMETER|UNKNOWN",
       "value": "1"|null,
       "source_details": "additional context",
       "confidence": "high|medium|low",
@@ -21,9 +21,9 @@ Trace variable sources and output JSON matching this schema:
 }
 
 Variable Sources:
-- HARDCODED: Constant in code (e.g., verify = 1)
+- CONSTANT: Constant in code (e.g., verify = 1)
 - CONFIG_FILE: Read from file (identify file path, don't read it)
-- ENV_VAR: Environment variable (identify var name)
+- ENVIRONMENT_VARIABLE: Environment variable (identify var name)
 - COMMAND_LINE_ARG: Command-line argument
 - FUNCTION_PARAMETER: Function parameter from caller
 - UNKNOWN: Cannot determine
