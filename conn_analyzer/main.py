@@ -38,7 +38,7 @@ from conn_analyzer.agents.factory import AgentFactory
 from conn_analyzer.graph.state import create_initial_state
 from conn_analyzer.graph.workflow import create_analysis_graph, run_analysis
 
-import firmware_tools
+from conn_analyzer.static_analysis import firmware_tools
 
 # Configure logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
