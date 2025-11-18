@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Optional
 from langchain_core.tools import tool
+from ..utils.binary_utils import is_elf_file, get_imported_function_list, get_exported_function_list
 
 # Global firmware root path - will be set by the agent initialization
 FIRMWARE_ROOT = None
@@ -280,7 +281,7 @@ def read_file(path: str, start_line: Optional[int] = None, end_line: Optional[in
         with open(abs_path, 'rb') as f:
             chunk = f.read(1024)
             if b'\x00' in chunk:
-                return f"Error: Cannot read binary file: {path}\nUse list_binary_symbols or find_binary_strings instead."
+                return f"Error: Cannot read binary file: {path}\nUse find_function_definition or find_function_references for binary analysis."
 
         # Read text file
         with open(abs_path, 'r', encoding='utf-8', errors='replace') as f:
@@ -308,216 +309,67 @@ def read_file(path: str, start_line: Optional[int] = None, end_line: Optional[in
 # ============================================================================
 
 @tool
-def list_binary_symbols(path: str, symbol_filter: Optional[str] = None) -> str:
+def find_function_definition(function_name: str) -> str:
     """
-    List functions and symbols in a binary using nm (names tool).
+    Find the binary where a function is defined.
 
     Use this to:
-    - Find what SSL/TLS functions a binary defines or imports
-    - Check if a binary implements a specific function
-    - List all exported functions from a library
+    - Locate where functions are implemented
 
     Args:
-        path: Binary file path (executable or shared library)
-        symbol_filter: Optional regex filter for symbol names (e.g., "SSL_", "verify")
+        function_name: Name of the function to search for
 
     Returns:
-        List of symbols with type indicators:
-        T = defined function (text), U = undefined (imported), D = initialized data
+        Binary path where function is defined
 
     Examples:
-        list_binary_symbols("usr/lib/libssl.so") - List all libssl symbols
-        list_binary_symbols("usr/bin/httpd", "SSL_") - Find SSL functions in httpd
-        list_binary_symbols("lib/libcrypto.so", "verify") - Find verify functions
+        find_function_definition("SSL_CTX_set_verify") - Find SSL_CTX_set_verify implementation
     """
-    try:
-        abs_path = _validate_path(path)
+    for root, _, files in os.walk(FIRMWARE_ROOT):
+        for file in files:
+            file_path = os.path.join(root, file)
+            if os.path.islink(file_path) or not is_elf_file(file_path):
+                continue
+            exported_functions = get_exported_function_list(file_path)
+            if function_name in exported_functions:
+                rel_path = Path(file_path).relative_to(FIRMWARE_ROOT)
+                return f"Function '{function_name}' is defined in binary: {rel_path}"
 
-        if not abs_path.exists():
-            return f"Error: File not found: {path}"
-
-        # Use nm to list symbols
-        cmd = ["nm", "-D", str(abs_path)]  # -D for dynamic symbols
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        if result.returncode != 0:
-            # Try without -D (for static binaries)
-            cmd = ["nm", str(abs_path)]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-
-            if result.returncode != 0:
-                return f"Error: nm command failed: {result.stderr}\nFile may not be a binary: {path}"
-
-        if not result.stdout.strip():
-            return f"No symbols found in: {path}"
-
-        # Parse nm output and filter
-        symbols = []
-        for line in result.stdout.strip().split('\n'):
-            # Format: [address] type name
-            # Example: "0000000000001234 T SSL_connect"
-            parts = line.split()
-            if len(parts) >= 2:
-                # Handle lines without address (undefined symbols)
-                if len(parts) == 3:
-                    addr, sym_type, name = parts
-                else:
-                    sym_type, name = parts
-                    addr = ""
-
-                # Apply filter if provided
-                if symbol_filter and not re.search(symbol_filter, name, re.IGNORECASE):
-                    continue
-
-                symbols.append(f"{sym_type} {name}")
-
-        if not symbols:
-            filter_msg = f" matching '{symbol_filter}'" if symbol_filter else ""
-            return f"No symbols found{filter_msg} in: {path}"
-
-        header = f"Symbols in {path}:\n" + "=" * 60 + "\n"
-        header += "Legend: T=defined, U=imported, D=data, W=weak\n" + "=" * 60 + "\n"
-
-        return header + "\n".join(symbols[:500])  # Limit output
-
-    except subprocess.TimeoutExpired:
-        return "Error: nm command timed out"
-    except Exception as e:
-        return f"Error analyzing binary: {str(e)}"
-
-@tool
-def find_binaries_with_symbol(symbol_name: str, binary_pattern: str = "*") -> str:
-    """
-    Find all binaries that define or import a specific function/symbol.
-
-    Use this for cross-binary analysis:
-    - Which binary implements SSL_verify_callback?
-    - Which binaries import SSL_CTX_set_verify?
-    - Where is a custom function defined?
-
-    Args:
-        symbol_name: Function/symbol name to search for (supports regex)
-        binary_pattern: Glob pattern for binaries to search (default: all files)
-
-    Returns:
-        List of binaries with the symbol, showing if it's defined (T) or imported (U)
-
-    Examples:
-        find_binaries_with_symbol("SSL_verify") - Find all binaries with SSL_verify
-        find_binaries_with_symbol("curl_easy_setopt", "usr/bin/*") - Search in /usr/bin
-        find_binaries_with_symbol("custom_verify_callback") - Find custom function
-    """
-    try:
-        # First, find all potential binary files
-        cmd = [
-            "fd",
-            "--glob",  # Enable glob-based pattern matching (usr/bin/*, lib*.so, etc.)
-            "--type", "f",
-            binary_pattern,
-            str(FIRMWARE_ROOT)
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return f"Error finding binaries: {result.stderr}"
-
-        files = result.stdout.strip().split('\n')
-        if not files or files == ['']:
-            return f"No files found matching pattern: {binary_pattern}"
-
-        # Check each file for the symbol
-        matches = []
-        for file_path in files[:500]:  # Limit to avoid too many nm calls
-            try:
-                # Quick check if file is binary
-                with open(file_path, 'rb') as f:
-                    magic = f.read(4)
-                    # Check for ELF magic number
-                    if magic[:4] != b'\x7fELF':
-                        continue
-
-                # Run nm on the binary
-                result = subprocess.run(
-                    ["nm", "-D", file_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=2
-                )
-
-                # Search for symbol in output
-                for line in result.stdout.split('\n'):
-                    if re.search(symbol_name, line, re.IGNORECASE):
-                        rel_path = Path(file_path).relative_to(FIRMWARE_ROOT)
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            sym_type = parts[-2] if len(parts) == 3 else parts[0]
-                            sym_name = parts[-1]
-                            matches.append(f"{rel_path}: [{sym_type}] {sym_name}")
-                            break  # Only report first match per file
-
-            except Exception:
-                continue  # Skip files that can't be processed
-
-        if not matches:
-            return f"No binaries found with symbol: {symbol_name}"
-
-        return f"Found symbol '{symbol_name}' in {len(matches)} binaries:\n" + "\n".join(matches)
-
-    except subprocess.TimeoutExpired:
-        return "Error: Search timed out"
-    except Exception as e:
-        return f"Error searching binaries: {str(e)}"
-
-# ============================================================================
-# 5. CROSS-REFERENCE TOOLS
-# ============================================================================
+    return f"Function '{function_name}' not found in any binaries."
 
 @tool
 def find_function_references(function_name: str) -> str:
     """
-    Find all references to a function across firmware (scripts, configs, binaries).
+    Find all references to a function within binaries.
 
-    Use this to trace where a function is:
-    - Called in shell scripts
-    - Referenced in configuration files
-    - Imported/exported in binaries
+    Use this to:
+    - Identify where SSL/TLS functions are called
+    - Trace usage of custom verification callbacks
+    - Understand function call relationships
 
     Args:
-        function_name: Function name to search for
+        function_name: Name of the function to search for
 
     Returns:
-        All references with file paths, types, and context
+        List of binaries and addresses referencing the function
 
     Examples:
-        find_function_references("SSL_verify_callback") - Find custom callback usage
-        find_function_references("SSL_CTX_set_verify") - Trace verification setup
-        find_function_references("curl_setopt") - Find CURL configuration
+        find_function_references("SSL_connect") - Find all calls to SSL_connect
+        find_function_references("custom_verify_callback") - Trace custom callback usage
     """
-    try:
-        results = []
+    results = []
 
-        # 1. Search in text files (scripts, configs)
-        text_result = search_files_by_content(function_name, max_results=50)
-        if not text_result.startswith("No matches"):
-            results.append("=== Text Files (scripts/configs) ===")
-            results.append(text_result)
+    for root, _, files in os.walk(FIRMWARE_ROOT):
+        for file in files:
+            file_path = os.path.join(root, file)
+            if os.path.islink(file_path) or not is_elf_file(file_path):
+                continue
+            imported_functions = get_imported_function_list(file_path)
+            if function_name in imported_functions:
+                rel_path = Path(file_path).relative_to(FIRMWARE_ROOT)
+                results.append(str(rel_path))
 
-        # 2. Search in binaries
-        binary_result = find_binaries_with_symbol(function_name)
-        if not binary_result.startswith("No binaries"):
-            results.append("\n=== Binary Files (executables/libraries) ===")
-            results.append(binary_result)
+    if results:
+        return f"Function '{function_name}' is referenced in {len(results)} binaries:\n" + "\n".join(results)
 
-        if not results:
-            return f"No references found for function: {function_name}"
-
-        return f"References to '{function_name}':\n\n" + "\n".join(results)
-
-    except Exception as e:
-        return f"Error finding references: {str(e)}"
+    return f"Function '{function_name}' not found in any binaries."

@@ -27,13 +27,12 @@ Available Tools:
 - search_files_by_name(pattern, max_results) - e.g., '*.conf', 'libssl*'
 - search_files_by_content(pattern, file_pattern, max_results) - search file contents
 - read_file(path, start_line, end_line) - read file
-- list_binary_symbols(path, symbol_filter) - list functions in binary (nm)
-- find_binaries_with_symbol(symbol_name, binary_pattern) - find binaries with symbol
-- find_function_references(function_name) - unified search
+- find_function_definition(function_name) - find where function is defined/exported
+- find_function_references(function_name) - find binaries that import/call function
 
 Key Instructions:
 1. Use SPECIFIC patterns to avoid 100+ matches (e.g., file_pattern='*.conf')
-2. For cross-binary: use find_binaries_with_symbol, verify with list_binary_symbols
+2. For cross-binary: use find_function_references to find callers, find_function_definition for implementation
 3. For configs: read file, parse format (key=value, JSON, XML, YAML), extract value
 4. Provide detailed explanation in "details" field
 5. Output ONLY valid JSON matching the schema

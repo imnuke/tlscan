@@ -183,8 +183,7 @@ async def main(
                 firmware_tools.search_files_by_name,
                 firmware_tools.search_files_by_content,
                 firmware_tools.read_file,
-                firmware_tools.list_binary_symbols,
-                firmware_tools.find_binaries_with_symbol,
+                firmware_tools.find_function_definition,
                 firmware_tools.find_function_references
             ]
             console.print(f"[green]✓ Firmware tools ready ({len(firmware_tools_list)} tools)[/green]")
