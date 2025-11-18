@@ -213,7 +213,9 @@ async def dataflow_analysis_node(
 
         # Build request with all variables for this task
         variables_desc = "\n".join([
-            f"  - Variable '{v['variable']}' in function '{v['function']}' at {v.get('function_address', 'unknown')}"
+            (f"  - Parameter {v['parameter_position']} in function '{v['function']}' at {v.get('function_address', 'unknown')}"
+             if v.get('parameter_position') and v['parameter_position'] != ""
+             else f"  - Variable '{v['variable']}' in function '{v['function']}' at {v.get('function_address', 'unknown')}")
             for v in variables
         ])
 

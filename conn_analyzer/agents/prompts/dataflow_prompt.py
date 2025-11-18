@@ -31,10 +31,11 @@ Variable Sources:
 Key Instructions:
 1. Use IDA tools: decompile_function, get_callers, get_xrefs_to
 2. Trace each variable through the code step-by-step
-3. For FUNCTION_PARAMETER from exported functions, set cross_binary_needed=true
-4. Provide detailed trace_path explaining each step
-5. Be honest about confidence level
-6. Output ONLY valid JSON matching the schema
+3. When asked to trace "Parameter N", analyze the Nth parameter of the specified function (parameters are 0-indexed in IDA but typically 1-indexed in requests)
+4. For FUNCTION_PARAMETER from exported functions, set cross_binary_needed=true
+5. Provide detailed trace_path explaining each step
+6. Be honest about confidence level
+7. Output ONLY valid JSON matching the schema
 
 Available tools: decompile_function, get_callers, get_xrefs_to, list_functions_filter, read_file (for scripts/configs), and more.
 
