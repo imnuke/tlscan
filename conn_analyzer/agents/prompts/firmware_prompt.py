@@ -11,7 +11,7 @@ Search files, find binaries, read configs, and output JSON matching this schema:
 
 {{
   "found": true|false,
-  "binaries": ["/path/to/binary1", "/path/to/binary2"],
+  "binaries": ["path/to/binary1", "path/to/binary2"],
   "config_values": {{"ssl_verify": "1", "other_key": "value"}},
   "script_content": null|"script text",
   "details": "detailed explanation of findings"
