@@ -241,10 +241,22 @@ async def dataflow_analysis_node(
         # Check if cross-binary analysis needed
         if result.cross_binary_needed and result.cross_binary_details:
             details = result.cross_binary_details
+            # Extract only the variables that need cross-binary analysis
+            cross_binary_var_names = details.get("variables", [])
+            # Filter original variables to only include those needing cross-binary analysis
+            cross_binary_vars = [
+                v for v in variables
+                if v.get("variable") in cross_binary_var_names
+                or f"Parameter {v.get('parameter_position')}" in cross_binary_var_names
+            ]
+            # Fallback: if no matches found, use the variable names directly
+            if not cross_binary_vars and cross_binary_var_names:
+                cross_binary_vars = [{"variable": name} for name in cross_binary_var_names]
+
             cross_binary_task = CrossBinaryTask(
                 function=details.get("function", ""),
                 caller_binaries=[],  # Will be populated by firmware agent
-                variables=variables  # Pass original variables for tracing in callers
+                variables=cross_binary_vars  # Only variables needing cross-binary analysis
             )
             cross_binary_tasks.append(cross_binary_task)
             console.print(f"[dim]    → Cross-binary analysis needed for {details.get('function')}[/dim]")

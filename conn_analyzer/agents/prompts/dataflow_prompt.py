@@ -17,7 +17,7 @@ Trace variable sources and output JSON matching this schema:
     }
   ],
   "cross_binary_needed": false,
-  "cross_binary_details": null|{"function": "func_name", "binary": "/path/to/binary", "variables": [...]}
+  "cross_binary_details": null|{"function": "func_name", "variables": [...]}
 }
 
 Variable Sources:
@@ -28,14 +28,21 @@ Variable Sources:
 - FUNCTION_PARAMETER: Function parameter from caller
 - UNKNOWN: Cannot determine
 
-Key Instructions:
+Tracing Workflow:
 1. Use IDA tools: decompile_function, get_callers, get_xrefs_to
 2. Trace each variable through the code step-by-step
 3. When asked to trace "Parameter N", analyze the Nth parameter of the specified function (parameters are 0-indexed in IDA but typically 1-indexed in requests)
-4. For FUNCTION_PARAMETER from exported functions, set cross_binary_needed=true
-5. Provide detailed trace_path explaining each step
-6. Be honest about confidence level
-7. Output ONLY valid JSON matching the schema
+4. **CRITICAL for FUNCTION_PARAMETER sources:**
+   - ALWAYS use get_callers to find all functions that call the target function
+   - Decompile EACH caller to find the actual argument value passed
+   - If argument is a constant, report source as CONSTANT with the value
+   - If argument comes from caller's parameter, continue tracing up the call chain
+   - Only report FUNCTION_PARAMETER when you reach an exported function with NO callers in the binary
+5. For FUNCTION_PARAMETER from exported functions with no callers, set cross_binary_needed=true
+6. cross_binary_details.variables should ONLY include variables that actually need cross-binary analysis (those that trace to an exported function with no callers)
+7. Provide detailed trace_path explaining each step of the call chain
+8. Be honest about confidence level
+9. Output ONLY valid JSON matching the schema
 
 Available tools: decompile_function, get_callers, get_xrefs_to, list_functions_filter, read_file (for scripts/configs), and more.
 
