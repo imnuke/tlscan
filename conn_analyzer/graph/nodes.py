@@ -412,8 +412,16 @@ async def binary_analysis_sequential(
             # Create dataflow agent
             agent = agent_factory.create_dataflow_agent(tools=tools)
 
-            # Build request to trace how this binary calls the function
-            request = f"Trace how this binary calls function '{function}' and analyze the arguments passed"
+            # Build request with specific variables to trace
+            if variables:
+                variables_desc = "\n".join([
+                    f"  - Variable '{v['variable']}' (argument to {function})"
+                    for v in variables
+                ])
+                request = f"Find how this binary calls function '{function}' and trace the following arguments:\n{variables_desc}"
+            else:
+                # Fallback if no specific variables provided
+                request = f"Trace how this binary calls function '{function}' and analyze the arguments passed"
             messages = [HumanMessage(content=request)]
 
             result: DataflowAnalysisOutput = await stream_and_log_agent(
