@@ -7,7 +7,7 @@ intermediate results.
 
 from enum import Enum
 from typing import TypedDict, Optional, Dict, List, Set
-from conn_analyzer.graph.models import RuleResult, VariableTrace, ExternalValue
+from conn_analyzer.graph.models import RuleResult, VariableTrace, ExternalValue, ConfigFetchTask
 
 
 # ============================================================================
@@ -183,6 +183,14 @@ class AnalysisState(TypedDict, total=False):
     Populated when dataflow finds a variable comes from an exported function parameter.
     """
 
+    pending_config_fetch_tasks: List[ConfigFetchTask]
+    """
+    Queue of config fetch tasks.
+
+    Populated when dataflow finds a variable comes from CONFIG_FILE source.
+    These tasks trigger firmware exploration to extract config values.
+    """
+
     cross_binary_traces: Dict[str, Dict[str, VariableTrace]]
     """
     Traces from cross-binary analysis.
@@ -301,6 +309,7 @@ def create_initial_state(
 
         # Cross-binary
         pending_cross_binary_tasks=[],
+        pending_config_fetch_tasks=[],
         cross_binary_traces={},
 
         # Firmware & External Values

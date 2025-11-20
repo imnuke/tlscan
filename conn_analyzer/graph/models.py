@@ -275,6 +275,35 @@ class ExternalValue(BaseModel):
 # Firmware Analysis Models
 # ============================================================================
 
+class ConfigFetchTask(BaseModel):
+    """
+    Task for fetching configuration values from firmware.
+
+    Created when dataflow analysis traces a variable to CONFIG_FILE source.
+    """
+
+    variable: str = Field(
+        description="Variable name that needs the config value"
+    )
+
+    function: str = Field(
+        description="Function where the variable is used"
+    )
+
+    config_reference: Optional[str] = Field(
+        None,
+        description=(
+            "Config file or key reference from dataflow trace source_details. "
+            "Example: '/etc/ssl.conf', 'CERTVERIFY setting'"
+        )
+    )
+
+    trace_details: Optional[str] = Field(
+        None,
+        description="Original trace path and details from dataflow analysis"
+    )
+
+
 class FirmwareSearchResult(BaseModel):
     """
     Result from firmware exploration and analysis.

@@ -25,6 +25,8 @@ from conn_analyzer.graph.models import (
     FirmwareSearchResult,
     VariableTrace,
     RuleResult,
+    ConfigFetchTask,
+    VariableSourceType,
 )
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
@@ -190,7 +192,7 @@ async def dataflow_analysis_node(
 
     all_traces: Dict[str, VariableTrace] = state.get("variable_traces", {}).copy()
     cross_binary_tasks: List[CrossBinaryTask] = []
-    config_fetch_tasks: List[Dict[str, str]] = []
+    config_fetch_tasks: List[ConfigFetchTask] = []
 
     for task in pending_tasks:
         task_type = task["type"]
@@ -236,6 +238,17 @@ async def dataflow_analysis_node(
 
             console.print(f"[dim]    ✓ {trace.variable}: {trace.source.value}[/dim]")
 
+            # Check if this trace needs config fetching
+            if trace.source == VariableSourceType.CONFIG_FILE:
+                config_task = ConfigFetchTask(
+                    variable=trace.variable,
+                    function=trace.function,
+                    config_reference=trace.source_details,
+                    trace_details=trace.trace_path
+                )
+                config_fetch_tasks.append(config_task)
+                console.print(f"[dim]    → Config fetch needed for {trace.variable} from {trace.source_details}[/dim]")
+
         # Check if cross-binary analysis needed
         if result.cross_binary_needed and result.cross_binary_details:
             details = result.cross_binary_details
@@ -261,14 +274,15 @@ async def dataflow_analysis_node(
     console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces[/green]")
 
     # Determine next phase
-    if cross_binary_tasks:
-        next_phase = AnalysisPhase.CROSS_BINARY_ANALYSIS
+    if cross_binary_tasks or config_fetch_tasks:
+        next_phase = AnalysisPhase.FIRMWARE_EXPLORATION
     else:
         next_phase = AnalysisPhase.SYNTHESIS
 
     return {
         "variable_traces": all_traces,
         "pending_cross_binary_tasks": cross_binary_tasks,
+        "pending_config_fetch_tasks": config_fetch_tasks,
         "pending_dataflow_tasks": [],  # Clear completed tasks
         "current_phase": next_phase,
     }
@@ -310,6 +324,7 @@ async def firmware_explore_node(
 
     # Determine what type of firmware operation is needed
     cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
+    config_fetch_tasks = state.get("pending_config_fetch_tasks", [])
 
     if cross_binary_tasks:
         # Find caller binaries for cross-binary analysis
@@ -350,7 +365,71 @@ async def firmware_explore_node(
                 "current_phase": AnalysisPhase.SYNTHESIS,
             }
 
-    # If no cross-binary tasks, proceed to synthesis
+    elif config_fetch_tasks:
+        # Fetch configuration values from firmware
+        console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
+
+        # Build request with all config variables to fetch
+        config_requests = []
+        for task in config_fetch_tasks:
+            config_ref = task.config_reference or "configuration file"
+            config_requests.append(
+                f"  - Variable '{task.variable}' from {config_ref} (used in {task.function})"
+            )
+
+        request = (
+            f"Search the firmware and extract the following configuration values:\n"
+            + "\n".join(config_requests)
+        )
+        messages = [HumanMessage(content=request)]
+
+        result: FirmwareSearchResult = await stream_and_log_agent(
+            agent=firmware_agent,
+            messages=messages,
+            agent_name="Firmware Agent",
+            agent_emoji="📂",
+            output_model=FirmwareSearchResult
+        )
+
+        if result.found and result.config_values:
+            console.print(f"[green]✓ Found {len(result.config_values)} config values[/green]")
+
+            # Update variable traces with fetched config values
+            all_traces = state.get("variable_traces", {}).copy()
+            for task in config_fetch_tasks:
+                composite_key = f"{task.function}:{task.variable}"
+                if composite_key in all_traces:
+                    # Get the original trace
+                    original_trace = all_traces[composite_key]
+                    if task.variable in result.config_values:
+                        # Create updated trace with fetched value
+                        updated_trace = VariableTrace(
+                            function=original_trace.function,
+                            variable=original_trace.variable,
+                            source=original_trace.source,
+                            value=result.config_values[task.variable],
+                            source_details=original_trace.source_details,
+                            confidence=original_trace.confidence,
+                            trace_path=original_trace.trace_path
+                        )
+                        all_traces[composite_key] = updated_trace
+                        console.print(f"[dim]    ✓ Updated {task.variable} = {updated_trace.value}[/dim]")
+
+            return {
+                "variable_traces": all_traces,
+                "pending_config_fetch_tasks": [],  # Clear completed tasks
+                "firmware_details": result.details,
+                "current_phase": AnalysisPhase.SYNTHESIS,
+            }
+        else:
+            console.print(f"[yellow]⚠ No config values found[/yellow]")
+            return {
+                "pending_config_fetch_tasks": [],
+                "firmware_details": result.details,
+                "current_phase": AnalysisPhase.SYNTHESIS,
+            }
+
+    # If no tasks, proceed to synthesis
     return {"current_phase": AnalysisPhase.SYNTHESIS}
 
 

@@ -49,6 +49,7 @@ def route_after_dataflow(
 
     Dataflow analysis determines:
     - If cross-binary tasks created → go to firmware explore
+    - If config fetch tasks created → go to firmware explore
     - Otherwise → go to synthesis
 
     Args:
@@ -59,6 +60,10 @@ def route_after_dataflow(
     """
     # If cross-binary analysis needed, go to firmware explore to find binaries
     if state.get("pending_cross_binary_tasks"):
+        return "firmware_explore"
+
+    # If config fetching needed, go to firmware explore to fetch values
+    if state.get("pending_config_fetch_tasks"):
         return "firmware_explore"
 
     # Otherwise, proceed to synthesis
