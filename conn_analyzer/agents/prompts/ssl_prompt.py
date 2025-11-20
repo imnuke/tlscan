@@ -13,10 +13,10 @@ Analyze the binary for SSL/TLS client security compliance and output JSON matchi
     {{
       "rule_id": "rule_certificate_verification",
       "rule_name": "Certificate Verification Enabled",
-      "result": "PASS|FAIL|CONDITIONAL|UNDETERMINED",
-      "resolving_status": "UNDETERMINED|RESOLVED|CANNOT_RESOLVE",
+      "result": "pass|fail|conditional|undetermined",
+      "resolving_status": "undetermined|resolved|cannot_resolve",
       "evidence": "detailed evidence with function names and addresses",
-      "conditions": []  // for CONDITIONAL, list variables to trace
+      "conditions": []  // for conditional, list variables to trace
     }}
   ],
   "summary": "human-readable summary",
@@ -24,12 +24,12 @@ Analyze the binary for SSL/TLS client security compliance and output JSON matchi
   "reason": null|"why not applicable"
 }}
 
-For CONDITIONAL result, include conditions array with:
+For conditional result, include conditions array with:
 {{
   "variable": "v20",  // ACTUAL variable name from pseudocode, NOT descriptive names
   "function": "upscli_init",
   "function_address": "0x5be7",
-  "security_mapping": {{"0": "FAIL", "1": "PASS"}}
+  "security_mapping": {{"0": "fail", "1": "pass"}}
 }}
 
 CRITICAL for conditions:
@@ -52,10 +52,10 @@ KEY INSTRUCTIONS:
 2. If not applicable, set applicable=false with reason
 3. Check ALL rules from the security rules above
 4. Use IDA tools: decompile_function, get_xrefs_to, list_functions_filter, etc.
-5. For values determined at runtime, use CONDITIONAL result with conditions
-6. Set resolving_status to UNDETERMINED initially (will be updated during analysis)
+5. For values determined at runtime, use conditional result with conditions
+6. Set resolving_status to undetermined initially (will be updated during analysis)
 7. Provide detailed evidence with function names, addresses, AND actual variable names from pseudocode
-8. For CONDITIONAL rules, use EXACT variable names from pseudocode (NOT made-up descriptive names)
+8. For conditional rules, use EXACT variable names from pseudocode (NOT made-up descriptive names)
 9. Run ONCE and analyze all rules in single pass
 10. Output ONLY valid JSON matching the schema above
 
