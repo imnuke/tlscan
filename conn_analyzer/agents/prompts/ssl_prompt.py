@@ -26,11 +26,17 @@ Analyze the binary for SSL/TLS client security compliance and output JSON matchi
 
 For CONDITIONAL result, include conditions array with:
 {{
-  "variable": "var_name",
-  "function": "func_name",
-  "function_address": "0x...",
+  "variable": "v20",  // ACTUAL variable name from pseudocode, NOT descriptive names
+  "function": "upscli_init",
+  "function_address": "0x5be7",
   "security_mapping": {{"0": "FAIL", "1": "PASS"}}
 }}
+
+CRITICAL for conditions:
+- Use ACTUAL variable names from decompiled pseudocode (e.g., "v20", "a1", "param2")
+- DO NOT make up descriptive names like "verify_flag" or "ssl_mode"
+- The dataflow agent will search for these exact variable names in the pseudocode
+- Example: If code shows "if (v20 != 0)", use variable="v20", NOT "verify_flag"
 
 {'=' * 60}
 SECURITY RULES TO CHECK:
@@ -48,9 +54,10 @@ KEY INSTRUCTIONS:
 4. Use IDA tools: decompile_function, get_xrefs_to, list_functions_filter, etc.
 5. For values determined at runtime, use CONDITIONAL result with conditions
 6. Set resolving_status to UNDETERMINED initially (will be updated during analysis)
-7. Provide detailed evidence with function names and hex addresses
-8. Run ONCE and analyze all rules in single pass
-9. Output ONLY valid JSON matching the schema above
+7. Provide detailed evidence with function names, addresses, AND actual variable names from pseudocode
+8. For CONDITIONAL rules, use EXACT variable names from pseudocode (NOT made-up descriptive names)
+9. Run ONCE and analyze all rules in single pass
+10. Output ONLY valid JSON matching the schema above
 
 Available IDA tools: get_function_by_name, decompile_function, get_xrefs_to, get_callers, list_functions_filter, list_strings_filter, analyze_struct_detailed, and more.
 """
