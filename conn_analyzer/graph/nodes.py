@@ -19,7 +19,7 @@ from conn_analyzer.graph.state import (
     CrossBinaryTask,
 )
 from conn_analyzer.graph.models import (
-    RuleStatus,
+    RuleResultStatus,
     SSLAnalysisOutput,
     DataflowAnalysisOutput,
     FirmwareSearchResult,
@@ -114,14 +114,13 @@ async def ssl_analysis_node(
     pending_dataflow_tasks: List[DataflowTask] = []
 
     for rule in result.rules:
-        if rule.status == RuleStatus.CONDITIONAL and rule.conditions:
+        if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
             # Extract variables from conditions
             variables = [
                 {
                     "variable": cond.variable,
                     "function": cond.function,
                     "function_address": cond.function_address,
-                    "parameter_position": str(cond.parameter_position) if cond.parameter_position is not None else "",
                     "security_mapping": cond.security_mapping,
                 }
                 for cond in rule.conditions
@@ -140,7 +139,7 @@ async def ssl_analysis_node(
 
     # Build state update
     return {
-        "rules": rules_dict,
+        "rule_result": rules_dict,
         "ssl_summary": result.summary,
         "client_type": result.client_type,
         "applicable": True,
@@ -213,9 +212,7 @@ async def dataflow_analysis_node(
 
         # Build request with all variables for this task
         variables_desc = "\n".join([
-            (f"  - Parameter {v['parameter_position']} in function '{v['function']}' at {v.get('function_address', 'unknown')}"
-             if v.get('parameter_position') and v['parameter_position'] != ""
-             else f"  - Variable '{v['variable']}' in function '{v['function']}' at {v.get('function_address', 'unknown')}")
+            f"  - Variable '{v['variable']}' in function '{v['function']}' at {v.get('function_address', 'unknown')}"
             for v in variables
         ])
 
@@ -233,8 +230,9 @@ async def dataflow_analysis_node(
 
         # Process traces
         for trace in result.traces:
-            # Store trace in dict keyed by variable name
-            all_traces[trace.variable] = trace
+            # Store trace in dict using composite key "function:variable"
+            composite_key = f"{trace.function}:{trace.variable}"
+            all_traces[composite_key] = trace
 
             console.print(f"[dim]    ✓ {trace.variable}: {trace.source.value}[/dim]")
 
@@ -247,16 +245,15 @@ async def dataflow_analysis_node(
             cross_binary_vars = [
                 v for v in variables
                 if v.get("variable") in cross_binary_var_names
-                or f"Parameter {v.get('parameter_position')}" in cross_binary_var_names
             ]
             # Fallback: if no matches found, use the variable names directly
             if not cross_binary_vars and cross_binary_var_names:
                 cross_binary_vars = [{"variable": name} for name in cross_binary_var_names]
 
             cross_binary_task = CrossBinaryTask(
-                function=details.get("function", ""),
+                called_function=details.get("function", ""),
                 caller_binaries=[],  # Will be populated by firmware agent
-                variables=cross_binary_vars  # Only variables needing cross-binary analysis
+                function_parameters=cross_binary_vars  # Only variables needing cross-binary analysis
             )
             cross_binary_tasks.append(cross_binary_task)
             console.print(f"[dim]    → Cross-binary analysis needed for {details.get('function')}[/dim]")
@@ -317,7 +314,7 @@ async def firmware_explore_node(
     if cross_binary_tasks:
         # Find caller binaries for cross-binary analysis
         task = cross_binary_tasks[0]  # Process first task
-        function_name = task["function"]
+        function_name = task["called_function"]
 
         console.print(f"[dim]  Finding binaries that call: {function_name}[/dim]")
 
@@ -336,9 +333,9 @@ async def firmware_explore_node(
             console.print(f"[green]✓ Found {len(result.binaries)} caller binaries[/green]")
             # Update cross-binary task with found binaries
             updated_task = CrossBinaryTask(
-                function=function_name,
+                called_function=function_name,
                 caller_binaries=result.binaries,
-                variables=task["variables"]
+                function_parameters=task["function_parameters"]
             )
             return {
                 "pending_cross_binary_tasks": [updated_task],
@@ -390,8 +387,8 @@ async def binary_analysis_sequential(
 
     task = cross_binary_tasks[0]  # Get first task
     caller_binaries = task.get("caller_binaries", [])
-    function = task.get("function", "")
-    variables = task.get("variables", [])
+    function = task.get("called_function", "")
+    variables = task.get("function_parameters", [])
 
     if not caller_binaries:
         console.print("[yellow]⚠ No caller binaries to analyze[/yellow]")
@@ -427,8 +424,8 @@ async def binary_analysis_sequential(
                 output_model=DataflowAnalysisOutput
             )
 
-            # Store traces for this binary
-            traces_dict = {trace.variable: trace for trace in result.traces}
+            # Store traces for this binary using composite keys "function:variable"
+            traces_dict = {f"{trace.function}:{trace.variable}": trace for trace in result.traces}
             all_traces[binary_path] = traces_dict
 
             console.print(f"[green]  ✓ {binary_path}: {len(traces_dict)} traces[/green]")
@@ -472,7 +469,7 @@ async def synthesis_node(
     """
     console.print("[cyan]📝 Generating final report[/cyan]")
 
-    rules = state.get("rules", {})
+    rules = state.get("rule_result", {})
     variable_traces = state.get("variable_traces", {})
     cross_binary_traces = state.get("cross_binary_traces", {})
     ssl_summary = state.get("ssl_summary", "")
@@ -502,18 +499,19 @@ async def synthesis_node(
 
     for rule_id, rule in rules.items():
         report_lines.append(f"Rule: {rule.rule_name}")
-        report_lines.append(f"Status: {rule.status.value.upper()}")
+        report_lines.append(f"Status: {rule.result.value.upper()}")
         report_lines.append(f"Evidence: {rule.evidence}")
 
         # If conditional, show variable traces
-        if rule.status == RuleStatus.CONDITIONAL and rule.conditions:
+        if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
             report_lines.append("Conditions:")
             for cond in rule.conditions:
                 report_lines.append(f"  - Variable: {cond.variable} in {cond.function}")
 
-                # Look up trace
-                if cond.variable in variable_traces:
-                    trace = variable_traces[cond.variable]
+                # Look up trace using composite key "function:variable"
+                composite_key = f"{cond.function}:{cond.variable}"
+                if composite_key in variable_traces:
+                    trace = variable_traces[composite_key]
                     report_lines.append(f"    Source: {trace.source.value}")
                     if trace.value:
                         report_lines.append(f"    Value: {trace.value}")
@@ -536,8 +534,9 @@ async def synthesis_node(
 
         for binary_path, traces in cross_binary_traces.items():
             report_lines.append(f"Binary: {binary_path}")
-            for var_name, trace in traces.items():
-                report_lines.append(f"  - {var_name}: {trace.source.value}")
+            for composite_key, trace in traces.items():
+                # composite_key is "function:variable"
+                report_lines.append(f"  - {trace.variable} in {trace.function}: {trace.source.value}")
                 if trace.value:
                     report_lines.append(f"    Value: {trace.value}")
             report_lines.append("")

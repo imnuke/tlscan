@@ -13,7 +13,8 @@ Analyze the binary for SSL/TLS client security compliance and output JSON matchi
     {{
       "rule_id": "rule_certificate_verification",
       "rule_name": "Certificate Verification Enabled",
-      "status": "PASS|FAIL|CONDITIONAL|UNDETERMINED",
+      "result": "PASS|FAIL|CONDITIONAL|UNDETERMINED",
+      "resolving_status": "UNDETERMINED|RESOLVED|CANNOT_RESOLVE",
       "evidence": "detailed evidence with function names and addresses",
       "conditions": []  // for CONDITIONAL, list variables to trace
     }}
@@ -23,12 +24,11 @@ Analyze the binary for SSL/TLS client security compliance and output JSON matchi
   "reason": null|"why not applicable"
 }}
 
-For CONDITIONAL status, include conditions array with:
+For CONDITIONAL result, include conditions array with:
 {{
   "variable": "var_name",
   "function": "func_name",
   "function_address": "0x...",
-  "parameter_position": null|int,
   "security_mapping": {{"0": "FAIL", "1": "PASS"}}
 }}
 
@@ -46,10 +46,11 @@ KEY INSTRUCTIONS:
 2. If not applicable, set applicable=false with reason
 3. Check ALL rules from the security rules above
 4. Use IDA tools: decompile_function, get_xrefs_to, list_functions_filter, etc.
-5. For values determined at runtime, use CONDITIONAL status with conditions
-6. Provide detailed evidence with function names and hex addresses
-7. Run ONCE and analyze all rules in single pass
-8. Output ONLY valid JSON matching the schema above
+5. For values determined at runtime, use CONDITIONAL result with conditions
+6. Set resolving_status to UNDETERMINED initially (will be updated during analysis)
+7. Provide detailed evidence with function names and hex addresses
+8. Run ONCE and analyze all rules in single pass
+9. Output ONLY valid JSON matching the schema above
 
 Available IDA tools: get_function_by_name, decompile_function, get_xrefs_to, get_callers, list_functions_filter, list_strings_filter, analyze_struct_detailed, and more.
 """

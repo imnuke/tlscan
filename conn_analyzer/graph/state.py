@@ -7,7 +7,7 @@ intermediate results.
 
 from enum import Enum
 from typing import TypedDict, Optional, Dict, List, Set
-from conn_analyzer.graph.models import RuleResult, VariableTrace
+from conn_analyzer.graph.models import RuleResult, VariableTrace, ExternalValue
 
 
 # ============================================================================
@@ -54,9 +54,9 @@ class CrossBinaryTask(TypedDict):
         variables: Variables to trace in caller binaries
     """
 
-    function: str
     caller_binaries: List[str]
-    variables: List[Dict[str, str]]
+    called_function: str
+    function_parameters: List[Dict[str, str]]
 
 
 # ============================================================================
@@ -101,7 +101,7 @@ class AnalysisState(TypedDict, total=False):
     # SSL Analysis Results
     # ========================================================================
 
-    rules: Dict[str, RuleResult]
+    rule_result: Dict[str, RuleResult]
     """
     Security rules analysis results.
 
@@ -113,14 +113,13 @@ class AnalysisState(TypedDict, total=False):
         "rule_certificate_verification": RuleResult(
             rule_id="rule_certificate_verification",
             rule_name="Certificate Verification Enabled",
-            status=RuleStatus.CONDITIONAL,
+            result=RuleResultStatus.CONDITIONAL,
             evidence="SSL_CTX_set_verify() found at 0x401234",
             conditions=[
                 RuleCondition(
                     variable="mode",
                     function="SSL_CTX_set_verify",
                     function_address="0x401234",
-                    parameter_position=1,
                     security_mapping={"0": "FAIL", "1": "PASS"}
                 )
             ]
@@ -153,15 +152,18 @@ class AnalysisState(TypedDict, total=False):
     """
     Results of variable tracing.
 
-    Key: variable name (e.g., "verify_mode")
+    Key: composite key in format "function:variable" to uniquely identify each trace
     Value: VariableTrace Pydantic model with source, value, confidence
+
+    Using composite keys prevents conflicts when the same variable name appears
+    in different functions.
 
     Example:
     {
-        "verify_mode": VariableTrace(
+        "SSL_CTX_set_verify:verify_mode": VariableTrace(
             variable="verify_mode",
             function="SSL_CTX_set_verify",
-            source=VariableSource.CONSTANT,
+            source=VariableSourceType.CONSTANT,
             value="1",
             source_details="SSL_VERIFY_PEER",
             confidence="high",
@@ -173,13 +175,6 @@ class AnalysisState(TypedDict, total=False):
     # ========================================================================
     # Cross-Binary Analysis
     # ========================================================================
-
-    analyzed_binaries: Set[str]
-    """
-    Set of binary paths already analyzed (prevents circular dependencies).
-
-    Example: {"/usr/bin/app", "/lib/libcustom.so"}
-    """
 
     pending_cross_binary_tasks: List[CrossBinaryTask]
     """
@@ -193,32 +188,55 @@ class AnalysisState(TypedDict, total=False):
     Traces from cross-binary analysis.
 
     Outer key: binary path
-    Inner key: variable name
+    Inner key: composite key in format "function:variable" to uniquely identify each trace
     Value: VariableTrace
+
+    Using composite keys prevents conflicts when the same variable name appears
+    in different functions.
 
     Example:
     {
         "/usr/bin/app": {
-            "ssl_mode": VariableTrace(...)
+            "init_ssl:ssl_mode": VariableTrace(...),
+            "setup_connection:verify_peer": VariableTrace(...)
         },
         "/lib/libcustom.so": {
-            "ssl_mode": VariableTrace(...)
+            "ssl_init:ssl_mode": VariableTrace(...)
         }
     }
     """
 
     # ========================================================================
-    # Firmware Context
+    # Firmware Context & External Values
     # ========================================================================
 
-    config_values: Dict[str, str]
+    external_values: Dict[str, ExternalValue]
     """
-    Configuration values fetched from firmware.
+    Values sourced from external firmware files (binaries/scripts/configs).
 
-    Key: setting name (e.g., "ssl_verify_mode")
-    Value: configured value (e.g., "1")
+    Unified structure for all external sources that follow the same pattern:
+    dataflow finds external source → firmware exploration → fetch value
 
-    Example: {"ssl_verify_mode": "1", "tls_min_version": "1.2"}
+    Key: variable name (e.g., "ssl_verify_mode")
+    Value: ExternalValue with value, source_type, source_path, context
+
+    Example:
+    {
+        "ssl_verify_mode": ExternalValue(
+            value="1",
+            source_type=ExternalSourceType.CONFIG,
+            source_path="/etc/ssl.conf",
+            variable_name="ssl_verify_mode",
+            context="Found in main config file"
+        ),
+        "tls_min_version": ExternalValue(
+            value="1.2",
+            source_type=ExternalSourceType.SCRIPT,
+            source_path="/etc/init.d/ssl-setup.sh",
+            variable_name="tls_min_version",
+            context="Set in initialization script"
+        )
+    }
     """
 
     firmware_details: Optional[str]
@@ -272,7 +290,7 @@ def create_initial_state(
         depth=0,
 
         # SSL results
-        rules={},
+        rule_result={},
         ssl_summary="",
         client_type=None,
         applicable=True,
@@ -282,12 +300,11 @@ def create_initial_state(
         variable_traces={},
 
         # Cross-binary
-        analyzed_binaries=set(),
         pending_cross_binary_tasks=[],
         cross_binary_traces={},
 
-        # Firmware
-        config_values={},
+        # Firmware & External Values
+        external_values={},
         firmware_details=None,
 
         # Final output

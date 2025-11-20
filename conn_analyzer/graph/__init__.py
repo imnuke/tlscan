@@ -8,13 +8,16 @@ from conn_analyzer.graph.state import (
     create_initial_state,
 )
 from conn_analyzer.graph.models import (
-    RuleStatus,
-    VariableSource,
+    RuleResultStatus,
+    RuleResolvingStatus,
+    VariableSourceType,
+    ExternalSourceType,
     RuleCondition,
     RuleResult,
     SSLAnalysisOutput,
     VariableTrace,
     DataflowAnalysisOutput,
+    ExternalValue,
     FirmwareSearchResult,
 )
 
@@ -26,12 +29,15 @@ __all__ = [
     "CrossBinaryTask",
     "create_initial_state",
     # Models
-    "RuleStatus",
-    "VariableSource",
+    "RuleResultStatus",
+    "RuleResolvingStatus",
+    "VariableSourceType",
+    "ExternalSourceType",
     "RuleCondition",
     "RuleResult",
     "SSLAnalysisOutput",
     "VariableTrace",
     "DataflowAnalysisOutput",
+    "ExternalValue",
     "FirmwareSearchResult",
 ]

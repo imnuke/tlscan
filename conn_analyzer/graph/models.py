@@ -13,24 +13,40 @@ from enum import Enum
 # Enums
 # ============================================================================
 
-class RuleStatus(str, Enum):
-    """Status of a security rule after analysis."""
+class RuleResultStatus(str, Enum):
+    """Result status of a security rule after analysis."""
 
+    UNDETERMINED = "undetermined"
     PASS = "pass"
     FAIL = "fail"
     CONDITIONAL = "conditional"
+
+class RuleResolvingStatus(str, Enum):
+    """Status of rule resolution during analysis."""
+
     UNDETERMINED = "undetermined"
+    RESOLVED = "resolved"
+    CANNOT_RESOLVE = "cannot_resolve"
 
 
-class VariableSource(str, Enum):
+
+class VariableSourceType(str, Enum):
     """Source of a variable's value in dataflow analysis."""
 
     CONSTANT = "constant"
     CONFIG_FILE = "config_file"
     ENVIRONMENT_VARIABLE = "environment_variable"
     COMMAND_LINE_ARG = "command_line_arg"
-    FUNCTION_PARAMETER = "function_parameter"
+    FUNCTION_PARAMETER_FROM_EXTERNAL_CALL = "function_parameter_from_external_call"
     UNKNOWN = "unknown"
+
+
+class ExternalSourceType(str, Enum):
+    """Type of external source for firmware exploration."""
+
+    BINARY = "binary"
+    SCRIPT = "script"
+    CONFIG = "config"
 
 
 # ============================================================================
@@ -46,20 +62,15 @@ class RuleCondition(BaseModel):
     """
 
     variable: str = Field(
-        description="Variable name to trace (e.g., 'verify_mode', 'ssl_options')"
+        description="Variable or parameter to trace (e.g., 'verify_mode', 'v20')"
     )
 
     function: str = Field(
-        description="Function where variable is used (e.g., 'SSL_CTX_set_verify')"
+        description="Function where variable is used (e.g., 'sub_AB123')"
     )
 
     function_address: str = Field(
-        description="Hex address of function (e.g., '0x401234')"
-    )
-
-    parameter_position: Optional[int] = Field(
-        None,
-        description="Parameter position if variable is a function parameter (0-indexed)"
+        description="Hex address of function (e.g., '0xAB123')"
     )
 
     security_mapping: Dict[str, str] = Field(
@@ -79,16 +90,21 @@ class RuleResult(BaseModel):
     """
 
     rule_id: str = Field(
-        description="Unique rule identifier (e.g., 'rule_certificate_verification')"
+        description="Unique rule identifier (e.g., 'rule_certificate_chain_verification')"
     )
 
     rule_name: str = Field(
-        description="Human-readable rule name (e.g., 'Certificate Verification Enabled')"
+        description="Human-readable rule name (e.g., 'Certificate Chain Verification')"
     )
 
-    status: RuleStatus = Field(
-        default=RuleStatus.UNDETERMINED,
+    result: RuleResultStatus = Field(
+        default=RuleResultStatus.UNDETERMINED,
         description="Rule status: pass/fail/conditional/undetermined"
+    )
+
+    resolving_status: RuleResolvingStatus = Field(
+        RuleResolvingStatus.UNDETERMINED,
+        description="Status of rule resolution during analysis: undetermined/resolved/cannot_resolve"
     )
 
     evidence: str = Field(
@@ -147,15 +163,15 @@ class VariableTrace(BaseModel):
     and what that value is (if determinable).
     """
 
-    variable: str = Field(
-        description="Variable name that was traced"
-    )
-
     function: str = Field(
         description="Function where variable is used"
     )
 
-    source: VariableSource = Field(
+    variable: str = Field(
+        description="Variable or parameter name that was traced"
+    )
+
+    source: VariableSourceType = Field(
         description=(
             "Source of variable value: "
             "constant/config_file/environment_variable/command_line_arg/function_parameter/unknown"
@@ -173,7 +189,7 @@ class VariableTrace(BaseModel):
             "Additional details about the source: "
             "- For CONFIG_FILE: file path (e.g., '/etc/ssl.conf') "
             "- For ENV_VAR: variable name (e.g., 'SSL_VERIFY_MODE') "
-            "- For FUNCTION_PARAMETER: function name (e.g., 'init_ssl') "
+            "- For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: caller binary, function name (e.g., 'upsc, init_ssl') "
             "- For CONSTANT: constant name (e.g., 'SSL_VERIFY_PEER')"
         )
     )
@@ -218,6 +234,40 @@ class DataflowAnalysisOutput(BaseModel):
             "Details for cross-binary analysis if needed. "
             "Example: {'function': 'init_ssl', 'binary': '/usr/bin/app', 'variables': ['param1', 'param2']}"
         )
+    )
+
+
+# ============================================================================
+# External Value Models (Unified for Firmware Exploration)
+# ============================================================================
+
+class ExternalValue(BaseModel):
+    """
+    A value sourced from external firmware files (binary/script/config).
+
+    This unifies all external value sources that follow the same pattern:
+    dataflow finds external source → firmware exploration → fetch value
+    """
+
+    value: str = Field(
+        description="The actual value found"
+    )
+
+    source_type: ExternalSourceType = Field(
+        description="Type of external source: binary/script/config"
+    )
+
+    source_path: str = Field(
+        description="Path to the source file in firmware (e.g., '/etc/ssl.conf', '/usr/bin/client')"
+    )
+
+    variable_name: str = Field(
+        description="Name of the variable this value is for (e.g., 'ssl_verify_mode')"
+    )
+
+    context: Optional[str] = Field(
+        None,
+        description="Additional context about how/where the value was found"
     )
 
 
