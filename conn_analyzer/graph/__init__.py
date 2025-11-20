@@ -4,7 +4,6 @@ from conn_analyzer.graph.state import (
     AnalysisState,
     AnalysisPhase,
     DataflowTask,
-    CrossBinaryTask,
     create_initial_state,
 )
 from conn_analyzer.graph.models import (
@@ -26,7 +25,6 @@ __all__ = [
     "AnalysisState",
     "AnalysisPhase",
     "DataflowTask",
-    "CrossBinaryTask",
     "create_initial_state",
     # Models
     "RuleResultStatus",

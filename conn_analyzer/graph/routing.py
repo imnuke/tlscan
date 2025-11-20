@@ -48,7 +48,7 @@ def route_after_dataflow(
     """Route after dataflow analysis completes.
 
     Dataflow analysis determines:
-    - If cross-binary tasks created → go to firmware explore
+    - If caller discovery tasks created → go to firmware explore
     - If config fetch tasks created → go to firmware explore
     - Otherwise → go to synthesis
 
@@ -58,8 +58,13 @@ def route_after_dataflow(
     Returns:
         Next node: "firmware_explore" or "synthesis"
     """
-    # If cross-binary analysis needed, go to firmware explore to find binaries
-    if state.get("pending_cross_binary_tasks"):
+    # Check if any pending dataflow tasks need caller discovery
+    pending_tasks = state.get("pending_dataflow_tasks", [])
+    needs_firmware = any(
+        task.get("type") == "needs_caller_discovery" for task in pending_tasks
+    )
+
+    if needs_firmware:
         return "firmware_explore"
 
     # If config fetching needed, go to firmware explore to fetch values
@@ -76,7 +81,7 @@ def route_after_firmware(
     """Route after firmware exploration completes.
 
     Firmware exploration determines:
-    - If found binaries for cross-binary analysis → sequential analysis
+    - If found binaries for cross-binary analysis (tasks with binary_path set) → sequential analysis
     - Otherwise → go to synthesis
 
     Args:
@@ -85,16 +90,14 @@ def route_after_firmware(
     Returns:
         Next node: "binary_analysis_sequential" or "synthesis"
     """
-    cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
+    pending_tasks = state.get("pending_dataflow_tasks", [])
 
-    if not cross_binary_tasks:
-        return "synthesis"
+    # Check if any tasks have binary_path set (indicates caller binaries were found)
+    has_cross_binary = any(
+        task.get("binary_path") is not None for task in pending_tasks
+    )
 
-    # Check if first task has binaries to analyze
-    task = cross_binary_tasks[0]
-    caller_binaries = task.get("caller_binaries", [])
-
-    if caller_binaries:
+    if has_cross_binary:
         return "binary_analysis_sequential"
     else:
         return "synthesis"

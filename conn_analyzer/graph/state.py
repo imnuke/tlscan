@@ -29,34 +29,23 @@ class AnalysisPhase(str, Enum):
 # Task Definitions
 # ============================================================================
 
-class DataflowTask(TypedDict):
+class DataflowTask(TypedDict, total=False):
     """
     Task specification for dataflow analysis.
 
     Attributes:
-        type: Type of analysis - "binary", "script", or "config"
-        target: Path to binary, script, or config file
+        type: Type of analysis - "binary", "script", "config", or "needs_caller_discovery"
+        target: Path to binary, script, or config file, or function name for caller discovery
         variables: List of variables to trace with their context
+        binary_path: Optional binary to analyze (None = main binary, set for cross-binary tasks)
+        context: Optional description for task context (e.g., "traces call to init_ssl")
     """
 
-    type: str  # "binary" | "script" | "config"
+    type: str  # "binary" | "script" | "config" | "needs_caller_discovery"
     target: str
     variables: List[Dict[str, str]]  # [{"variable": "name", "function": "func", ...}]
-
-
-class CrossBinaryTask(TypedDict):
-    """
-    Task for cross-binary analysis.
-
-    Attributes:
-        function: Function name to search for callers
-        caller_binaries: List of binaries that call this function
-        variables: Variables to trace in caller binaries
-    """
-
-    caller_binaries: List[str]
-    called_function: str
-    function_parameters: List[Dict[str, str]]
+    binary_path: Optional[str]  # None for main binary, path for cross-binary analysis
+    context: Optional[str]  # Description of task context
 
 
 # ============================================================================
@@ -150,13 +139,14 @@ class AnalysisState(TypedDict, total=False):
 
     variable_traces: Dict[str, VariableTrace]
     """
-    Results of variable tracing.
+    Results of variable tracing from all analyzed binaries.
 
-    Key: composite key in format "function:variable" to uniquely identify each trace
+    Key: composite key in format "{binary_path}:{function}:{variable}" for cross-binary traces,
+         or "function:variable" for main binary traces
     Value: VariableTrace Pydantic model with source, value, confidence
 
     Using composite keys prevents conflicts when the same variable name appears
-    in different functions.
+    in different functions or binaries.
 
     Example:
     {
@@ -168,20 +158,21 @@ class AnalysisState(TypedDict, total=False):
             source_details="SSL_VERIFY_PEER",
             confidence="high",
             trace_path="Traced from parameter 2 → local var → constant 1"
+        ),
+        "/usr/bin/app:init_ssl:ssl_mode": VariableTrace(
+            variable="ssl_mode",
+            function="init_ssl",
+            source=VariableSourceType.CONSTANT,
+            value="1",
+            confidence="high",
+            trace_path="Cross-binary trace from caller /usr/bin/app"
         )
     }
     """
 
     # ========================================================================
-    # Cross-Binary Analysis
+    # Config Fetch Tasks
     # ========================================================================
-
-    pending_cross_binary_tasks: List[CrossBinaryTask]
-    """
-    Queue of cross-binary analysis tasks.
-
-    Populated when dataflow finds a variable comes from an exported function parameter.
-    """
 
     pending_config_fetch_tasks: List[ConfigFetchTask]
     """
@@ -189,29 +180,6 @@ class AnalysisState(TypedDict, total=False):
 
     Populated when dataflow finds a variable comes from CONFIG_FILE source.
     These tasks trigger firmware exploration to extract config values.
-    """
-
-    cross_binary_traces: Dict[str, Dict[str, VariableTrace]]
-    """
-    Traces from cross-binary analysis.
-
-    Outer key: binary path
-    Inner key: composite key in format "function:variable" to uniquely identify each trace
-    Value: VariableTrace
-
-    Using composite keys prevents conflicts when the same variable name appears
-    in different functions.
-
-    Example:
-    {
-        "/usr/bin/app": {
-            "init_ssl:ssl_mode": VariableTrace(...),
-            "setup_connection:verify_peer": VariableTrace(...)
-        },
-        "/lib/libcustom.so": {
-            "ssl_init:ssl_mode": VariableTrace(...)
-        }
-    }
     """
 
     # ========================================================================
@@ -307,10 +275,8 @@ def create_initial_state(
         pending_dataflow_tasks=[],
         variable_traces={},
 
-        # Cross-binary
-        pending_cross_binary_tasks=[],
+        # Config fetch
         pending_config_fetch_tasks=[],
-        cross_binary_traces={},
 
         # Firmware & External Values
         external_values={},

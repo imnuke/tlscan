@@ -212,28 +212,11 @@ class DataflowAnalysisOutput(BaseModel):
     """
     Structured output from dataflow analysis agent.
 
-    Contains traces for all requested variables and indicates if
-    cross-binary analysis is needed.
+    Contains traces for all requested variables.
     """
 
     traces: List[VariableTrace] = Field(
         description="Traces for all requested variables"
-    )
-
-    cross_binary_needed: bool = Field(
-        False,
-        description=(
-            "Whether cross-binary analysis is needed. "
-            "True if any trace leads to an exported function parameter with no callers in this binary."
-        )
-    )
-
-    cross_binary_details: Optional[Dict[str, Any]] = Field(
-        None,
-        description=(
-            "Details for cross-binary analysis if needed. "
-            "Example: {'function': 'init_ssl', 'binary': '/usr/bin/app', 'variables': ['param1', 'param2']}"
-        )
     )
 
 

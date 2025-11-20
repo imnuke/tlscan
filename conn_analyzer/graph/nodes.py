@@ -16,7 +16,6 @@ from conn_analyzer.graph.state import (
     AnalysisState,
     AnalysisPhase,
     DataflowTask,
-    CrossBinaryTask,
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
@@ -169,9 +168,9 @@ async def dataflow_analysis_node(
        - Creates dataflow agent
        - Traces all variables in the task
        - Processes structured output (DataflowAnalysisOutput)
-    3. Updates state with variable_traces
-    4. Creates cross-binary tasks if needed
-    5. Creates firmware fetch tasks for config values
+    3. Updates state with variable_traces (using binary-qualified keys for cross-binary)
+    4. Detects FUNCTION_PARAMETER_FROM_EXTERNAL_CALL traces and creates caller discovery tasks
+    5. Creates firmware fetch tasks for CONFIG_FILE sources
 
     Args:
         state: Current analysis state
@@ -180,7 +179,7 @@ async def dataflow_analysis_node(
         firmware_tools: Firmware file system tools
 
     Returns:
-        State update dict with variable_traces, pending_cross_binary_tasks
+        State update dict with variable_traces, pending_dataflow_tasks (caller discovery tasks)
     """
     pending_tasks = state.get("pending_dataflow_tasks", [])
 
@@ -191,7 +190,7 @@ async def dataflow_analysis_node(
     console.print(f"[cyan]🔍 Running dataflow analysis: {len(pending_tasks)} tasks[/cyan]")
 
     all_traces: Dict[str, VariableTrace] = state.get("variable_traces", {}).copy()
-    cross_binary_tasks: List[CrossBinaryTask] = []
+    new_dataflow_tasks: List[DataflowTask] = []
     config_fetch_tasks: List[ConfigFetchTask] = []
 
     for task in pending_tasks:
@@ -232,10 +231,16 @@ async def dataflow_analysis_node(
 
         # Process traces
         for trace in result.traces:
-            # Store trace in dict using composite key "function:variable"
-            composite_key = f"{trace.function}:{trace.variable}"
-            all_traces[composite_key] = trace
+            # Build composite key based on whether this is cross-binary analysis
+            binary_path = task.get("binary_path")
+            if binary_path:
+                # Cross-binary trace: "{binary_path}:{function}:{variable}"
+                composite_key = f"{binary_path}:{trace.function}:{trace.variable}"
+            else:
+                # Main binary trace: "function:variable"
+                composite_key = f"{trace.function}:{trace.variable}"
 
+            all_traces[composite_key] = trace
             console.print(f"[dim]    ✓ {trace.variable}: {trace.source.value}[/dim]")
 
             # Check if this trace needs config fetching
@@ -249,41 +254,37 @@ async def dataflow_analysis_node(
                 config_fetch_tasks.append(config_task)
                 console.print(f"[dim]    → Config fetch needed for {trace.variable} from {trace.source_details}[/dim]")
 
-        # Check if cross-binary analysis needed
-        if result.cross_binary_needed and result.cross_binary_details:
-            details = result.cross_binary_details
-            # Extract only the variables that need cross-binary analysis
-            cross_binary_var_names = details.get("variables", [])
-            # Filter original variables to only include those needing cross-binary analysis
-            cross_binary_vars = [
-                v for v in variables
-                if v.get("variable") in cross_binary_var_names
-            ]
-            # Fallback: if no matches found, use the variable names directly
-            if not cross_binary_vars and cross_binary_var_names:
-                cross_binary_vars = [{"variable": name} for name in cross_binary_var_names]
+            # Check if this trace requires cross-binary analysis
+            elif trace.source == VariableSourceType.FUNCTION_PARAMETER_FROM_EXTERNAL_CALL:
+                # Extract function name from source_details (e.g., "upsc, init_ssl")
+                if trace.source_details:
+                    # Parse source_details to get function name
+                    parts = trace.source_details.split(",")
+                    function_name = parts[-1].strip() if len(parts) > 1 else parts[0].strip()
 
-            cross_binary_task = CrossBinaryTask(
-                called_function=details.get("function", ""),
-                caller_binaries=[],  # Will be populated by firmware agent
-                function_parameters=cross_binary_vars  # Only variables needing cross-binary analysis
-            )
-            cross_binary_tasks.append(cross_binary_task)
-            console.print(f"[dim]    → Cross-binary analysis needed for {details.get('function')}[/dim]")
+                    # Create a "needs_caller_discovery" task
+                    caller_discovery_task = DataflowTask(
+                        type="needs_caller_discovery",
+                        target=function_name,
+                        variables=variables,  # Same variables to trace in callers
+                        binary_path=None,
+                        context=f"Find callers of {function_name} for variable {trace.variable}"
+                    )
+                    new_dataflow_tasks.append(caller_discovery_task)
+                    console.print(f"[dim]    → Cross-binary discovery needed for function '{function_name}'[/dim]")
 
     console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces[/green]")
 
     # Determine next phase
-    if cross_binary_tasks or config_fetch_tasks:
+    if new_dataflow_tasks or config_fetch_tasks:
         next_phase = AnalysisPhase.FIRMWARE_EXPLORATION
     else:
         next_phase = AnalysisPhase.SYNTHESIS
 
     return {
         "variable_traces": all_traces,
-        "pending_cross_binary_tasks": cross_binary_tasks,
+        "pending_dataflow_tasks": new_dataflow_tasks,  # New tasks for caller discovery or cleared
         "pending_config_fetch_tasks": config_fetch_tasks,
-        "pending_dataflow_tasks": [],  # Clear completed tasks
         "current_phase": next_phase,
     }
 
@@ -301,7 +302,7 @@ async def firmware_explore_node(
     """Execute firmware exploration for various purposes.
 
     This node handles:
-    1. Finding caller binaries (for cross-binary analysis)
+    1. Finding caller binaries (for cross-binary analysis via needs_caller_discovery tasks)
     2. Fetching config values (when dataflow traces to CONFIG_FILE)
     3. Reading scripts (when dataflow needs script content)
 
@@ -312,7 +313,7 @@ async def firmware_explore_node(
         firmware_path: Path to firmware root
 
     Returns:
-        State update dict with binaries, config_values, etc.
+        State update dict with updated pending_dataflow_tasks, config_values, etc.
     """
     console.print(f"[cyan]📂 Firmware exploration[/cyan]")
 
@@ -323,13 +324,16 @@ async def firmware_explore_node(
     )
 
     # Determine what type of firmware operation is needed
-    cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
+    pending_tasks = state.get("pending_dataflow_tasks", [])
     config_fetch_tasks = state.get("pending_config_fetch_tasks", [])
 
-    if cross_binary_tasks:
+    # Find tasks that need caller discovery
+    caller_discovery_tasks = [t for t in pending_tasks if t.get("type") == "needs_caller_discovery"]
+
+    if caller_discovery_tasks:
         # Find caller binaries for cross-binary analysis
-        task = cross_binary_tasks[0]  # Process first task
-        function_name = task["called_function"]
+        task = caller_discovery_tasks[0]  # Process first task
+        function_name = task["target"]
 
         console.print(f"[dim]  Finding binaries that call: {function_name}[/dim]")
 
@@ -344,23 +348,31 @@ async def firmware_explore_node(
             output_model=FirmwareSearchResult
         )
 
+        # Remove the caller discovery task from pending tasks
+        remaining_tasks = [t for t in pending_tasks if t.get("type") != "needs_caller_discovery" or t != task]
+
         if result.found and result.binaries:
             console.print(f"[green]✓ Found {len(result.binaries)} caller binaries[/green]")
-            # Update cross-binary task with found binaries
-            updated_task = CrossBinaryTask(
-                called_function=function_name,
-                caller_binaries=result.binaries,
-                function_parameters=task["function_parameters"]
-            )
+            # Create new dataflow tasks for each caller binary
+            for binary_path in result.binaries:
+                binary_task = DataflowTask(
+                    type="binary",
+                    target=binary_path,
+                    variables=task["variables"],
+                    binary_path=binary_path,
+                    context=f"traces call to {function_name}"
+                )
+                remaining_tasks.append(binary_task)
+
             return {
-                "pending_cross_binary_tasks": [updated_task],
+                "pending_dataflow_tasks": remaining_tasks,
                 "firmware_details": result.details,
                 "current_phase": AnalysisPhase.CROSS_BINARY_ANALYSIS,
             }
         else:
             console.print(f"[yellow]⚠ No caller binaries found for {function_name}[/yellow]")
             return {
-                "pending_cross_binary_tasks": [],
+                "pending_dataflow_tasks": remaining_tasks,
                 "firmware_details": result.details,
                 "current_phase": AnalysisPhase.SYNTHESIS,
             }
@@ -444,8 +456,8 @@ async def binary_analysis_sequential(
 ) -> Dict[str, Any]:
     """Analyze multiple binaries sequentially for cross-binary analysis.
 
-    This node processes caller binaries one at a time to avoid deadlock issues
-    with parallel MCP session creation.
+    This node processes dataflow tasks with binary_path set, one at a time to avoid
+    deadlock issues with parallel MCP session creation.
 
     Args:
         state: Current analysis state
@@ -453,36 +465,32 @@ async def binary_analysis_sequential(
         agent_factory: Agent factory
 
     Returns:
-        State update with cross_binary_traces for all binaries
+        State update with variable_traces (unified with binary-qualified keys)
     """
-    cross_binary_tasks = state.get("pending_cross_binary_tasks", [])
+    pending_tasks = state.get("pending_dataflow_tasks", [])
+
+    # Filter tasks that have binary_path set (cross-binary tasks)
+    cross_binary_tasks = [t for t in pending_tasks if t.get("binary_path") is not None]
 
     if not cross_binary_tasks:
         console.print("[yellow]⚠ No cross-binary tasks to process[/yellow]")
         return {
-            "pending_cross_binary_tasks": [],
+            "pending_dataflow_tasks": [],
             "current_phase": AnalysisPhase.SYNTHESIS,
         }
 
-    task = cross_binary_tasks[0]  # Get first task
-    caller_binaries = task.get("caller_binaries", [])
-    function = task.get("called_function", "")
-    variables = task.get("function_parameters", [])
+    console.print(f"[cyan]🔄 Analyzing {len(cross_binary_tasks)} caller binaries sequentially[/cyan]")
 
-    if not caller_binaries:
-        console.print("[yellow]⚠ No caller binaries to analyze[/yellow]")
-        return {
-            "pending_cross_binary_tasks": [],
-            "current_phase": AnalysisPhase.SYNTHESIS,
-        }
+    # Get existing traces
+    all_traces: Dict[str, VariableTrace] = state.get("variable_traces", {}).copy()
 
-    console.print(f"[cyan]🔄 Analyzing {len(caller_binaries)} caller binaries sequentially[/cyan]")
+    for task in cross_binary_tasks:
+        binary_path = task["binary_path"]
+        variables = task["variables"]
+        context = task.get("context", "")
 
-    # Analyze each binary sequentially
-    all_traces: Dict[str, Dict[str, VariableTrace]] = {}
-
-    for binary_path in caller_binaries:
         console.print(f"[dim]  Analyzing caller: {binary_path}[/dim]")
+        console.print(f"[dim]  Context: {context}[/dim]")
 
         try:
             # Get IDA tools for this binary
@@ -494,39 +502,38 @@ async def binary_analysis_sequential(
             # Build request with specific variables to trace
             if variables:
                 variables_desc = "\n".join([
-                    f"  - Variable '{v['variable']}' (argument to {function})"
+                    f"  - Variable '{v['variable']}' in function '{v.get('function', 'unknown')}'"
                     for v in variables
                 ])
-                request = f"Find how this binary calls function '{function}' and trace the following arguments:\n{variables_desc}"
+                request = f"{context}\n\nTrace the following variables:\n{variables_desc}"
             else:
-                # Fallback if no specific variables provided
-                request = f"Trace how this binary calls function '{function}' and analyze the arguments passed"
+                request = context
             messages = [HumanMessage(content=request)]
 
             result: DataflowAnalysisOutput = await stream_and_log_agent(
                 agent=agent,
                 messages=messages,
-                agent_name=f"Dataflow ({binary_path})",
+                agent_name=f"Dataflow ({binary_path.split('/')[-1]})",
                 agent_emoji="🔍",
                 output_model=DataflowAnalysisOutput
             )
 
-            # Store traces for this binary using composite keys "function:variable"
-            traces_dict = {f"{trace.function}:{trace.variable}": trace for trace in result.traces}
-            all_traces[binary_path] = traces_dict
+            # Store traces using binary-qualified keys: "{binary_path}:{function}:{variable}"
+            for trace in result.traces:
+                composite_key = f"{binary_path}:{trace.function}:{trace.variable}"
+                all_traces[composite_key] = trace
 
-            console.print(f"[green]  ✓ {binary_path}: {len(traces_dict)} traces[/green]")
+            console.print(f"[green]  ✓ {binary_path}: {len(result.traces)} traces[/green]")
 
         except Exception as e:
             console.print(f"[red]  ✗ Error analyzing {binary_path}: {e}[/red]")
             # Continue with other binaries even if one fails
-            all_traces[binary_path] = {}
 
-    console.print(f"[green]✓ Cross-binary analysis complete: {len(all_traces)} binaries analyzed[/green]")
+    console.print(f"[green]✓ Cross-binary analysis complete: {len(cross_binary_tasks)} binaries analyzed[/green]")
 
     return {
-        "cross_binary_traces": all_traces,
-        "pending_cross_binary_tasks": [],
+        "variable_traces": all_traces,
+        "pending_dataflow_tasks": [],  # Clear all tasks
         "current_phase": AnalysisPhase.SYNTHESIS,
     }
 
@@ -543,10 +550,11 @@ async def synthesis_node(
     """Generate final security analysis report.
 
     This node:
-    1. Takes all results from state (rules, variable_traces, cross_binary_traces)
+    1. Takes all results from state (rules, variable_traces)
     2. Resolves CONDITIONAL rules using variable traces
-    3. Generates comprehensive security report
-    4. Updates state with final_report
+    3. Separates main binary traces from cross-binary traces based on key format
+    4. Generates comprehensive security report
+    5. Updates state with final_report
 
     Args:
         state: Current analysis state with all results
@@ -558,9 +566,27 @@ async def synthesis_node(
 
     rules = state.get("rule_result", {})
     variable_traces = state.get("variable_traces", {})
-    cross_binary_traces = state.get("cross_binary_traces", {})
     ssl_summary = state.get("ssl_summary", "")
     client_type = state.get("client_type", "Unknown")
+
+    # Separate main binary traces from cross-binary traces based on key format
+    # Main binary: "function:variable"
+    # Cross-binary: "{binary_path}:{function}:{variable}"
+    main_traces = {}
+    cross_binary_by_path = {}
+
+    for composite_key, trace in variable_traces.items():
+        parts = composite_key.split(":")
+        if len(parts) == 2:
+            # Main binary trace
+            main_traces[composite_key] = trace
+        elif len(parts) >= 3:
+            # Cross-binary trace: first part is binary path
+            binary_path = parts[0]
+            trace_key = ":".join(parts[1:])  # "function:variable"
+            if binary_path not in cross_binary_by_path:
+                cross_binary_by_path[binary_path] = {}
+            cross_binary_by_path[binary_path][trace_key] = trace
 
     # Build report sections
     report_lines = []
@@ -597,8 +623,8 @@ async def synthesis_node(
 
                 # Look up trace using composite key "function:variable"
                 composite_key = f"{cond.function}:{cond.variable}"
-                if composite_key in variable_traces:
-                    trace = variable_traces[composite_key]
+                if composite_key in main_traces:
+                    trace = main_traces[composite_key]
                     report_lines.append(f"    Source: {trace.source.value}")
                     if trace.value:
                         report_lines.append(f"    Value: {trace.value}")
@@ -613,16 +639,16 @@ async def synthesis_node(
         report_lines.append("")
 
     # Cross-binary findings
-    if cross_binary_traces:
+    if cross_binary_by_path:
         report_lines.append("=" * 80)
         report_lines.append("CROSS-BINARY ANALYSIS")
         report_lines.append("=" * 80)
         report_lines.append("")
 
-        for binary_path, traces in cross_binary_traces.items():
+        for binary_path, traces in cross_binary_by_path.items():
             report_lines.append(f"Binary: {binary_path}")
-            for composite_key, trace in traces.items():
-                # composite_key is "function:variable"
+            for trace_key, trace in traces.items():
+                # trace_key is "function:variable"
                 report_lines.append(f"  - {trace.variable} in {trace.function}: {trace.source.value}")
                 if trace.value:
                     report_lines.append(f"    Value: {trace.value}")

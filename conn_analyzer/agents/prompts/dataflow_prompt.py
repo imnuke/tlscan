@@ -15,9 +15,7 @@ Trace variable sources and output JSON matching this schema:
       "confidence": "high|medium|low",
       "trace_path": "detailed step-by-step explanation"
     }
-  ],
-  "cross_binary_needed": false,
-  "cross_binary_details": null|{"function": "func_name", "variables": [...]}
+  ]
 }
 
 Variable Sources:
@@ -45,7 +43,7 @@ Tracing Workflow:
    - **ONLY report FUNCTION_PARAMETER_FROM_EXTERNAL_CALL when:**
      * You reach an exported function with NO callers in the binary
      * The value truly comes from outside this binary
-5. For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL from exported functions with no callers, set cross_binary_needed=true
+5. For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL, include the function name in source_details
 
 Example Correct Trace:
 - Target: variable "a1" in function "upscli_init"
@@ -53,10 +51,9 @@ Example Correct Trace:
 - Step 2: Decompile "upscli_sslinit" → passes constant 0 as argument
 - Step 3: STOP HERE and report: source="CONSTANT", value="0", confidence="high"
 - DO NOT trace further to upscli_tryconnect or upscli_connect!
-6. cross_binary_details.variables should ONLY include variables that actually need cross-binary analysis (those that trace to an exported function with no callers)
-7. Provide detailed trace_path explaining each step of the call chain
-8. Be honest about confidence level
-9. Output ONLY valid JSON matching the schema
+6. Provide detailed trace_path explaining each step of the call chain
+7. Be honest about confidence level
+8. Output ONLY valid JSON matching the schema
 
 Available tools: decompile_function, get_callers, get_xrefs_to, list_functions_filter, read_file (for scripts/configs), and more.
 
