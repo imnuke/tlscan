@@ -13,6 +13,7 @@ from conn_analyzer.graph.models import (
     DataflowAnalysisOutput,
     FirmwareSearchResult,
 )
+from conn_analyzer.config_loader import LLMConfig
 
 
 class AgentFactory:
@@ -29,13 +30,15 @@ class AgentFactory:
     StaticAnalysisEngine.
     """
 
-    def __init__(self, llm: any):
+    def __init__(self, llm: any, config: LLMConfig):
         """Initialize the agent factory.
 
         Args:
-            llm: Language model instance to use for all agents
+            llm: Base language model instance (will be cloned with different temperatures per agent)
+            config: LLMConfig instance for retrieving temperature settings
         """
         self._llm = llm
+        self._config = config
 
     def _prepare_llm_for_sequential_tools(self, llm: any, tools: List[any]) -> any:
         """Prepare LLM to call tools sequentially (not in parallel).
@@ -111,8 +114,14 @@ class AgentFactory:
 
         system_prompt = get_ssl_system_prompt(security_rules_content)
 
+        # Get temperature for SSL analysis agent
+        temperature = self._config.get_agent_temperature('ssl_analysis')
+
+        # Bind temperature to LLM
+        llm_with_temp = self._llm.bind(temperature=temperature)
+
         # Prepare LLM for sequential tool calling (prevents SSE timeouts)
-        llm_with_tools = self._prepare_llm_for_sequential_tools(self._llm, tools)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, tools)
 
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches SSLAnalysisOutput schema
@@ -145,8 +154,14 @@ class AgentFactory:
         # Filter tools before binding
         filtered_tools = self._filter_tools(tools, exclude=exclude_tools)
 
+        # Get temperature for dataflow agent
+        temperature = self._config.get_agent_temperature('dataflow')
+
+        # Bind temperature to LLM
+        llm_with_temp = self._llm.bind(temperature=temperature)
+
         # Prepare LLM for sequential tool calling (prevents SSE timeouts)
-        llm_with_tools = self._prepare_llm_for_sequential_tools(self._llm, filtered_tools)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, filtered_tools)
 
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches DataflowAnalysisOutput schema
@@ -177,8 +192,14 @@ class AgentFactory:
 
         system_prompt = get_firmware_system_prompt(firmware_path)
 
+        # Get temperature for firmware exploration agent
+        temperature = self._config.get_agent_temperature('firmware_exploration')
+
+        # Bind temperature to LLM
+        llm_with_temp = self._llm.bind(temperature=temperature)
+
         # Prepare LLM for sequential tool calling (prevents SSE timeouts)
-        llm_with_tools = self._prepare_llm_for_sequential_tools(self._llm, firmware_tools)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, firmware_tools)
 
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches FirmwareSearchResult schema

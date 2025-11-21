@@ -110,6 +110,71 @@ class LLMConfig:
         """
         return list(self._config.get('providers', {}).keys())
 
+    def get_default_temperature(self) -> float:
+        """
+        Get the global default temperature setting.
+
+        Returns:
+            Temperature value (0.0-2.0). Defaults to 0.7 if not configured.
+
+        Raises:
+            ConfigurationError: If temperature value is invalid
+        """
+        temperature = self._config.get('temperature', 0.7)
+
+        if not isinstance(temperature, (int, float)):
+            raise ConfigurationError(
+                f"Temperature must be a number, got {type(temperature).__name__}"
+            )
+
+        if not (0.0 <= temperature <= 2.0):
+            raise ConfigurationError(
+                f"Temperature must be between 0.0 and 2.0, got {temperature}"
+            )
+
+        return float(temperature)
+
+    def get_agent_temperature(self, agent_type: str) -> float:
+        """
+        Get the temperature setting for a specific agent type.
+
+        Args:
+            agent_type: Agent type ('ssl_analysis', 'dataflow', 'firmware_exploration', 'synthesis')
+
+        Returns:
+            Temperature value for the agent, or default temperature if not specified
+
+        Raises:
+            ConfigurationError: If temperature value is invalid
+        """
+        agent_temps = self._config.get('agent_temperatures', {})
+
+        if not isinstance(agent_temps, dict):
+            raise ConfigurationError(
+                "agent_temperatures must be a dictionary"
+            )
+
+        # Use agent-specific temperature if configured, otherwise use default
+        if agent_type in agent_temps:
+            temperature = agent_temps[agent_type]
+
+            if not isinstance(temperature, (int, float)):
+                raise ConfigurationError(
+                    f"Temperature for '{agent_type}' must be a number, "
+                    f"got {type(temperature).__name__}"
+                )
+
+            if not (0.0 <= temperature <= 2.0):
+                raise ConfigurationError(
+                    f"Temperature for '{agent_type}' must be between 0.0 and 2.0, "
+                    f"got {temperature}"
+                )
+
+            return float(temperature)
+
+        # Fall back to default temperature
+        return self.get_default_temperature()
+
 
 # Global config instance (lazy loaded)
 _global_config: Optional[LLMConfig] = None

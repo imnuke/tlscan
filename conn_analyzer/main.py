@@ -56,7 +56,7 @@ def parse_model_string(model: str):
         model: Model string (e.g., "deepseek-chat", "openai:gpt-4", "anthropic:claude-sonnet-4")
 
     Returns:
-        Tuple of (llm_instance, model_name)
+        Tuple of (llm_instance, model_name, config)
     """
     from conn_analyzer.config_loader import get_config, ConfigurationError
 
@@ -79,16 +79,16 @@ def parse_model_string(model: str):
             kwargs = {"model": model_name, "api_key": api_key}
             if api_base:
                 kwargs["base_url"] = api_base
-            return ChatOpenAI(**kwargs), model_name
+            return ChatOpenAI(**kwargs), model_name, config
         elif provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
-            return ChatAnthropic(model=model_name, api_key=api_key), model_name
+            return ChatAnthropic(model=model_name, api_key=api_key), model_name, config
         elif provider == "deepseek":
             from langchain_deepseek import ChatDeepSeek
             kwargs = {"model": model_name, "api_key": api_key}
             if api_base:
                 kwargs["base_url"] = api_base
-            return ChatDeepSeek(**kwargs), model_name
+            return ChatDeepSeek(**kwargs), model_name, config
         else:
             raise ValueError(f"Unknown provider: {provider}")
     else:
@@ -138,9 +138,10 @@ async def main(
     security_rules_content = load_security_rules(rules)
     console.print()
 
-    # Parse model
-    llm, model_name = parse_model_string(model)
+    # Parse model and load config
+    llm, model_name, config = parse_model_string(model)
     console.print(f"[cyan]🤖 LLM Model:[/cyan] {model_name}")
+    console.print(f"[cyan]🌡️  Temperature:[/cyan] {config.get_default_temperature()} (default)")
     console.print()
 
     # 2. Initialize port manager
@@ -162,8 +163,11 @@ async def main(
 
     # 4. Initialize Agent Factory (v2 architecture)
     console.print("[cyan]🏭 Initializing Agent Factory...[/cyan]")
-    agent_factory = AgentFactory(llm=llm)
+    agent_factory = AgentFactory(llm=llm, config=config)
     console.print("[green]✓ Agent Factory ready (structured output enabled)[/green]")
+    console.print(f"[dim]  └─ Per-agent temperatures: SSL={config.get_agent_temperature('ssl_analysis')}, "
+                 f"Dataflow={config.get_agent_temperature('dataflow')}, "
+                 f"Firmware={config.get_agent_temperature('firmware_exploration')}[/dim]")
     console.print()
 
     try:

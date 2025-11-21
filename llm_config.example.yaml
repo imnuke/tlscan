@@ -16,8 +16,22 @@ providers:
   anthropic:
     api_key: "your-anthropic-api-key-here"
 
+# Temperature configuration (optional)
+# Controls randomness in LLM responses (0.0 = deterministic, 2.0 = very creative)
+# Default: 0.7 (if not specified)
+temperature: 0.3  # Global default for all agents
+
+# Per-agent temperature overrides (optional)
+# Recommended values for SSL/TLS security analysis:
+agent_temperatures:
+  ssl_analysis: 0.2         # Most deterministic - precise rule checking
+  dataflow: 0.3             # Balanced - accurate code tracing
+  firmware_exploration: 0.4 # Slightly creative - finding related files
+  synthesis: 0.6            # More creative - readable security reports
+
 # Usage:
 # 1. Copy this file: cp llm_config.example.yaml llm_config.yaml
 # 2. Edit llm_config.yaml and add your API keys
-# 3. The llm_config.yaml file is gitignored to prevent accidentally committing secrets
-# 4. Use --model flag to select provider: --model deepseek:deepseek-chat
+# 3. Optionally adjust temperature settings for your use case
+# 4. The llm_config.yaml file is gitignored to prevent accidentally committing secrets
+# 5. Use --model flag to select provider: --model deepseek:deepseek-chat
