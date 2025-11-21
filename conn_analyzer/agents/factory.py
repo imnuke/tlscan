@@ -53,6 +53,7 @@ class AgentFactory:
         # This works for OpenAI, DeepSeek, and other LLMs that support this parameter
         if hasattr(llm, 'bind_tools'):
             try:
+                # NOTE: Actually this does not work for deepseek-chat model in 2025-11-21.
                 return llm.bind_tools(tools, parallel_tool_calls=False)
             except TypeError:
                 # LLM doesn't support parallel_tool_calls parameter
