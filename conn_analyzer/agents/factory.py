@@ -60,6 +60,38 @@ class AgentFactory:
                 return llm
         return llm
 
+    @staticmethod
+    def _filter_tools(
+        tools: List[any],
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None
+    ) -> List[any]:
+        """Filter tools by name using either include or exclude mode.
+
+        Args:
+            tools: List of tools to filter
+            include: Allowlist - only keep tools with these names
+            exclude: Denylist - remove tools with these names
+
+        Returns:
+            Filtered tool list
+
+        Raises:
+            ValueError: If both include and exclude are provided
+        """
+        if include is not None and exclude is not None:
+            raise ValueError("Cannot use both include and exclude modes simultaneously")
+
+        if include is not None:
+            # Allowlist mode - only keep specified tools
+            return [tool for tool in tools if tool.name in include]
+        elif exclude is not None:
+            # Denylist mode - remove specified tools
+            return [tool for tool in tools if tool.name not in exclude]
+        else:
+            # No filtering - return all tools
+            return tools
+
     def create_ssl_agent(
         self,
         tools: List[any],
@@ -106,14 +138,20 @@ class AgentFactory:
         """
         from conn_analyzer.agents.prompts.dataflow_prompt import DATAFLOW_SYSTEM_PROMPT
 
+        # Default exclusions for dataflow agent
+        exclude_tools = ["get_function_by_address"]
+
+        # Filter tools before binding
+        filtered_tools = self._filter_tools(tools, exclude=exclude_tools)
+
         # Prepare LLM for sequential tool calling (prevents SSE timeouts)
-        llm_with_tools = self._prepare_llm_for_sequential_tools(self._llm, tools)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(self._llm, filtered_tools)
 
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches DataflowAnalysisOutput schema
         agent = create_agent(
             model=llm_with_tools,
-            tools=tools,
+            tools=filtered_tools,
             middleware=[handle_tool_errors],
             system_prompt=DATAFLOW_SYSTEM_PROMPT
         )
