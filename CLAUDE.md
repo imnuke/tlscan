@@ -112,3 +112,30 @@ uv run conn_analyzer_new.py \
 - Recent focus on prompt refinement and task routing logic
 - Firmware tools use `fd` and `rg` for fast searching
 - Configuration in `llm_config.yaml` (gitignored - contains API keys)
+- **After implementation**: Always present a commit message in Conventional Commits format (see Commit Messages section)
+- When using TodoWrite for multi-step tasks, the final step should be preparing the commit message
+
+## Commit Messages
+
+⚠️ **REQUIRED**: After completing code changes, immediately present a commit message to the user.
+
+**Do NOT execute the commit** - only present the message. Wait for user approval to commit.
+
+When completing changes to the codebase, always generate a commit message in **Conventional Commits** format:
+
+**Format**: `<type>: <short description>`
+
+**Types**:
+- `feat`: New feature
+- `fix`: Bug fix
+- `refactor`: Code restructuring without behavior change
+- `docs`: Documentation changes
+- `test`: Test additions or modifications
+- `chore`: Maintenance tasks
+
+**Example**:
+```
+fix: process all messages in stream chunks
+```
+
+Keep the title concise and descriptive (aim for ≤72 chars) and use imperative mood ("fix" not "fixed").
