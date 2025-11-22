@@ -20,8 +20,11 @@ def get_imported_function_list(binary_path: str) -> list[str]:
     patterns = [
         # 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND upscli_connect
         r'FUNC.*UND\s+([^\s@]+)',
+
         # 0x0000000000000000     0 R_ARM_JUMP_SLOT   upscli_connect
-        r'(?:R_ARM_JUMP_SLOT|R_X86_64_JUMP_SLOT)\s+\d+\s+([^\s@]+)'
+        # NOTE: Temporarily disable this pattern due to false positives
+        # NOTE: Maybe make this pattern better in the future.
+        # r'(?:R_ARM_JUMP_SLOT|R_X86_64_JUMP_SLOT)\s+\d+\s+([^\s@]+)'
     ]
     merged_pattern = re.compile('|'.join(patterns), re.MULTILINE)
 
