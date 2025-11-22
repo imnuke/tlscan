@@ -26,6 +26,12 @@ from conn_analyzer.graph.models import (
     RuleResult,
     ConfigFetchTask,
     VariableSourceType,
+    FunctionParameterDetails,
+    ConstantDetails,
+    ConfigFileDetails,
+    EnvironmentVariableDetails,
+    CommandLineArgDetails,
+    UnknownDetails,
 )
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
@@ -245,22 +251,27 @@ async def dataflow_analysis_node(
 
             # Check if this trace needs config fetching
             if trace.source == VariableSourceType.CONFIG_FILE:
+                # Extract config path from typed source_details
+                config_reference = None
+                if isinstance(trace.source_details, ConfigFileDetails):
+                    config_reference = trace.source_details.config_path
+                    if trace.source_details.config_key:
+                        config_reference = f"{config_reference} (key: {trace.source_details.config_key})"
+
                 config_task = ConfigFetchTask(
                     variable=trace.variable,
                     function=trace.function,
-                    config_reference=trace.source_details,
+                    config_reference=config_reference,
                     trace_details=trace.trace_path
                 )
                 config_fetch_tasks.append(config_task)
-                console.print(f"[dim]    → Config fetch needed for {trace.variable} from {trace.source_details}[/dim]")
+                console.print(f"[dim]    → Config fetch needed for {trace.variable} from {config_reference}[/dim]")
 
             # Check if this trace requires cross-binary analysis
             elif trace.source == VariableSourceType.FUNCTION_PARAMETER_FROM_EXTERNAL_CALL:
-                # Extract function name from source_details (e.g., "upsc, init_ssl")
-                if trace.source_details:
-                    # Parse source_details to get function name
-                    parts = trace.source_details.split(",")
-                    function_name = parts[-1].strip() if len(parts) > 1 else parts[0].strip()
+                # Extract function name from typed source_details
+                if isinstance(trace.source_details, FunctionParameterDetails):
+                    function_name = trace.source_details.external_function
 
                     # Create a "needs_caller_discovery" task
                     caller_discovery_task = DataflowTask(
@@ -272,6 +283,8 @@ async def dataflow_analysis_node(
                     )
                     new_dataflow_tasks.append(caller_discovery_task)
                     console.print(f"[dim]    → Cross-binary discovery needed for function '{function_name}'[/dim]")
+                else:
+                    console.print(f"[yellow]⚠ Invalid source_details type for FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: {type(trace.source_details)}[/yellow]")
 
     console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces[/green]")
 
@@ -626,6 +639,26 @@ async def synthesis_node(
                 if composite_key in main_traces:
                     trace = main_traces[composite_key]
                     report_lines.append(f"    Source: {trace.source.value}")
+
+                    # Show detailed source information from typed details
+                    if isinstance(trace.source_details, ConstantDetails):
+                        if trace.source_details.constant_name:
+                            report_lines.append(f"    Details: Constant {trace.source_details.constant_name} = {trace.source_details.constant_value}")
+                    elif isinstance(trace.source_details, ConfigFileDetails):
+                        details_str = f"    Details: Config file {trace.source_details.config_path}"
+                        if trace.source_details.config_key:
+                            details_str += f" (key: {trace.source_details.config_key})"
+                        report_lines.append(details_str)
+                    elif isinstance(trace.source_details, FunctionParameterDetails):
+                        report_lines.append(f"    Details: External call to {trace.source_details.external_function} (parameter: {trace.source_details.parameter_name})")
+                    elif isinstance(trace.source_details, EnvironmentVariableDetails):
+                        report_lines.append(f"    Details: Environment variable {trace.source_details.env_var_name}")
+                    elif isinstance(trace.source_details, CommandLineArgDetails):
+                        details_str = "    Details: Command-line argument"
+                        if trace.source_details.arg_name:
+                            details_str += f" {trace.source_details.arg_name}"
+                        report_lines.append(details_str)
+
                     if trace.value:
                         report_lines.append(f"    Value: {trace.value}")
                         # Apply security mapping

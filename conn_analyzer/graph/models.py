@@ -5,7 +5,7 @@ Using Pydantic ensures type safety and eliminates regex parsing.
 """
 
 from pydantic import BaseModel, Field
-from typing import Literal, Optional, List, Dict, Any
+from typing import Literal, Optional, List, Dict, Any, Union
 from enum import Enum
 
 
@@ -155,6 +155,99 @@ class SSLAnalysisOutput(BaseModel):
 # Dataflow Analysis Models
 # ============================================================================
 
+# Source-specific detail models for type-safe discriminated union
+
+class FunctionParameterDetails(BaseModel):
+    """Details for FUNCTION_PARAMETER_FROM_EXTERNAL_CALL source.
+
+    Represents a variable whose value comes from an external function call
+    outside the current binary.
+    """
+    source_type: Literal["function_parameter_from_external_call"] = "function_parameter_from_external_call"
+    external_function: str = Field(
+        description="Name of the function being called from outside (e.g., 'upscli_connect')"
+    )
+    parameter_name: str = Field(
+        description="Name of the parameter in that function (e.g., 'a4', 'verify_mode')"
+    )
+    parameter_index: Optional[int] = Field(
+        None,
+        description="Zero-indexed position of parameter in function signature"
+    )
+    is_exported: bool = Field(
+        False,
+        description="Whether the function is exported from the binary"
+    )
+
+
+class ConstantDetails(BaseModel):
+    """Details for CONSTANT source.
+
+    Represents a variable whose value is a compile-time constant.
+    """
+    source_type: Literal["constant"] = "constant"
+    constant_value: str = Field(
+        description="The constant value (e.g., '1', '0', '0x10')"
+    )
+    constant_name: Optional[str] = Field(
+        None,
+        description="Symbolic name of constant if known (e.g., 'SSL_VERIFY_PEER')"
+    )
+
+
+class ConfigFileDetails(BaseModel):
+    """Details for CONFIG_FILE source.
+
+    Represents a variable whose value comes from a configuration file.
+    """
+    source_type: Literal["config_file"] = "config_file"
+    config_path: str = Field(
+        description="Path to the configuration file (e.g., '/etc/ssl.conf')"
+    )
+    config_key: Optional[str] = Field(
+        None,
+        description="Key name in the config file if known"
+    )
+
+
+class EnvironmentVariableDetails(BaseModel):
+    """Details for ENVIRONMENT_VARIABLE source.
+
+    Represents a variable whose value comes from an environment variable.
+    """
+    source_type: Literal["environment_variable"] = "environment_variable"
+    env_var_name: str = Field(
+        description="Name of the environment variable (e.g., 'SSL_VERIFY_MODE')"
+    )
+
+
+class CommandLineArgDetails(BaseModel):
+    """Details for COMMAND_LINE_ARG source.
+
+    Represents a variable whose value comes from command-line arguments.
+    """
+    source_type: Literal["command_line_arg"] = "command_line_arg"
+    arg_position: Optional[int] = Field(
+        None,
+        description="Position in argv array (e.g., 1 for first argument after program name)"
+    )
+    arg_name: Optional[str] = Field(
+        None,
+        description="Flag or argument name if applicable (e.g., '--verify', '-v')"
+    )
+
+
+class UnknownDetails(BaseModel):
+    """Details for UNKNOWN source.
+
+    Represents a variable whose source could not be determined.
+    """
+    source_type: Literal["unknown"] = "unknown"
+    reason: str = Field(
+        description="Explanation of why the source could not be determined"
+    )
+
+
 class VariableTrace(BaseModel):
     """
     Result of tracing a single variable through dataflow analysis.
@@ -183,15 +276,16 @@ class VariableTrace(BaseModel):
         description="Concrete value if determinable (e.g., '1', 'SSL_VERIFY_PEER', '/etc/ssl.conf')"
     )
 
-    source_details: Optional[str] = Field(
-        None,
-        description=(
-            "Additional details about the source: "
-            "- For CONFIG_FILE: file path (e.g., '/etc/ssl.conf') "
-            "- For ENV_VAR: variable name (e.g., 'SSL_VERIFY_MODE') "
-            "- For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: caller binary, function name (e.g., 'upsc, init_ssl') "
-            "- For CONSTANT: constant name (e.g., 'SSL_VERIFY_PEER')"
-        )
+    source_details: Union[
+        FunctionParameterDetails,
+        ConstantDetails,
+        ConfigFileDetails,
+        EnvironmentVariableDetails,
+        CommandLineArgDetails,
+        UnknownDetails
+    ] = Field(
+        description="Type-safe details about the variable's source (discriminated by source_type)",
+        discriminator="source_type"
     )
 
     confidence: Literal["high", "medium", "low"] = Field(

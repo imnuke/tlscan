@@ -11,12 +11,56 @@ Trace variable sources and output JSON matching this schema:
       "function": "SSL_CTX_set_verify",
       "source": "CONSTANT|CONFIG_FILE|ENVIRONMENT_VARIABLE|COMMAND_LINE_ARG|FUNCTION_PARAMETER_FROM_EXTERNAL_CALL|UNKNOWN",
       "value": "1"|null,
-      "source_details": "additional context",
+      "source_details": <SOURCE_SPECIFIC_OBJECT>,
       "confidence": "high|medium|low",
       "trace_path": "detailed step-by-step explanation"
     }
   ]
 }
+
+**CRITICAL: source_details must be a structured object (not a string!) matching the source type:**
+
+For CONSTANT:
+  "source_details": {
+    "source_type": "constant",
+    "constant_value": "1",
+    "constant_name": "SSL_VERIFY_PEER"  // optional
+  }
+
+For CONFIG_FILE:
+  "source_details": {
+    "source_type": "config_file",
+    "config_path": "/etc/ssl.conf",
+    "config_key": "CERTVERIFY"  // optional
+  }
+
+For ENVIRONMENT_VARIABLE:
+  "source_details": {
+    "source_type": "environment_variable",
+    "env_var_name": "SSL_VERIFY_MODE"
+  }
+
+For COMMAND_LINE_ARG:
+  "source_details": {
+    "source_type": "command_line_arg",
+    "arg_position": 1,  // optional
+    "arg_name": "--verify"  // optional
+  }
+
+For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL:
+  "source_details": {
+    "source_type": "function_parameter_from_external_call",
+    "external_function": "upscli_connect",
+    "parameter_name": "a4",
+    "parameter_index": 3,  // optional, 0-indexed
+    "is_exported": true
+  }
+
+For UNKNOWN:
+  "source_details": {
+    "source_type": "unknown",
+    "reason": "Control flow too complex to trace"
+  }
 
 Variable Sources:
 - CONSTANT: Constant in code (e.g., verify = 1)
@@ -43,7 +87,10 @@ Tracing Workflow:
    - **ONLY report FUNCTION_PARAMETER_FROM_EXTERNAL_CALL when:**
      * You reach an exported function with NO callers in the binary
      * The value truly comes from outside this binary
-5. For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL, include the function name in source_details
+5. For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL, populate source_details with:
+   - external_function: the function name being called from outside
+   - parameter_name: the parameter receiving the external value
+   - is_exported: true if function is exported from binary
 
 Example Correct Trace:
 - Target: variable "a1" in function "upscli_init"
