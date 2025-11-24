@@ -7,6 +7,7 @@ This module implements all graph nodes with:
 - Clean separation of concerns
 """
 
+import time
 from typing import Dict, Any, List, Sequence
 from langchain_core.messages import HumanMessage
 
@@ -36,6 +37,7 @@ from conn_analyzer.graph.models import (
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
 from conn_analyzer.agents.core.execution import stream_and_log_agent
+from conn_analyzer.utils.state_logging import log_agent_state
 
 from rich.console import Console
 
@@ -102,12 +104,15 @@ async def ssl_analysis_node(
     # Check if SSL/TLS analysis is applicable
     if not result.applicable:
         console.print(f"[yellow]ℹ SSL/TLS not applicable: {result.reason}[/yellow]")
-        return {
+        state_update = {
             "applicable": False,
             "ssl_summary": result.reason or "No SSL/TLS client code detected",
             "current_phase": AnalysisPhase.COMPLETED,
             "final_report": result.summary,
         }
+        # Log state after agent execution with changes
+        log_agent_state("SSL Agent", state, changes=state_update)
+        return state_update
 
     console.print(f"[green]✓ SSL analysis complete: {result.client_type}[/green]")
     console.print(f"[dim]  Rules analyzed: {len(result.rules)}[/dim]")
@@ -145,7 +150,7 @@ async def ssl_analysis_node(
         console.print(f"[dim]  Dataflow tasks created: {len(pending_dataflow_tasks)}[/dim]")
 
     # Build state update
-    return {
+    state_update = {
         "rule_result": rules_dict,
         "ssl_summary": result.summary,
         "client_type": result.client_type,
@@ -153,6 +158,10 @@ async def ssl_analysis_node(
         "pending_dataflow_tasks": pending_dataflow_tasks,
         "current_phase": AnalysisPhase.DATAFLOW_ANALYSIS if pending_dataflow_tasks else AnalysisPhase.SYNTHESIS,
     }
+
+    # Log state after agent execution with changes
+    log_agent_state("SSL Agent", state, changes=state_update)
+    return state_update
 
 
 # ============================================================================
@@ -191,7 +200,10 @@ async def dataflow_analysis_node(
 
     if not pending_tasks:
         console.print("[yellow]⚠ No dataflow tasks to process[/yellow]")
-        return {"current_phase": AnalysisPhase.SYNTHESIS}
+        state_update = {"current_phase": AnalysisPhase.SYNTHESIS}
+        # Log state after (no agent execution in this case)
+        log_agent_state("Dataflow Agent", state, changes=state_update)
+        return state_update
 
     console.print(f"[cyan]🔍 Running dataflow analysis: {len(pending_tasks)} tasks[/cyan]")
 
@@ -234,6 +246,9 @@ async def dataflow_analysis_node(
             agent_emoji="🔍",
             output_model=DataflowAnalysisOutput
         )
+
+        # NOTE:
+        # Firmware Agent needs to report file type and file type.
 
         # Process traces
         for trace in result.traces:
@@ -294,12 +309,16 @@ async def dataflow_analysis_node(
     else:
         next_phase = AnalysisPhase.SYNTHESIS
 
-    return {
+    state_update = {
         "variable_traces": all_traces,
         "pending_dataflow_tasks": new_dataflow_tasks,  # New tasks for caller discovery or cleared
         "pending_config_fetch_tasks": config_fetch_tasks,
         "current_phase": next_phase,
     }
+
+    # Log state after agent execution with changes
+    log_agent_state("Dataflow Agent", state, changes=state_update)
+    return state_update
 
 
 # ============================================================================
@@ -377,18 +396,24 @@ async def firmware_explore_node(
                 )
                 remaining_tasks.append(binary_task)
 
-            return {
+            state_update = {
                 "pending_dataflow_tasks": remaining_tasks,
                 "firmware_details": result.details,
                 "current_phase": AnalysisPhase.CROSS_BINARY_ANALYSIS,
             }
+            # Log state after agent execution with changes
+            log_agent_state("Firmware Agent", state, changes=state_update)
+            return state_update
         else:
             console.print(f"[yellow]⚠ No caller binaries found for {function_name}[/yellow]")
-            return {
+            state_update = {
                 "pending_dataflow_tasks": remaining_tasks,
                 "firmware_details": result.details,
                 "current_phase": AnalysisPhase.SYNTHESIS,
             }
+            # Log state after agent execution with changes
+            log_agent_state("Firmware Agent", state, changes=state_update)
+            return state_update
 
     elif config_fetch_tasks:
         # Fetch configuration values from firmware
@@ -440,22 +465,31 @@ async def firmware_explore_node(
                         all_traces[composite_key] = updated_trace
                         console.print(f"[dim]    ✓ Updated {task.variable} = {updated_trace.value}[/dim]")
 
-            return {
+            state_update = {
                 "variable_traces": all_traces,
                 "pending_config_fetch_tasks": [],  # Clear completed tasks
                 "firmware_details": result.details,
                 "current_phase": AnalysisPhase.SYNTHESIS,
             }
+            # Log state after agent execution with changes
+            log_agent_state("Firmware Agent", state, changes=state_update)
+            return state_update
         else:
             console.print(f"[yellow]⚠ No config values found[/yellow]")
-            return {
+            state_update = {
                 "pending_config_fetch_tasks": [],
                 "firmware_details": result.details,
                 "current_phase": AnalysisPhase.SYNTHESIS,
             }
+            # Log state after agent execution with changes
+            log_agent_state("Firmware Agent", state, changes=state_update)
+            return state_update
 
     # If no tasks, proceed to synthesis
-    return {"current_phase": AnalysisPhase.SYNTHESIS}
+    state_update = {"current_phase": AnalysisPhase.SYNTHESIS}
+    # Log state after (no agent execution in this case)
+    log_agent_state("Firmware Agent", state, changes=state_update)
+    return state_update
 
 
 # ============================================================================
@@ -487,10 +521,13 @@ async def binary_analysis_sequential(
 
     if not cross_binary_tasks:
         console.print("[yellow]⚠ No cross-binary tasks to process[/yellow]")
-        return {
+        state_update = {
             "pending_dataflow_tasks": [],
             "current_phase": AnalysisPhase.SYNTHESIS,
         }
+        # Log state after (no agent execution in this case)
+        log_agent_state("Dataflow Agent", state, changes=state_update)
+        return state_update
 
     console.print(f"[cyan]🔄 Analyzing {len(cross_binary_tasks)} caller binaries sequentially[/cyan]")
 
@@ -544,11 +581,15 @@ async def binary_analysis_sequential(
 
     console.print(f"[green]✓ Cross-binary analysis complete: {len(cross_binary_tasks)} binaries analyzed[/green]")
 
-    return {
+    state_update = {
         "variable_traces": all_traces,
         "pending_dataflow_tasks": [],  # Clear all tasks
         "current_phase": AnalysisPhase.SYNTHESIS,
     }
+
+    # Log state after all agent executions with changes
+    log_agent_state("Cross-binary Dataflow", state, changes=state_update)
+    return state_update
 
 
 

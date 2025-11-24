@@ -32,6 +32,7 @@ from conn_analyzer.utils.file_utils import (
     load_security_rules,
 )
 from conn_analyzer.utils.formatting import format_duration
+from conn_analyzer.utils.state_logging import init_state_log, log_initial_state
 from conn_analyzer.ida_integration.port_manager import PortManager
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
@@ -138,6 +139,12 @@ async def main(
     security_rules_content = load_security_rules(rules)
     console.print()
 
+    # Initialize state logging
+    console.print("[cyan]📝 Initializing state logging...[/cyan]")
+    log_file = init_state_log(file_path)
+    console.print(f"[green]✓ State log:[/green] {log_file}")
+    console.print()
+
     # Parse model and load config
     llm, model_name, config = parse_model_string(model)
     console.print(f"[cyan]🤖 LLM Model:[/cyan] {model_name}")
@@ -209,6 +216,9 @@ async def main(
             binary_path=file_path,
             security_rules=security_rules_content
         )
+
+        # Log initial state
+        log_initial_state(initial_state)
 
         # 9. Execute workflow
         console.print()
