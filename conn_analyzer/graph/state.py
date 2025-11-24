@@ -67,6 +67,7 @@ class AnalysisState(TypedDict, total=False):
     # Context & Configuration
     # ========================================================================
 
+    # NOTE: is this field correctly used?
     binary_path: str
     """Path to the current binary being analyzed."""
 
@@ -83,6 +84,7 @@ class AnalysisState(TypedDict, total=False):
     current_phase: AnalysisPhase
     """Current phase of the analysis workflow."""
 
+    # NOTE: is this used?
     depth: int
     """Depth of cross-binary recursion (for preventing infinite loops)."""
 

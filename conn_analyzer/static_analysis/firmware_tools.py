@@ -308,6 +308,7 @@ def read_file(path: str, start_line: Optional[int] = None, end_line: Optional[in
 # 3. BINARY ANALYSIS
 # ============================================================================
 
+# FIXME: Not working well. Not finding that upscli_connect is defined in libupsclient.so.
 @tool
 def find_function_definition(function_name: str) -> str:
     """

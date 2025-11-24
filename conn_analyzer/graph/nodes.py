@@ -224,6 +224,7 @@ async def dataflow_analysis_node(
             agent = agent_factory.create_dataflow_agent(tools=tools)
         elif task_type == "script":
             # For scripts, dataflow agent uses firmware tools to read script
+            # NOTE: Passing firmware_tools seems not good.
             agent = agent_factory.create_dataflow_agent(tools=firmware_tools)
         else:
             console.print(f"[yellow]⚠ Unknown task type: {task_type}[/yellow]")
@@ -252,6 +253,10 @@ async def dataflow_analysis_node(
 
         # Process traces
         for trace in result.traces:
+            # TODO: Not only for binary, we can unify the composite key for binary/script/config.
+            # we can use "{file_path}:{}"
+            # ??
+
             # Build composite key based on whether this is cross-binary analysis
             binary_path = task.get("binary_path")
             if binary_path:
@@ -261,6 +266,7 @@ async def dataflow_analysis_node(
                 # Main binary trace: "function:variable"
                 composite_key = f"{trace.function}:{trace.variable}"
 
+            # NOTE: Not used?
             all_traces[composite_key] = trace
             console.print(f"[dim]    ✓ {trace.variable}: {trace.source.value}[/dim]")
 
@@ -287,6 +293,21 @@ async def dataflow_analysis_node(
                 # Extract function name from typed source_details
                 if isinstance(trace.source_details, FunctionParameterDetails):
                     function_name = trace.source_details.external_function
+                    parameter_name = trace.source_details.parameter_name
+
+                    # Find the original variable's security_mapping to preserve it
+                    original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
+                    security_mapping = original_var.get("security_mapping", {}) if original_var else {}
+
+                    # Create NEW variables for the external function's parameter
+                    # (NOT the original function's variable - that would confuse the next agent)
+                    new_variables = [{
+                        "variable": parameter_name,
+                        "function": function_name,
+                        "function_address": None,  # External function address unknown
+                        # NOTE: might no longer useful.
+                        "security_mapping": security_mapping,  # Preserve security mapping
+                    }]
 
                     # Create a "needs_caller_discovery" task
                     caller_discovery_task = DataflowTask(

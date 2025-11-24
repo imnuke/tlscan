@@ -170,6 +170,7 @@ class FunctionParameterDetails(BaseModel):
     parameter_name: str = Field(
         description="Name of the parameter in that function (e.g., 'a4', 'verify_mode')"
     )
+    # FIXME: not used.
     parameter_index: Optional[int] = Field(
         None,
         description="Zero-indexed position of parameter in function signature"
