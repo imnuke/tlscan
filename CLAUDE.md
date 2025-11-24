@@ -123,7 +123,23 @@ uv run conn_analyzer_new.py \
 
 When completing changes to the codebase, always generate a commit message in **Conventional Commits** format:
 
-**Format**: `<type>: <short description>`
+**Format**:
+```
+<type>: <short description>
+
+<body explaining what changed, why, and impact>
+```
+
+**Title** (first line):
+- Format: `<type>: <short description>`
+- Keep concise and descriptive (≤72 chars)
+- Use imperative mood ("fix" not "fixed")
+
+**Body** (after blank line):
+- 2-4 concise lines explaining the change
+- Include: what changed, why needed, and impact/implications
+- Wrap lines at 72 characters
+- Can use bullet points for clarity
 
 **Types**:
 - `feat`: New feature
@@ -136,6 +152,8 @@ When completing changes to the codebase, always generate a commit message in **C
 **Example**:
 ```
 fix: process all messages in stream chunks
-```
 
-Keep the title concise and descriptive (aim for ≤72 chars) and use imperative mood ("fix" not "fixed").
+Previously only processed first message in streamed responses.
+Now iterates through all message chunks to handle multi-part
+responses correctly. Fixes incomplete output in long conversations.
+```
