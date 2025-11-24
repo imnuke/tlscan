@@ -52,8 +52,7 @@ For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL:
     "source_type": "function_parameter_from_external_call",
     "external_function": "upscli_connect",
     "parameter_name": "a4",
-    "parameter_index": 3,  // optional, 0-indexed
-    "is_exported": true
+    "parameter_index": 3  // optional, 0-indexed
   }
 
 For UNKNOWN:
@@ -90,7 +89,6 @@ Tracing Workflow:
 5. For FUNCTION_PARAMETER_FROM_EXTERNAL_CALL, populate source_details with:
    - external_function: the function name being called from outside
    - parameter_name: the parameter receiving the external value
-   - is_exported: true if function is exported from binary
 
 Example Correct Trace:
 - Target: variable "a1" in function "upscli_init"

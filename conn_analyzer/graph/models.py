@@ -175,10 +175,6 @@ class FunctionParameterDetails(BaseModel):
         None,
         description="Zero-indexed position of parameter in function signature"
     )
-    is_exported: bool = Field(
-        False,
-        description="Whether the function is exported from the binary"
-    )
 
 
 class ConstantDetails(BaseModel):

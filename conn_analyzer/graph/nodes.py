@@ -412,7 +412,6 @@ async def firmware_explore_node(
                     target=binary_path,
                     variables=task["variables"],
                     binary_path=binary_path,
-                    context=f"traces call to {function_name}"
                 )
                 remaining_tasks.append(binary_task)
 
