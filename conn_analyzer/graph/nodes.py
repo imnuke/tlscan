@@ -20,6 +20,7 @@ from conn_analyzer.graph.state import (
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
+    RuleResolvingStatus,
     SSLAnalysisOutput,
     DataflowAnalysisOutput,
     FirmwareSearchResult,
@@ -117,10 +118,27 @@ async def ssl_analysis_node(
     console.print(f"[green]✓ SSL analysis complete: {result.client_type}[/green]")
     console.print(f"[dim]  Rules analyzed: {len(result.rules)}[/dim]")
 
-    # Convert rules list to dict: rule_id -> RuleResult
-    rules_dict: Dict[str, RuleResult] = {
-        rule.rule_id: rule for rule in result.rules
-    }
+    # Convert rules list to dict and set correct resolving_status
+    rules_dict: Dict[str, RuleResult] = {}
+    for rule in result.rules:
+        # Determine resolving_status based on result type and conditions
+        if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
+            # Needs dataflow analysis - keep as UNRESOLVED
+            resolving_status = RuleResolvingStatus.UNRESOLVED
+        else:
+            # Definitive result (PASS/FAIL/UNDETERMINED) - mark as RESOLVED
+            resolving_status = RuleResolvingStatus.RESOLVED
+
+        # Create updated rule with correct status
+        updated_rule = RuleResult(
+            rule_id=rule.rule_id,
+            rule_name=rule.rule_name,
+            result=rule.result,
+            resolving_status=resolving_status,
+            evidence=rule.evidence,
+            conditions=rule.conditions
+        )
+        rules_dict[rule.rule_id] = updated_rule
 
     # Create dataflow tasks for all CONDITIONAL rules
     pending_dataflow_tasks: List[DataflowTask] = []
