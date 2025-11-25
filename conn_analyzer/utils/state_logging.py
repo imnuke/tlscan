@@ -1,117 +1,51 @@
-"""Utilities for logging agent state during analysis workflow."""
+"""Utilities for logging agent state changes to console during analysis workflow."""
 
 import json
-import shutil
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from conn_analyzer.config import TEMP_FILES_DIR
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
+
 from conn_analyzer.graph.state import AnalysisState
 
-AGENT_STATE_LOGS_DIR = TEMP_FILES_DIR / "agent_state_logs"
-"""Directory for agent state log files."""
-
-# Global variable to track current log file path
-_current_log_file: Path | None = None
-_log_entries: List[Dict[str, Any]] = []
+# Initialize console for state change output
+console = Console()
 
 
-def init_state_log(binary_path: str) -> Path:
-    """Initialize state logging for a new analysis run.
-
-    Cleans up old state logs and creates a new log file for this run.
-
-    Args:
-        binary_path: Path to the binary being analyzed (used in filename)
-
-    Returns:
-        Path to the new log file
-    """
-    global _current_log_file, _log_entries
-
-    # Clean up old logs
-    if AGENT_STATE_LOGS_DIR.exists():
-        shutil.rmtree(AGENT_STATE_LOGS_DIR)
-
-    # Create logs directory
-    AGENT_STATE_LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Generate log filename
-    binary_name = Path(binary_path).stem
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = f"state_log_{binary_name}_{timestamp}.json"
-    _current_log_file = AGENT_STATE_LOGS_DIR / log_filename
-
-    # Reset log entries
-    _log_entries = []
-
-    return _current_log_file
-
-
-def _serialize_for_json(obj: Any) -> Any:
-    """Recursively serialize Pydantic models and complex types to JSON-compatible format.
-
-    Handles:
-    - Pydantic v2 models (model_dump)
-    - Pydantic v1 models (dict)
-    - Nested dicts, lists, tuples, sets
-    - Other types pass through
+def _serialize_and_truncate(obj: Any, max_str_len: int = 100) -> Any:
+    """Recursively serialize Pydantic models and truncate long strings.
 
     Args:
         obj: Object to serialize
+        max_str_len: Maximum length for string values
 
     Returns:
-        JSON-serializable representation
+        Serialized object with truncated strings
     """
     if hasattr(obj, 'model_dump'):
         # Pydantic v2 model
-        return obj.model_dump()
+        return _serialize_and_truncate(obj.model_dump(), max_str_len)
     elif hasattr(obj, 'dict'):
         # Pydantic v1 model
-        return obj.dict()
+        return _serialize_and_truncate(obj.dict(), max_str_len)
     elif isinstance(obj, dict):
-        return {k: _serialize_for_json(v) for k, v in obj.items()}
+        return {k: _serialize_and_truncate(v, max_str_len) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):
-        return [_serialize_for_json(item) for item in obj]
+        return [_serialize_and_truncate(item, max_str_len) for item in obj]
     elif isinstance(obj, set):
-        return [_serialize_for_json(item) for item in obj]
+        return [_serialize_and_truncate(item, max_str_len) for item in obj]
+    elif isinstance(obj, str):
+        # Truncate long strings - keep head and tail
+        if len(obj) > max_str_len:
+            # Calculate how much to keep from head and tail
+            keep_chars = max_str_len - 3  # Reserve 3 for "..."
+            head_len = keep_chars // 2
+            tail_len = keep_chars - head_len
+            return obj[:head_len] + "..." + obj[-tail_len:]
+        return obj
     else:
         return obj
-
-
-def log_initial_state(state: AnalysisState) -> None:
-    """Log the initial analysis state at workflow start.
-
-    Should be called once after creating initial state, before any agents execute.
-
-    Args:
-        state: Initial analysis state
-    """
-    global _current_log_file, _log_entries
-
-    if _current_log_file is None:
-        # Logging not initialized, skip silently
-        return
-
-    # Serialize initial state (skip large fields)
-    state_dict = dict(state)
-    state_dict.pop("security_rules", None)  # Too large to log
-
-    # Create initial state entry
-    entry = {
-        "event": "initial",
-        "phase": state.get("current_phase"),
-        "depth": state.get("depth"),
-        "state": state_dict,
-    }
-
-    # Append to log entries
-    _log_entries.append(entry)
-
-    # Write to file
-    with open(_current_log_file, "w") as f:
-        json.dump(_log_entries, f, indent=2, default=str)
 
 
 def log_agent_state(
@@ -119,33 +53,40 @@ def log_agent_state(
     state: AnalysisState,
     changes: Dict[str, Any],
 ) -> None:
-    """Log state changes after an agent completes.
+    """Log state changes to console after an agent completes.
 
-    Logs only the changes made by the agent, keeping logs compact and readable.
+    Displays the complete changes dictionary with syntax highlighting.
+    Truncates long strings to 100 characters.
 
     Args:
         agent_name: Name of the agent that executed
-        state: Current analysis state (after agent execution)
+        state: Current analysis state (after agent execution) - unused but kept for API compatibility
         changes: Dict of state updates (node's return value)
     """
-    global _current_log_file, _log_entries
+    # Internal fields to skip
+    INTERNAL_FIELDS = {"current_phase", "depth", "security_rules"}
 
-    if _current_log_file is None:
-        # Logging not initialized, skip silently
+    # Filter out internal fields
+    filtered_changes = {k: v for k, v in changes.items() if k not in INTERNAL_FIELDS}
+
+    # Skip if no changes to display
+    if not filtered_changes:
+        console.print(f"[dim]  ℹ {agent_name}: (no state changes)[/dim]")
         return
 
-    # Create log entry
-    entry = {
-        "event": "agent_complete",
-        "agent_name": agent_name,
-        "phase": state.get("current_phase"),
-        "depth": state.get("depth"),
-        "changes": _serialize_for_json(changes),
-    }
+    # Serialize and truncate
+    serialized = _serialize_and_truncate(filtered_changes, max_str_len=100)
 
-    # Append to log entries
-    _log_entries.append(entry)
+    # Format as JSON with indentation
+    json_str = json.dumps(serialized, indent=2, default=str)
 
-    # Write to file (overwrite with full array each time)
-    with open(_current_log_file, "w") as f:
-        json.dump(_log_entries, f, indent=2, default=str)
+    # Create syntax-highlighted display
+    syntax = Syntax(json_str, "json", theme="monokai", line_numbers=False)
+
+    console.print()
+    console.print(Panel(
+        syntax,
+        title=f"[bold cyan]🔄 {agent_name} - State Changes[/bold cyan]",
+        border_style="cyan",
+        padding=(0, 1)
+    ))
