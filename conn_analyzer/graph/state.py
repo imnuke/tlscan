@@ -139,13 +139,13 @@ class AnalysisState(TypedDict, total=False):
     Consumed by dataflow analysis node.
     """
 
-    variable_traces: Dict[str, VariableTrace]
+    variable_traces: Dict[str, List[VariableTrace]]
     """
     Results of variable tracing from all analyzed binaries.
 
     Key: composite key in format "{binary_path}:{function}:{variable}" for cross-binary traces,
          or "function:variable" for main binary traces
-    Value: VariableTrace Pydantic model with source, value, confidence
+    Value: List of VariableTrace objects (multiple sources can contribute to same variable)
 
     Using composite keys prevents conflicts when the same variable name appears
     in different functions or binaries.
@@ -220,6 +220,9 @@ class AnalysisState(TypedDict, total=False):
     firmware_details: Optional[str]
     """Detailed findings from firmware exploration (for logging/display)."""
 
+    script_findings: Optional[List[str]]
+    """Startup scripts that invoke the analyzed binary (for CLI argument analysis)."""
+
     # ========================================================================
     # Final Output
     # ========================================================================
@@ -283,6 +286,7 @@ def create_initial_state(
         # Firmware & External Values
         external_values={},
         firmware_details=None,
+        script_findings=None,
 
         # Final output
         final_report="",

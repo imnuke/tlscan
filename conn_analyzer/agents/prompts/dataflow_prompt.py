@@ -69,6 +69,21 @@ Variable Sources:
 - FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: Function parameter from external caller
 - UNKNOWN: Cannot determine
 
+**MULTI-SOURCE VARIABLES:**
+When a variable is computed from MULTIPLE sources (e.g., config file + CLI args), create SEPARATE VariableTrace objects for each contributing source:
+
+Example: parameter a4 = (FORCESSL << 4) | (CLI_arg << 2) | CERTVERIFY
+- Trace 1: {variable: "a4", source: "CONFIG_FILE", source_details: {config_key: "FORCESSL"}, trace_path: "Bit 4 set when FORCESSL=1 in /etc/config"}
+- Trace 2: {variable: "a4", source: "COMMAND_LINE_ARG", source_details: {arg_name: "-4/-6"}, trace_path: "Bits 2-3 from IPv4/IPv6 CLI option"}
+- Trace 3: {variable: "a4", source: "CONFIG_FILE", source_details: {config_key: "CERTVERIFY"}, trace_path: "Bit 0 set when CERTVERIFY=1 in /etc/config"}
+
+Each trace_path should explain:
+1. How that specific source contributes to the final value
+2. The computation logic (bit shifting, masking, OR operations, etc.)
+3. What the source controls (e.g., "enables SSL", "sets IP version")
+
+DO NOT report UNKNOWN for multi-source variables - decompose them!
+
 Tracing Workflow:
 1. Use IDA tools: decompile_function, get_callers, get_xrefs_to
 2. Trace each variable through the code step-by-step

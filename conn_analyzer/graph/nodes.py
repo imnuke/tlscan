@@ -225,7 +225,11 @@ async def dataflow_analysis_node(
 
     console.print(f"[cyan]🔍 Running dataflow analysis: {len(pending_tasks)} tasks[/cyan]")
 
-    all_traces: Dict[str, VariableTrace] = state.get("variable_traces", {}).copy()
+    # Get existing traces (deep copy to avoid modifying state directly)
+    all_traces: Dict[str, List[VariableTrace]] = {}
+    for key, value in state.get("variable_traces", {}).items():
+        all_traces[key] = value.copy() if isinstance(value, list) else [value]
+
     new_dataflow_tasks: List[DataflowTask] = []
     config_fetch_tasks: List[ConfigFetchTask] = []
 
@@ -284,8 +288,10 @@ async def dataflow_analysis_node(
                 # Main binary trace: "function:variable"
                 composite_key = f"{trace.function}:{trace.variable}"
 
-            # NOTE: Not used?
-            all_traces[composite_key] = trace
+            # Store traces as list to support multiple sources per variable
+            if composite_key not in all_traces:
+                all_traces[composite_key] = []
+            all_traces[composite_key].append(trace)
             console.print(f"[dim]    ✓ {trace.variable}: {trace.source.value}[/dim]")
 
             # Check if this trace needs config fetching
@@ -338,6 +344,38 @@ async def dataflow_analysis_node(
                     console.print(f"[dim]    → Cross-binary discovery needed for function '{function_name}', parameter '{parameter_name}'[/dim]")
                 else:
                     console.print(f"[yellow]⚠ Invalid source_details type for FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: {type(trace.source_details)}[/yellow]")
+
+            # Check if this trace comes from command-line arguments
+            elif trace.source == VariableSourceType.COMMAND_LINE_ARG:
+                # Extract CLI arg details
+                if isinstance(trace.source_details, CommandLineArgDetails):
+                    arg_name = trace.source_details.arg_name or "CLI argument"
+
+                    # Find the original variable's security_mapping
+                    original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
+                    security_mapping = original_var.get("security_mapping", {}) if original_var else {}
+
+                    # Create variables for CLI arg analysis in calling scripts/binaries
+                    cli_variables = [{
+                        "variable": trace.variable,
+                        "function": trace.function,
+                        "function_address": None,
+                        "security_mapping": security_mapping,
+                        "cli_arg_name": arg_name,  # Extra context for script analysis
+                    }]
+
+                    # Create a "needs_script_discovery" task to find startup scripts/binaries
+                    script_discovery_task = DataflowTask(
+                        type="needs_script_discovery",
+                        target=binary_path,  # The binary being invoked
+                        variables=cli_variables,
+                        binary_path=None,
+                        context=f"Find scripts/binaries that invoke this binary and extract CLI argument: {arg_name}"
+                    )
+                    new_dataflow_tasks.append(script_discovery_task)
+                    console.print(f"[dim]    → Script discovery needed for CLI argument '{arg_name}'[/dim]")
+                else:
+                    console.print(f"[yellow]⚠ Invalid source_details type for COMMAND_LINE_ARG: {type(trace.source_details)}[/yellow]")
 
     console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces[/green]")
 
@@ -452,6 +490,56 @@ async def firmware_explore_node(
             log_agent_state("Firmware Agent", state, changes=state_update)
             return state_update
 
+    # Find tasks that need script discovery (for CLI arguments)
+    script_discovery_tasks = [t for t in pending_tasks if t.get("type") == "needs_script_discovery"]
+
+    if script_discovery_tasks:
+        # Find startup scripts/binaries that invoke the target binary
+        task = script_discovery_tasks[0]  # Process first task
+        binary_target = task["target"]
+        context = task.get("context", "")
+
+        console.print(f"[dim]  Finding scripts/binaries that invoke: {binary_target}[/dim]")
+        console.print(f"[dim]  Context: {context}[/dim]")
+
+        request = f"Find all startup scripts and binaries in firmware that invoke the binary: {binary_target}\n\n{context}"
+        messages = [HumanMessage(content=request)]
+
+        result: FirmwareSearchResult = await stream_and_log_agent(
+            agent=firmware_agent,
+            messages=messages,
+            agent_name="Firmware Agent",
+            agent_emoji="📂",
+            output_model=FirmwareSearchResult
+        )
+
+        # Remove the script discovery task from pending tasks
+        remaining_tasks = [t for t in pending_tasks if t.get("type") != "needs_script_discovery" or t != task]
+
+        if result.found and result.scripts:
+            console.print(f"[green]✓ Found {len(result.scripts)} startup scripts[/green]")
+            # For now, just report the findings (future: could parse scripts to extract CLI args)
+            # Store script findings for synthesis to report
+            state_update = {
+                "pending_dataflow_tasks": remaining_tasks,
+                "script_findings": result.scripts,
+                "firmware_details": result.details,
+                "current_phase": AnalysisPhase.SYNTHESIS,
+            }
+            # Log state after agent execution with changes
+            log_agent_state("Firmware Agent", state, changes=state_update)
+            return state_update
+        else:
+            console.print(f"[yellow]⚠ No startup scripts found for {binary_target}[/yellow]")
+            state_update = {
+                "pending_dataflow_tasks": remaining_tasks,
+                "firmware_details": result.details,
+                "current_phase": AnalysisPhase.SYNTHESIS,
+            }
+            # Log state after agent execution with changes
+            log_agent_state("Firmware Agent", state, changes=state_update)
+            return state_update
+
     elif config_fetch_tasks:
         # Fetch configuration values from firmware
         console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
@@ -482,25 +570,29 @@ async def firmware_explore_node(
             console.print(f"[green]✓ Found {len(result.config_values)} config values[/green]")
 
             # Update variable traces with fetched config values
-            all_traces = state.get("variable_traces", {}).copy()
+            all_traces: Dict[str, List[VariableTrace]] = {}
+            for key, value in state.get("variable_traces", {}).items():
+                all_traces[key] = value.copy() if isinstance(value, list) else [value]
+
             for task in config_fetch_tasks:
                 composite_key = f"{task.function}:{task.variable}"
                 if composite_key in all_traces:
-                    # Get the original trace
-                    original_trace = all_traces[composite_key]
-                    if task.variable in result.config_values:
-                        # Create updated trace with fetched value
-                        updated_trace = VariableTrace(
-                            function=original_trace.function,
-                            variable=original_trace.variable,
-                            source=original_trace.source,
-                            value=result.config_values[task.variable],
-                            source_details=original_trace.source_details,
-                            confidence=original_trace.confidence,
-                            trace_path=original_trace.trace_path
-                        )
-                        all_traces[composite_key] = updated_trace
-                        console.print(f"[dim]    ✓ Updated {task.variable} = {updated_trace.value}[/dim]")
+                    # Find the config trace in the list and update it
+                    traces_list = all_traces[composite_key]
+                    for i, original_trace in enumerate(traces_list):
+                        if original_trace.source == VariableSourceType.CONFIG_FILE and task.variable in result.config_values:
+                            # Create updated trace with fetched value
+                            updated_trace = VariableTrace(
+                                function=original_trace.function,
+                                variable=original_trace.variable,
+                                source=original_trace.source,
+                                value=result.config_values[task.variable],
+                                source_details=original_trace.source_details,
+                                confidence=original_trace.confidence,
+                                trace_path=original_trace.trace_path
+                            )
+                            traces_list[i] = updated_trace
+                            console.print(f"[dim]    ✓ Updated {task.variable} = {updated_trace.value}[/dim]")
 
             state_update = {
                 "variable_traces": all_traces,
@@ -568,8 +660,10 @@ async def binary_analysis_sequential(
 
     console.print(f"[cyan]🔄 Analyzing {len(cross_binary_tasks)} caller binaries sequentially[/cyan]")
 
-    # Get existing traces
-    all_traces: Dict[str, VariableTrace] = state.get("variable_traces", {}).copy()
+    # Get existing traces (deep copy lists)
+    all_traces: Dict[str, List[VariableTrace]] = {}
+    for key, value in state.get("variable_traces", {}).items():
+        all_traces[key] = value.copy() if isinstance(value, list) else [value]
 
     for task in cross_binary_tasks:
         binary_path = task["binary_path"]
@@ -608,7 +702,9 @@ async def binary_analysis_sequential(
             # Store traces using binary-qualified keys: "{binary_path}:{function}:{variable}"
             for trace in result.traces:
                 composite_key = f"{binary_path}:{trace.function}:{trace.variable}"
-                all_traces[composite_key] = trace
+                if composite_key not in all_traces:
+                    all_traces[composite_key] = []
+                all_traces[composite_key].append(trace)
 
             console.print(f"[green]  ✓ {binary_path}: {len(result.traces)} traces[/green]")
 
@@ -663,21 +759,25 @@ async def synthesis_node(
     # Separate main binary traces from cross-binary traces based on key format
     # Main binary: "function:variable"
     # Cross-binary: "{binary_path}:{function}:{variable}"
+    # Note: Each key now maps to a LIST of traces (multi-source support)
     main_traces = {}
     cross_binary_by_path = {}
 
-    for composite_key, trace in variable_traces.items():
+    for composite_key, traces_value in variable_traces.items():
+        # Ensure traces_value is a list (backwards compatibility)
+        traces_list = traces_value if isinstance(traces_value, list) else [traces_value]
+
         parts = composite_key.split(":")
         if len(parts) == 2:
             # Main binary trace
-            main_traces[composite_key] = trace
+            main_traces[composite_key] = traces_list
         elif len(parts) >= 3:
             # Cross-binary trace: first part is binary path
             binary_path = parts[0]
             trace_key = ":".join(parts[1:])  # "function:variable"
             if binary_path not in cross_binary_by_path:
                 cross_binary_by_path[binary_path] = {}
-            cross_binary_by_path[binary_path][trace_key] = trace
+            cross_binary_by_path[binary_path][trace_key] = traces_list
 
     # Build report sections
     report_lines = []
@@ -715,35 +815,69 @@ async def synthesis_node(
                 # Look up trace using composite key "function:variable"
                 composite_key = f"{cond.function}:{cond.variable}"
                 if composite_key in main_traces:
-                    trace = main_traces[composite_key]
-                    report_lines.append(f"    Source: {trace.source.value}")
+                    traces_list = main_traces[composite_key]
 
-                    # Show detailed source information from typed details
-                    if isinstance(trace.source_details, ConstantDetails):
-                        if trace.source_details.constant_name:
-                            report_lines.append(f"    Details: Constant {trace.source_details.constant_name} = {trace.source_details.constant_value}")
-                    elif isinstance(trace.source_details, ConfigFileDetails):
-                        details_str = f"    Details: Config file {trace.source_details.config_path}"
-                        if trace.source_details.config_key:
-                            details_str += f" (key: {trace.source_details.config_key})"
-                        report_lines.append(details_str)
-                    elif isinstance(trace.source_details, FunctionParameterDetails):
-                        report_lines.append(f"    Details: External call to {trace.source_details.external_function} (parameter: {trace.source_details.parameter_name})")
-                    elif isinstance(trace.source_details, EnvironmentVariableDetails):
-                        report_lines.append(f"    Details: Environment variable {trace.source_details.env_var_name}")
-                    elif isinstance(trace.source_details, CommandLineArgDetails):
-                        details_str = "    Details: Command-line argument"
-                        if trace.source_details.arg_name:
-                            details_str += f" {trace.source_details.arg_name}"
-                        report_lines.append(details_str)
+                    # Handle single vs multiple sources
+                    if len(traces_list) == 1:
+                        # Single source - existing format
+                        trace = traces_list[0]
+                        report_lines.append(f"    Source: {trace.source.value}")
 
-                    if trace.value:
-                        report_lines.append(f"    Value: {trace.value}")
-                        # Apply security mapping
-                        if trace.value in cond.security_mapping:
-                            outcome = cond.security_mapping[trace.value]
-                            report_lines.append(f"    Outcome: {outcome}")
-                    report_lines.append(f"    Trace: {trace.trace_path}")
+                        # Show detailed source information from typed details
+                        if isinstance(trace.source_details, ConstantDetails):
+                            if trace.source_details.constant_name:
+                                report_lines.append(f"    Details: Constant {trace.source_details.constant_name} = {trace.source_details.constant_value}")
+                        elif isinstance(trace.source_details, ConfigFileDetails):
+                            details_str = f"    Details: Config file {trace.source_details.config_path}"
+                            if trace.source_details.config_key:
+                                details_str += f" (key: {trace.source_details.config_key})"
+                            report_lines.append(details_str)
+                        elif isinstance(trace.source_details, FunctionParameterDetails):
+                            report_lines.append(f"    Details: External call to {trace.source_details.external_function} (parameter: {trace.source_details.parameter_name})")
+                        elif isinstance(trace.source_details, EnvironmentVariableDetails):
+                            report_lines.append(f"    Details: Environment variable {trace.source_details.env_var_name}")
+                        elif isinstance(trace.source_details, CommandLineArgDetails):
+                            details_str = "    Details: Command-line argument"
+                            if trace.source_details.arg_name:
+                                details_str += f" {trace.source_details.arg_name}"
+                            report_lines.append(details_str)
+
+                        if trace.value:
+                            report_lines.append(f"    Value: {trace.value}")
+                            # Apply security mapping
+                            if trace.value in cond.security_mapping:
+                                outcome = cond.security_mapping[trace.value]
+                                report_lines.append(f"    Outcome: {outcome}")
+                        report_lines.append(f"    Trace: {trace.trace_path}")
+
+                    else:
+                        # Multiple sources - show all
+                        report_lines.append(f"    ⚠️  Variable computed from {len(traces_list)} sources:")
+                        for i, trace in enumerate(traces_list, 1):
+                            report_lines.append(f"      Source {i}: {trace.source.value}")
+
+                            # Show details for each source
+                            if isinstance(trace.source_details, ConfigFileDetails):
+                                details_str = f"        Config: {trace.source_details.config_path}"
+                                if trace.source_details.config_key:
+                                    details_str += f" (key: {trace.source_details.config_key})"
+                                report_lines.append(details_str)
+                            elif isinstance(trace.source_details, CommandLineArgDetails):
+                                details_str = "        CLI Arg:"
+                                if trace.source_details.arg_name:
+                                    details_str += f" {trace.source_details.arg_name}"
+                                report_lines.append(details_str)
+                            elif isinstance(trace.source_details, ConstantDetails):
+                                report_lines.append(f"        Constant: {trace.source_details.constant_value}")
+
+                            if trace.value:
+                                report_lines.append(f"        Value: {trace.value}")
+                                # Apply security mapping
+                                if trace.value in cond.security_mapping:
+                                    outcome = cond.security_mapping[trace.value]
+                                    report_lines.append(f"        → Outcome: {outcome}")
+
+                            report_lines.append(f"        Trace: {trace.trace_path}")
                 else:
                     report_lines.append(f"    [No trace available]")
 
@@ -758,11 +892,12 @@ async def synthesis_node(
 
         for binary_path, traces in cross_binary_by_path.items():
             report_lines.append(f"Binary: {binary_path}")
-            for trace_key, trace in traces.items():
-                # trace_key is "function:variable"
-                report_lines.append(f"  - {trace.variable} in {trace.function}: {trace.source.value}")
-                if trace.value:
-                    report_lines.append(f"    Value: {trace.value}")
+            for trace_key, traces_list in traces.items():
+                # trace_key is "function:variable", traces_list is List[VariableTrace]
+                for trace in traces_list:
+                    report_lines.append(f"  - {trace.variable} in {trace.function}: {trace.source.value}")
+                    if trace.value:
+                        report_lines.append(f"    Value: {trace.value}")
             report_lines.append("")
 
     final_report = "\n".join(report_lines)
