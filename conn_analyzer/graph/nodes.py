@@ -305,7 +305,6 @@ async def dataflow_analysis_node(
                         "variable": parameter_name,
                         "function": function_name,
                         "function_address": None,  # External function address unknown
-                        # NOTE: might no longer useful.
                         "security_mapping": security_mapping,  # Preserve security mapping
                     }]
 
@@ -313,12 +312,12 @@ async def dataflow_analysis_node(
                     caller_discovery_task = DataflowTask(
                         type="needs_caller_discovery",
                         target=function_name,
-                        variables=variables,  # Same variables to trace in callers
+                        variables=new_variables,  # New variables for external function parameter
                         binary_path=None,
-                        context=f"Find callers of {function_name} for variable {trace.variable}"
+                        context=f"Find callers of {function_name} and trace parameter {parameter_name}"
                     )
                     new_dataflow_tasks.append(caller_discovery_task)
-                    console.print(f"[dim]    → Cross-binary discovery needed for function '{function_name}'[/dim]")
+                    console.print(f"[dim]    → Cross-binary discovery needed for function '{function_name}', parameter '{parameter_name}'[/dim]")
                 else:
                     console.print(f"[yellow]⚠ Invalid source_details type for FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: {type(trace.source_details)}[/yellow]")
 
