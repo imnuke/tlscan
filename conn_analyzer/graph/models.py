@@ -24,7 +24,7 @@ class RuleResultStatus(str, Enum):
 class RuleResolvingStatus(str, Enum):
     """Status of rule resolution during analysis."""
 
-    UNDETERMINED = "undetermined"
+    UNRESOLVED = "unresolved"
     RESOLVED = "resolved"
     CANNOT_RESOLVE = "cannot_resolve"
 
@@ -103,8 +103,8 @@ class RuleResult(BaseModel):
     )
 
     resolving_status: RuleResolvingStatus = Field(
-        RuleResolvingStatus.UNDETERMINED,
-        description="Status of rule resolution during analysis: undetermined/resolved/cannot_resolve"
+        RuleResolvingStatus.UNRESOLVED,
+        description="Status of rule resolution during analysis: unresolved/resolved/cannot_resolve"
     )
 
     evidence: str = Field(
