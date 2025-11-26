@@ -233,7 +233,9 @@ async def dataflow_analysis_node(
     new_dataflow_tasks: List[DataflowTask] = []
     config_fetch_tasks: List[ConfigFetchTask] = []
 
-    for task in pending_tasks:
+    total_tasks = len(pending_tasks)
+
+    for task_idx, task in enumerate(pending_tasks):
         task_type = task["type"]
         target = task["target"]
         variables = task["variables"]
@@ -261,11 +263,17 @@ async def dataflow_analysis_node(
         request = f"Trace the following variables:\n{variables_desc}"
         messages = [HumanMessage(content=request)]
 
-        # Execute dataflow agent
+        # Track traces before this task
+        traces_before = set(all_traces.keys())
+        config_tasks_before = len(config_fetch_tasks)
+        dataflow_tasks_before = len(new_dataflow_tasks)
+
+        # Execute dataflow agent with task index
+        agent_name_with_progress = f"Dataflow Agent ({task_idx + 1}/{total_tasks})"
         result: DataflowAnalysisOutput = await stream_and_log_agent(
             agent=agent,
             messages=messages,
-            agent_name="Dataflow Agent",
+            agent_name=agent_name_with_progress,
             agent_emoji="🔍",
             output_model=DataflowAnalysisOutput
         )
@@ -377,6 +385,25 @@ async def dataflow_analysis_node(
                 else:
                     console.print(f"[yellow]⚠ Invalid source_details type for COMMAND_LINE_ARG: {type(trace.source_details)}[/yellow]")
 
+        # Log state changes for this individual task
+        traces_after = set(all_traces.keys())
+        new_traces = {k: all_traces[k] for k in traces_after - traces_before}
+        new_config_tasks_count = len(config_fetch_tasks) - config_tasks_before
+        new_dataflow_tasks_count = len(new_dataflow_tasks) - dataflow_tasks_before
+
+        # Build state update for this task only
+        task_state_update = {}
+        if new_traces:
+            task_state_update["variable_traces"] = new_traces
+        if new_dataflow_tasks_count > 0:
+            task_state_update["pending_dataflow_tasks"] = new_dataflow_tasks[dataflow_tasks_before:]
+        if new_config_tasks_count > 0:
+            task_state_update["pending_config_fetch_tasks"] = config_fetch_tasks[config_tasks_before:]
+
+        # Log individual task changes
+        if task_state_update:
+            log_agent_state(agent_name_with_progress, state, changes=task_state_update)
+
     console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces[/green]")
 
     # Determine next phase
@@ -392,8 +419,7 @@ async def dataflow_analysis_node(
         "current_phase": next_phase,
     }
 
-    # Log state after agent execution with changes
-    log_agent_state("Dataflow Agent", state, changes=state_update)
+    # Note: Individual task state changes are logged inside the loop
     return state_update
 
 
