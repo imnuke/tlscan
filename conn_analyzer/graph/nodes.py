@@ -217,7 +217,7 @@ def create_follow_up_tasks_from_trace(
                 pass
 
         if config_details:
-            config_reference = config_details.config_path
+            config_reference = config_details.config_file or "unknown_config_file"
             if config_details.config_key:
                 config_reference = f"{config_reference} (key: {config_details.config_key})"
 

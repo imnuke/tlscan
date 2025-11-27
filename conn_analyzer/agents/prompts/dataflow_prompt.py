@@ -30,8 +30,8 @@ For CONSTANT:
 For CONFIG_FILE:
   "source_details": {
     "source_type": "config_file",
-    "config_path": "/etc/ssl.conf",
-    "config_key": "CERTVERIFY"  // optional
+    "config_file": "/etc/upsmon.conf",  // File path, filename, or any clue (e.g., "upsmon.conf", "/etc/config/ups.conf")
+    "config_key": "CERTVERIFY"  // optional - key name in config
   }
 
 For ENVIRONMENT_VARIABLE:
@@ -73,9 +73,9 @@ Variable Sources:
 When a variable is computed from MULTIPLE sources (e.g., config file + CLI args), create SEPARATE VariableTrace objects for each contributing source:
 
 Example: parameter a4 = (FORCESSL << 4) | (CLI_arg << 2) | CERTVERIFY
-- Trace 1: {variable: "a4", source: "CONFIG_FILE", source_details: {config_key: "FORCESSL"}, trace_path: "Bit 4 set when FORCESSL=1 in /etc/config"}
+- Trace 1: {variable: "a4", source: "CONFIG_FILE", source_details: {config_file: "/etc/config/ups.conf", config_key: "FORCESSL"}, trace_path: "Bit 4 set when FORCESSL=1 in /etc/config/ups.conf"}
 - Trace 2: {variable: "a4", source: "COMMAND_LINE_ARG", source_details: {arg_name: "-4/-6"}, trace_path: "Bits 2-3 from IPv4/IPv6 CLI option"}
-- Trace 3: {variable: "a4", source: "CONFIG_FILE", source_details: {config_key: "CERTVERIFY"}, trace_path: "Bit 0 set when CERTVERIFY=1 in /etc/config"}
+- Trace 3: {variable: "a4", source: "CONFIG_FILE", source_details: {config_file: "/etc/config/ups.conf", config_key: "CERTVERIFY"}, trace_path: "Bit 0 set when CERTVERIFY=1 in /etc/config/ups.conf"}
 
 Each trace_path should explain:
 1. How that specific source contributes to the final value
@@ -83,6 +83,14 @@ Each trace_path should explain:
 3. What the source controls (e.g., "enables SSL", "sets IP version")
 
 DO NOT report UNKNOWN for multi-source variables - decompose them!
+
+**For CONFIG_FILE sources - provide ANY clues you have:**
+- If you know the full path: "config_file": "/etc/upsmon.conf"
+- If you only know the filename: "config_file": "upsmon.conf"
+- If you know partial path: "config_file": "config/ups.conf"
+- If completely unknown: "config_file": "unknown"
+
+Firmware agent will search for the file using these clues + config_key.
 
 Tracing Workflow:
 1. Use IDA tools: decompile_function, get_callers, get_xrefs_to

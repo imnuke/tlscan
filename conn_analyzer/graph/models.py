@@ -198,8 +198,16 @@ class ConfigFileDetails(BaseModel):
     Represents a variable whose value comes from a configuration file.
     """
     source_type: Literal["config_file"] = "config_file"
-    config_path: str = Field(
-        description="Path to the configuration file (e.g., '/etc/ssl.conf')"
+    config_file: Optional[str] = Field(
+        None,
+        description=(
+            "Config file identifier - can be:\n"
+            "  - Full path: '/etc/upsmon.conf'\n"
+            "  - Filename only: 'upsmon.conf'\n"
+            "  - Partial path: 'config/ups.conf'\n"
+            "  - Any identifiable clue\n"
+            "Provide ANY information you have - firmware agent will search for it."
+        )
     )
     config_key: Optional[str] = Field(
         None,
