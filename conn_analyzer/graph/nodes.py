@@ -183,6 +183,131 @@ async def ssl_analysis_node(
 
 
 # ============================================================================
+# Helper: Task Creation from Traces
+# ============================================================================
+
+def create_follow_up_tasks_from_trace(
+    trace: VariableTrace,
+    composite_key: str,
+    variables: List[Dict[str, Any]]
+) -> tuple[List[DataflowTask], List[ConfigFetchTask]]:
+    """Extract config/script/cross-binary tasks from a single trace.
+
+    Args:
+        trace: The variable trace to process
+        composite_key: Composite key (e.g., "binary:function:variable")
+        variables: Original variables list for security_mapping lookup
+
+    Returns:
+        (new_dataflow_tasks, config_fetch_tasks)
+    """
+    new_dataflow_tasks = []
+    config_fetch_tasks = []
+
+    # Check if this trace needs config fetching
+    if trace.source == VariableSourceType.CONFIG_FILE:
+        # Extract config path (handle both Pydantic model and dict)
+        config_details = None
+        if isinstance(trace.source_details, ConfigFileDetails):
+            config_details = trace.source_details
+        elif isinstance(trace.source_details, dict):
+            try:
+                config_details = ConfigFileDetails(**trace.source_details)
+            except Exception:
+                pass
+
+        if config_details:
+            config_reference = config_details.config_path
+            if config_details.config_key:
+                config_reference = f"{config_reference} (key: {config_details.config_key})"
+
+            config_task = ConfigFetchTask(
+                variable=trace.variable,
+                function=trace.function,
+                config_reference=config_reference,
+                trace_details=trace.trace_path
+            )
+            config_fetch_tasks.append(config_task)
+
+    # Check if this trace comes from command-line arguments
+    elif trace.source == VariableSourceType.COMMAND_LINE_ARG:
+        # Extract CLI arg details (handle both Pydantic model and dict)
+        cli_details = None
+        if isinstance(trace.source_details, CommandLineArgDetails):
+            cli_details = trace.source_details
+        elif isinstance(trace.source_details, dict):
+            try:
+                cli_details = CommandLineArgDetails(**trace.source_details)
+            except Exception:
+                pass
+
+        if cli_details:
+            # Get binary path from composite_key: "binary_path:function:variable"
+            key_parts = composite_key.split(":")
+            if len(key_parts) >= 3:
+                binary_path = ":".join(key_parts[:-2])
+            else:
+                binary_path = None
+
+            arg_name = cli_details.arg_name or "CLI argument"
+
+            # Find the original variable's security_mapping
+            original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
+            security_mapping = original_var.get("security_mapping", {}) if original_var else {}
+
+            script_discovery_task = DataflowTask(
+                type="needs_script_discovery",
+                target=binary_path if binary_path else "unknown",
+                variables=[{
+                    "variable": trace.variable,
+                    "function": trace.function,
+                    "function_address": None,
+                    "security_mapping": security_mapping,
+                    "cli_arg_name": arg_name,
+                }],
+                binary_path=None,
+                context=f"Find scripts/binaries that invoke this binary and extract CLI argument: {arg_name}"
+            )
+            new_dataflow_tasks.append(script_discovery_task)
+
+    # Check for further cross-binary calls
+    elif trace.source == VariableSourceType.FUNCTION_PARAMETER_FROM_EXTERNAL_CALL:
+        # Create needs_caller_discovery task
+        param_details = None
+        if isinstance(trace.source_details, FunctionParameterDetails):
+            param_details = trace.source_details
+        elif isinstance(trace.source_details, dict):
+            try:
+                param_details = FunctionParameterDetails(**trace.source_details)
+            except Exception:
+                pass
+
+        if param_details:
+            function_name = param_details.external_function
+            parameter_name = param_details.parameter_name
+
+            # Find the original variable's security_mapping
+            original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
+            security_mapping = original_var.get("security_mapping", {}) if original_var else {}
+
+            caller_discovery_task = DataflowTask(
+                type="needs_caller_discovery",
+                target=function_name,
+                variables=[{
+                    "variable": parameter_name,
+                    "function": function_name,
+                    "function_address": None,
+                    "security_mapping": security_mapping,
+                }],
+                binary_path=None,
+                context=f"Find callers of {function_name} and trace parameter {parameter_name}"
+            )
+            new_dataflow_tasks.append(caller_discovery_task)
+
+    return new_dataflow_tasks, config_fetch_tasks
+
+
+# ============================================================================
 # Node: Dataflow Analysis
 # ============================================================================
 

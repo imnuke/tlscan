@@ -146,8 +146,15 @@ def create_analysis_graph(
             }
         )
 
-        # After sequential binary analysis → synthesis
-        graph.add_edge("binary_analysis_sequential", "synthesis")
+        # After sequential binary analysis → conditional routing (check for new tasks)
+        graph.add_conditional_edges(
+            "binary_analysis_sequential",
+            routing.route_after_cross_binary,
+            {
+                "firmware_explore": "firmware_explore",
+                "synthesis": "synthesis",
+            }
+        )
 
     # After synthesis → end
     graph.add_conditional_edges(

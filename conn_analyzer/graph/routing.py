@@ -103,6 +103,51 @@ def route_after_firmware(
         return "synthesis"
 
 
+def route_after_cross_binary(
+    state: AnalysisState
+) -> Literal["firmware_explore", "synthesis"]:
+    """Route after cross-binary analysis completes.
+
+    Checks if cross-binary traces created new tasks:
+    - Config fetch tasks → firmware_explore
+    - Caller discovery tasks → firmware_explore
+    - Script discovery tasks → firmware_explore
+    - Otherwise → synthesis
+
+    Args:
+        state: Current analysis state
+
+    Returns:
+        Next node: "firmware_explore" or "synthesis"
+    """
+    from rich.console import Console
+    console = Console()
+
+    pending_tasks = state.get("pending_dataflow_tasks", [])
+    config_tasks = state.get("pending_config_fetch_tasks", [])
+
+    console.print()
+    console.print(f"[cyan]🔀 Routing After Cross-Binary Analysis:[/cyan]")
+    console.print(f"   - pending_dataflow_tasks: {len(pending_tasks)}")
+    console.print(f"   - pending_config_fetch_tasks: {len(config_tasks)}")
+
+    # Check for caller discovery or script discovery tasks
+    needs_firmware = any(
+        task.get("type") in ["needs_caller_discovery", "needs_script_discovery"]
+        for task in pending_tasks
+    )
+
+    if needs_firmware or config_tasks:
+        console.print(f"[green]   → Routing to firmware_explore (new tasks found)[/green]")
+        console.print()
+        return "firmware_explore"
+
+    # Otherwise, go to synthesis
+    console.print(f"[yellow]   → Routing to synthesis (no new tasks)[/yellow]")
+    console.print()
+    return "synthesis"
+
+
 def route_from_synthesis(
     state: AnalysisState
 ) -> Literal["__end__"]:
