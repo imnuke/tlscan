@@ -400,11 +400,12 @@ class FirmwareSearchResult(BaseModel):
         description="Whether the search/fetch was successful"
     )
 
-    binaries: List[str] = Field(
+    executables: List[str] = Field(
         default_factory=list,
         description=(
-            "List of binary paths found (for cross-binary analysis). "
-            "Example: ['/usr/bin/app', '/lib/libcustom.so']"
+            "List of executable paths found (binaries, scripts, libraries). "
+            "Used for cross-binary analysis and script discovery. "
+            "Example: ['/usr/bin/app', '/etc/init.d/startup.sh', '/lib/libcustom.so']"
         )
     )
 

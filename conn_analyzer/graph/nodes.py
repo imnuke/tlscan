@@ -610,10 +610,10 @@ async def firmware_explore_node(
         # Remove the caller discovery task from pending tasks
         remaining_tasks = [t for t in pending_tasks if t.get("type") != "needs_caller_discovery" or t != task]
 
-        if result.found and result.binaries:
-            console.print(f"[green]✓ Found {len(result.binaries)} caller binaries[/green]")
+        if result.found and result.executables:
+            console.print(f"[green]✓ Found {len(result.executables)} caller binaries[/green]")
             # Create new dataflow tasks for each caller binary
-            for binary_path in result.binaries:
+            for binary_path in result.executables:
                 binary_task = DataflowTask(
                     type="binary",
                     target=binary_path,
@@ -667,13 +667,13 @@ async def firmware_explore_node(
         # Remove the script discovery task from pending tasks
         remaining_tasks = [t for t in pending_tasks if t.get("type") != "needs_script_discovery" or t != task]
 
-        if result.found and result.scripts:
-            console.print(f"[green]✓ Found {len(result.scripts)} startup scripts[/green]")
+        if result.found and result.executables:
+            console.print(f"[green]✓ Found {len(result.executables)} startup scripts/binaries[/green]")
             # For now, just report the findings (future: could parse scripts to extract CLI args)
             # Store script findings for synthesis to report
             state_update = {
                 "pending_dataflow_tasks": remaining_tasks,
-                "script_findings": result.scripts,
+                "script_findings": result.executables,
                 "firmware_details": result.details,
                 "current_phase": AnalysisPhase.SYNTHESIS,
             }

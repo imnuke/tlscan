@@ -11,14 +11,14 @@ Search files, find binaries, read configs, and output JSON matching this schema:
 
 {{
   "found": true|false,
-  "binaries": ["path/to/binary1", "path/to/binary2"],
+  "executables": ["path/to/binary1", "path/to/script2"],
   "config_values": {{"ssl_verify": "1", "other_key": "value"}},
   "script_content": null|"script text",
   "details": "detailed explanation of findings"
 }}
 
 Use Cases:
-1. Cross-binary: Find binaries calling a function → populate "binaries"
+1. Cross-binary: Find binaries calling a function → populate "executables"
 2. Config fetch: Get config value → populate "config_values"
 3. Script reading: Read script → populate "script_content"
 4. Env var search: Find where env var is set → populate "config_values"
