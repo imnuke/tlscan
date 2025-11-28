@@ -189,6 +189,10 @@ class AgentFactory:
             Agent that returns FirmwareSearchResult Pydantic model
         """
         from conn_analyzer.agents.prompts.firmware_prompt import get_firmware_system_prompt
+        from conn_analyzer.static_analysis.tool_middleware import wrap_all_tools
+
+        # Wrap all tools with token limit middleware (10K token limit per tool call)
+        wrapped_tools = wrap_all_tools(firmware_tools, max_tokens=5000)
 
         system_prompt = get_firmware_system_prompt(firmware_path)
 
@@ -199,13 +203,13 @@ class AgentFactory:
         llm_with_temp = self._llm.bind(temperature=temperature)
 
         # Prepare LLM for sequential tool calling (prevents SSE timeouts)
-        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, firmware_tools)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, wrapped_tools)
 
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches FirmwareSearchResult schema
         agent = create_agent(
             model=llm_with_tools,
-            tools=firmware_tools,
+            tools=wrapped_tools,
             middleware=[handle_tool_errors],
             system_prompt=system_prompt
         )

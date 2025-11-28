@@ -53,6 +53,9 @@ def search_files_by_name(pattern: str, max_results: int = 50) -> str:
     """
     Search for files by name pattern in firmware filesystem (fast search using fd).
 
+    ⚠️ WARNING: Avoid overly broad patterns like "*" or single characters.
+    Overly broad searches may return thousands of results and fail.
+
     Use this to find files matching a name pattern, such as:
     - Configuration files: "*.conf", "ssl.conf", "openssl.cnf"
     - Scripts: "*.sh", "init.d/*", "startup*"
@@ -60,15 +63,17 @@ def search_files_by_name(pattern: str, max_results: int = 50) -> str:
 
     Args:
         pattern: Filename pattern (glob or regex). Examples: "*.conf", "ssl", "lib*.so"
+                 MUST be specific - avoid patterns like "*" that match everything
         max_results: Maximum number of results to return (default: 50)
 
     Returns:
         List of matching file paths (relative to firmware root), one per line
 
     Examples:
-        search_files_by_name("*.conf") - Find all .conf files
-        search_files_by_name("libssl") - Find files with "libssl" in name
-        search_files_by_name("startup") - Find startup scripts
+        search_files_by_name("*.conf") - Find all .conf files (GOOD)
+        search_files_by_name("*upsmon*.conf") - Find upsmon config files (GOOD)
+        search_files_by_name("libupsclient*") - Find upsclient library files (GOOD)
+        search_files_by_name("*") - Matches everything (BAD - too broad)
     """
     try:
         # Use fd for fast file searching
@@ -115,23 +120,34 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
     """
     Search for files containing specific text or regex pattern (fast search using ripgrep).
 
+    ⚠️ WARNING: Patterns must be SPECIFIC library/function/daemon names.
+    Generic words (like "ssl", "verify") or single characters will return
+    thousands of matches and fail. ALWAYS use file_pattern to restrict scope.
+
     Use this to find files containing:
-    - SSL/TLS keywords: "SSL_CTX_set_verify", "verify_mode", "CERT_NONE"
-    - Configuration options: "ssl_verify", "check_certificate"
-    - Function calls: "SSL_connect", "curl_easy_setopt"
+    - Specific daemon names: "upsmon", "httpd", "sshd"
+    - Specific library names: "upsclient", "libcurl", "openssl"
+    - Exact function names: "SSL_CTX_set_verify", "upscli_connect"
+    - Exact constant names: "CURLOPT_SSL_VERIFYHOST", "CERT_NONE"
 
     Args:
-        pattern: Text or regex to search for. Use regex for advanced patterns.
-        file_pattern: Optional glob to filter file types (e.g., "*.conf", "*.sh")
+        pattern: SPECIFIC identifier to search for (daemon/library/function/constant name).
+                 For numbers, add full context (e.g., "upsmon_port_3" not "3").
+        file_pattern: Optional glob to filter file types (e.g., "*.conf", "*.sh").
+                      STRONGLY RECOMMENDED to avoid excessive matches.
         max_results: Maximum number of matching lines to return (default: 100)
 
     Returns:
         Matching lines with file paths and line numbers (format: path:line:content)
 
     Examples:
-        search_files_by_content("SSL_CTX_set_verify") - Find SSL verification code
-        search_files_by_content("verify.*=.*0", "*.conf") - Find verify disabled in configs
-        search_files_by_content("curl_easy_setopt", "*.c") - Find curl options in C files
+        search_files_by_content("upsmon", file_pattern="*.conf") - GOOD (specific daemon + filtered)
+        search_files_by_content("upsclient") - GOOD (specific library name)
+        search_files_by_content("CURLOPT_SSL_VERIFYHOST") - GOOD (exact constant)
+        search_files_by_content("SSL_CTX_set_verify") - GOOD (exact function name)
+        search_files_by_content("ssl") - BAD (too generic, appears everywhere)
+        search_files_by_content("verify") - BAD (common word, too many matches)
+        search_files_by_content("4") - BAD (single digit, returns thousands of matches)
     """
     try:
         cmd = [

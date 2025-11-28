@@ -22,6 +22,7 @@ from rich.syntax import Syntax
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from conn_analyzer.static_analysis import firmware_tools
+from conn_analyzer.static_analysis.tool_middleware import wrap_tool_with_token_limit
 
 console = Console()
 
@@ -94,10 +95,15 @@ def main():
     # ============================================================================
     # EDIT TEST CALLS HERE
     # ============================================================================
-    tester.run_tool(
+    # Wrap tool with 10K token limit middleware
+    wrapped_tool = wrap_tool_with_token_limit(
         firmware_tools.search_files_by_content,
-        pattern="upscli_connect",
-        file_pattern="*"
+        max_tokens=5000
+    )
+
+    tester.run_tool(
+        wrapped_tool,
+        pattern="4",
     ) 
 
 
