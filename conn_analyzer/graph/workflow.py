@@ -142,6 +142,7 @@ def create_analysis_graph(
             routing.route_after_firmware,
             {
                 "binary_analysis_sequential": "binary_analysis_sequential",
+                "firmware_explore": "firmware_explore",  # Loop back for remaining tasks
                 "synthesis": "synthesis",
             }
         )

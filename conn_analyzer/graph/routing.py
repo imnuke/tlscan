@@ -77,30 +77,72 @@ def route_after_dataflow(
 
 def route_after_firmware(
     state: AnalysisState
-) -> Literal["binary_analysis_sequential", "synthesis"]:
+) -> Literal["binary_analysis_sequential", "firmware_explore", "synthesis"]:
     """Route after firmware exploration completes.
 
     Firmware exploration determines:
-    - If found binaries for cross-binary analysis (tasks with binary_path set) → sequential analysis
+    - If cross-binary tasks exist (tasks with binary_path set) → sequential analysis
+    - If discovery tasks remain (needs_caller_discovery, needs_script_discovery) → loop back
+    - If config fetch tasks remain → loop back
     - Otherwise → go to synthesis
 
     Args:
         state: Current analysis state
 
     Returns:
-        Next node: "binary_analysis_sequential" or "synthesis"
+        Next node: "binary_analysis_sequential", "firmware_explore", or "synthesis"
     """
-    pending_tasks = state.get("pending_dataflow_tasks", [])
+    from rich.console import Console
+    console = Console()
 
-    # Check if any tasks have binary_path set (indicates caller binaries were found)
+    pending_tasks = state.get("pending_dataflow_tasks", [])
+    config_tasks = state.get("pending_config_fetch_tasks", [])
+
+    # DEBUG: Log routing decision
+    console.print()
+    console.print(f"[cyan]🔀 Routing After Firmware Exploration:[/cyan]")
+    console.print(f"   - pending_dataflow_tasks: {len(pending_tasks)}")
+    console.print(f"   - pending_config_fetch_tasks: {len(config_tasks)}")
+
+    # Priority 1: Check for cross-binary tasks (analyze discovered binaries)
     has_cross_binary = any(
         task.get("binary_path") is not None for task in pending_tasks
     )
 
     if has_cross_binary:
+        cross_binary_count = sum(1 for t in pending_tasks if t.get("binary_path") is not None)
+        console.print(f"[green]   → Routing to binary_analysis_sequential ({cross_binary_count} cross-binary tasks)[/green]")
+        console.print()
         return "binary_analysis_sequential"
-    else:
-        return "synthesis"
+
+    # Priority 2: Check for remaining discovery tasks
+    has_caller_discovery = any(
+        task.get("type") == "needs_caller_discovery" for task in pending_tasks
+    )
+
+    has_script_discovery = any(
+        task.get("type") == "needs_script_discovery" for task in pending_tasks
+    )
+
+    if has_caller_discovery or has_script_discovery:
+        discovery_count = sum(
+            1 for t in pending_tasks
+            if t.get("type") in ["needs_caller_discovery", "needs_script_discovery"]
+        )
+        console.print(f"[green]   → Routing to firmware_explore ({discovery_count} discovery tasks remaining)[/green]")
+        console.print()
+        return "firmware_explore"
+
+    # Priority 3: Check for config fetch tasks
+    if config_tasks:
+        console.print(f"[green]   → Routing to firmware_explore ({len(config_tasks)} config fetch tasks)[/green]")
+        console.print()
+        return "firmware_explore"
+
+    # No pending tasks - proceed to synthesis
+    console.print(f"[yellow]   → Routing to synthesis (no pending tasks)[/yellow]")
+    console.print()
+    return "synthesis"
 
 
 def route_after_cross_binary(
