@@ -95,8 +95,9 @@ def main():
     # EDIT TEST CALLS HERE
     # ============================================================================
     tester.run_tool(
-        firmware_tools.find_function_references,
-        function_name="upscli_connect"
+        firmware_tools.search_files_by_content,
+        pattern="upscli_connect",
+        file_pattern="*"
     ) 
 
 

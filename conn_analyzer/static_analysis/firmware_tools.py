@@ -136,6 +136,7 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
     try:
         cmd = [
             "rg",
+            "--binary",  # Include binary files in search
             "--max-count", str(max_results), # Limit number of matches per file
             "--max-columns", "100", # Do not display long matched lines, like minified JS
             "--line-number",
@@ -173,6 +174,8 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
             "--glob", "!*.nam",
             "--glob", "!*.til",
             "--glob", "!*.sig",
+            # Exclude files produced by firmware extractors
+            "--glob", "!*.uncompressed",
             # Exclude language/localization files
             "--glob", "!*Danish*",
             "--glob", "!*Czech*",
