@@ -699,9 +699,7 @@ async def firmware_explore_node(
         config_requests = []
         for task in config_fetch_tasks:
             config_ref = task.config_reference or "configuration file"
-            config_requests.append(
-                f"  - Variable '{task.variable}' from {config_ref} (used in {task.function})"
-            )
+            config_requests.append(f"  - {config_ref}")
 
         request = (
             f"Search the firmware and extract the following configuration values:\n"
