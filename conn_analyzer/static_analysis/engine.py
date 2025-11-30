@@ -81,6 +81,8 @@ class StaticAnalysisEngine:
         """Normalize binary path to absolute path.
 
         Handles firmware-relative paths by resolving against firmware root.
+        Detects paths that look absolute but are actually firmware-relative
+        (e.g., /usr/bin/app is really firmware_root/usr/bin/app).
 
         Args:
             binary_path: Binary path (can be relative or absolute)
@@ -88,6 +90,14 @@ class StaticAnalysisEngine:
         Returns:
             Normalized absolute path
         """
+        # Strip leading slash if path doesn't exist as absolute but we have firmware_path
+        # This handles LLM returning "/usr/bin/app" when it means "usr/bin/app"
+        if self._firmware_path and binary_path.startswith('/'):
+            # Check if it exists as a true absolute path
+            if not os.path.exists(binary_path):
+                # Likely a firmware-relative path with leading slash
+                binary_path = binary_path.lstrip('/')
+
         if os.path.isabs(binary_path):
             return os.path.abspath(binary_path)
         elif self._firmware_path:

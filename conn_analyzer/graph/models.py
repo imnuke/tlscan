@@ -4,7 +4,7 @@ This module defines all structured output models that agents return.
 Using Pydantic ensures type safety and eliminates regex parsing.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal, Optional, List, Dict, Any, Union
 from enum import Enum
 
@@ -404,10 +404,19 @@ class FirmwareSearchResult(BaseModel):
         default_factory=list,
         description=(
             "List of executable paths found (binaries, scripts, libraries). "
+            "Paths MUST be relative to firmware root (no leading slash). "
             "Used for cross-binary analysis and script discovery. "
-            "Example: ['/usr/bin/app', '/etc/init.d/startup.sh', '/lib/libcustom.so']"
+            "Example: ['usr/bin/app', 'etc/init.d/startup.sh', 'lib/libcustom.so']"
         )
     )
+
+    @field_validator('executables', mode='before')
+    @classmethod
+    def normalize_executable_paths(cls, v):
+        """Strip leading slashes from executable paths to ensure firmware-relative paths."""
+        if not isinstance(v, list):
+            return v
+        return [path.lstrip('/') if isinstance(path, str) else path for path in v]
 
     config_values: Dict[str, str] = Field(
         default_factory=dict,
