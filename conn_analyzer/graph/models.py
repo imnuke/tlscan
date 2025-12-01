@@ -437,3 +437,16 @@ class FirmwareSearchResult(BaseModel):
             "Should include: what was searched, where it was found, any relevant context."
         )
     )
+
+    function_calls: Optional[Dict[str, List[str]]] = Field(
+        None,
+        description=(
+            "Mapping of function names to binaries that call them. "
+            "Key: function name (e.g., 'upscli_connect') "
+            "Value: list of binary paths relative to firmware root "
+            "Example: {'upscli_connect': ['usr/bin/upsmon', 'usr/bin/upsc'], "
+            "'upscli_tryconnect': []} "
+            "Enables precise variable assignment during cross-binary analysis. "
+            "If null/missing, falls back to assigning all variables to all binaries."
+        )
+    )

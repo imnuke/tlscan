@@ -8,7 +8,7 @@ This module implements all graph nodes with:
 """
 
 import time
-from typing import Dict, Any, List, Sequence
+from typing import Dict, Any, List, Sequence, Set
 from langchain_core.messages import HumanMessage
 
 from langgraph.types import Send
@@ -591,12 +591,21 @@ async def firmware_explore_node(
 
     if caller_discovery_tasks:
         # Find caller binaries for cross-binary analysis
-        task = caller_discovery_tasks[0]  # Process first task
-        function_name = task["target"]
+        # Extract all unique function names from all discovery tasks (deduplicate)
+        function_names = list(dict.fromkeys(task["target"] for task in caller_discovery_tasks))
 
-        console.print(f"[dim]  Finding binaries that call: {function_name}[/dim]")
+        console.print(f"[dim]  Finding binaries that call {len(function_names)} function(s): {', '.join(function_names)}[/dim]")
 
-        request = f"Find all binaries in firmware that call the function: {function_name}"
+        # Build batch request (backward compatible for single task)
+        if len(function_names) == 1:
+            request = f"Find all binaries in firmware that call the function: {function_names[0]}"
+        else:
+            functions_list = "\n".join([f"  - {fname}" for fname in function_names])
+            request = (
+                f"Find all binaries in firmware that call ANY of these functions:\n"
+                f"{functions_list}\n\n"
+                f"For each binary found, specify which function(s) it calls."
+            )
         messages = [HumanMessage(content=request)]
 
         result: FirmwareSearchResult = await stream_and_log_agent(
@@ -607,17 +616,62 @@ async def firmware_explore_node(
             output_model=FirmwareSearchResult
         )
 
-        # Remove the caller discovery task from pending tasks
-        remaining_tasks = [t for t in pending_tasks if t.get("type") != "needs_caller_discovery" or t != task]
+        # Remove ALL caller discovery tasks from pending
+        remaining_tasks = [t for t in pending_tasks if t.get("type") != "needs_caller_discovery"]
 
         if result.found and result.executables:
-            console.print(f"[green]✓ Found {len(result.executables)} caller binaries[/green]")
-            # Create new dataflow tasks for each caller binary
+            console.print(f"[green]✓ Found {len(result.executables)} caller binaries for {len(caller_discovery_tasks)} function(s)[/green]")
+
+            # Build reverse mapping: binary → functions it calls
+            binary_to_functions: Dict[str, Set[str]] = {}
+
+            if result.function_calls:
+                # Use structured mapping from firmware agent
+                console.print(f"[dim]  Using structured function_calls mapping[/dim]")
+                for function_name, binary_paths in result.function_calls.items():
+                    for binary_path in binary_paths:
+                        if binary_path not in binary_to_functions:
+                            binary_to_functions[binary_path] = set()
+                        binary_to_functions[binary_path].add(function_name)
+            else:
+                # Fallback: assume all binaries call all functions (backward compatibility)
+                console.print(f"[yellow]⚠ No function_calls mapping - assigning all variables to all binaries[/yellow]")
+                all_function_names = {task["target"] for task in caller_discovery_tasks}
+                for binary_path in result.executables:
+                    binary_to_functions[binary_path] = all_function_names
+
+            # Create function_to_variables mapping for efficient lookup
+            function_to_variables: Dict[str, List[Dict[str, Any]]] = {}
+            for task in caller_discovery_tasks:
+                function_name = task["target"]
+                function_to_variables[function_name] = task["variables"]
+
+            # Create cross-binary tasks with function-specific variables
             for binary_path in result.executables:
+                # Get functions this binary calls
+                functions_called = binary_to_functions.get(binary_path, set())
+
+                if not functions_called:
+                    console.print(f"[yellow]⚠ Binary {binary_path} has no function mapping - skipping[/yellow]")
+                    continue
+
+                # Aggregate variables ONLY from functions this binary calls
+                aggregated_variables = []
+                for function_name in functions_called:
+                    if function_name in function_to_variables:
+                        aggregated_variables.extend(function_to_variables[function_name])
+
+                if not aggregated_variables:
+                    console.print(f"[dim]  Binary {binary_path} calls {functions_called} but no variables to trace[/dim]")
+                    continue
+
+                # Log which functions and how many variables
+                console.print(f"[dim]  Binary {binary_path} calls: {', '.join(sorted(functions_called))} ({len(aggregated_variables)} variables)[/dim]")
+
                 binary_task = DataflowTask(
                     type="binary",
                     target=binary_path,
-                    variables=task["variables"],
+                    variables=aggregated_variables,
                     binary_path=binary_path,
                 )
                 remaining_tasks.append(binary_task)
@@ -631,7 +685,7 @@ async def firmware_explore_node(
             log_agent_state("Firmware Agent", state, changes=state_update)
             return state_update
         else:
-            console.print(f"[yellow]⚠ No caller binaries found for {function_name}[/yellow]")
+            console.print(f"[yellow]⚠ No caller binaries found for function(s): {', '.join(function_names)}[/yellow]")
             state_update = {
                 "pending_dataflow_tasks": remaining_tasks,
                 "firmware_details": result.details,

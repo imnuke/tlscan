@@ -12,6 +12,10 @@ Search files, find binaries, read configs, and output JSON matching this schema:
 {{
   "found": true|false,
   "executables": ["path/to/binary1", "path/to/script2"],
+  "function_calls": {{
+    "function_name1": ["binary1", "binary2"],
+    "function_name2": []
+  }},
   "config_values": {{"ssl_verify": "1", "other_key": "value"}},
   "script_content": null|"script text",
   "details": "detailed explanation of findings"
@@ -49,6 +53,10 @@ SEARCH EXAMPLES:
 
 Key Instructions:
 1. For cross-binary: use find_function_references to find callers, find_function_definition for implementation
+   - When searching for multiple functions, call find_function_references for EACH function separately
+   - Populate "function_calls" mapping: function_name → [binary_paths]
+   - Include ALL requested functions in mapping, even if empty list
+   - Example: {{"upscli_connect": ["usr/bin/app1"], "upscli_tryconnect": []}}
 2. For configs: read file, parse format (key=value, JSON, XML, YAML), extract value
 3. Provide detailed explanation in "details" field
 4. Output ONLY valid JSON matching the schema
