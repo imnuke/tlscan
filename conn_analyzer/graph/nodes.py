@@ -16,7 +16,8 @@ from langgraph.types import Send
 from conn_analyzer.graph.state import (
     AnalysisState,
     AnalysisPhase,
-    DataflowTask,
+    create_trace_key,
+    parse_trace_key,
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
@@ -27,6 +28,9 @@ from conn_analyzer.graph.models import (
     VariableTrace,
     RuleResult,
     ConfigFetchTask,
+    DataflowTask,
+    VariableSpec,
+    TaskType,
     VariableSourceType,
     FunctionParameterDetails,
     ConstantDetails,
@@ -145,20 +149,20 @@ async def ssl_analysis_node(
 
     for rule in result.rules:
         if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
-            # Extract variables from conditions
+            # Extract variables from conditions as VariableSpec objects
             variables = [
-                {
-                    "variable": cond.variable,
-                    "function": cond.function,
-                    "function_address": cond.function_address,
-                    "security_mapping": cond.security_mapping,
-                }
+                VariableSpec(
+                    variable=cond.variable,
+                    function=cond.function,
+                    function_address=cond.function_address,
+                    security_mapping=cond.security_mapping,
+                )
                 for cond in rule.conditions
             ]
 
             # Create dataflow task for binary analysis
             task = DataflowTask(
-                type="binary",
+                type=TaskType.BINARY,
                 target=binary_path,
                 variables=variables
             )
@@ -189,14 +193,14 @@ async def ssl_analysis_node(
 def create_follow_up_tasks_from_trace(
     trace: VariableTrace,
     composite_key: str,
-    variables: List[Dict[str, Any]]
+    variables: List[VariableSpec]
 ) -> tuple[List[DataflowTask], List[ConfigFetchTask]]:
     """Extract config/script/cross-binary tasks from a single trace.
 
     Args:
         trace: The variable trace to process
         composite_key: Composite key (e.g., "binary:function:variable")
-        variables: Original variables list for security_mapping lookup
+        variables: Original variables list (VariableSpec objects) for security_mapping lookup
 
     Returns:
         (new_dataflow_tasks, config_fetch_tasks)
@@ -256,15 +260,14 @@ def create_follow_up_tasks_from_trace(
             security_mapping = original_var.get("security_mapping", {}) if original_var else {}
 
             script_discovery_task = DataflowTask(
-                type="needs_script_discovery",
+                type=TaskType.NEEDS_SCRIPT_DISCOVERY,
                 target=binary_path if binary_path else "unknown",
-                variables=[{
-                    "variable": trace.variable,
-                    "function": trace.function,
-                    "function_address": None,
-                    "security_mapping": security_mapping,
-                    "cli_arg_name": arg_name,
-                }],
+                variables=[VariableSpec(
+                    variable=trace.variable,
+                    function=trace.function,
+                    function_address=None,
+                    security_mapping=security_mapping,
+                )],
                 binary_path=None,
                 context=f"Find scripts/binaries that invoke this binary and extract CLI argument: {arg_name}"
             )
@@ -291,14 +294,14 @@ def create_follow_up_tasks_from_trace(
             security_mapping = original_var.get("security_mapping", {}) if original_var else {}
 
             caller_discovery_task = DataflowTask(
-                type="needs_caller_discovery",
+                type=TaskType.NEEDS_CALLER_DISCOVERY,
                 target=function_name,
-                variables=[{
-                    "variable": parameter_name,
-                    "function": function_name,
-                    "function_address": None,
-                    "security_mapping": security_mapping,
-                }],
+                variables=[VariableSpec(
+                    variable=parameter_name,
+                    function=function_name,
+                    function_address=None,
+                    security_mapping=security_mapping,
+                )],
                 binary_path=None,
                 context=f"Find callers of {function_name} and trace parameter {parameter_name}"
             )
@@ -361,17 +364,17 @@ async def dataflow_analysis_node(
     total_tasks = len(pending_tasks)
 
     for task_idx, task in enumerate(pending_tasks):
-        task_type = task["type"]
-        target = task["target"]
-        variables = task["variables"]
+        task_type = task.type  # Use attribute access for Pydantic model
+        target = task.target
+        variables = task.variables
 
-        console.print(f"[dim]  Processing {task_type} task: {target} ({len(variables)} variables)[/dim]")
+        console.print(f"[dim]  Processing {task_type.value} task: {target} ({len(variables)} variables)[/dim]")
 
         # Get appropriate tools based on task type
-        if task_type == "binary":
+        if task_type == TaskType.BINARY:
             tools = await static_engine.get_tools(target)
             agent = agent_factory.create_dataflow_agent(tools=tools)
-        elif task_type == "script":
+        elif task_type == TaskType.SCRIPT:
             # For scripts, dataflow agent uses firmware tools to read script
             # NOTE: Passing firmware_tools seems not good.
             agent = agent_factory.create_dataflow_agent(tools=firmware_tools)
@@ -381,7 +384,7 @@ async def dataflow_analysis_node(
 
         # Build request with all variables for this task
         variables_desc = "\n".join([
-            f"  - Variable '{v['variable']}' in function '{v['function']}' at {v.get('function_address', 'unknown')}"
+            f"  - Variable '{v.variable}' in function '{v.function}' at {v.function_address or 'unknown'}"
             for v in variables
         ])
 
@@ -413,13 +416,13 @@ async def dataflow_analysis_node(
             # ??
 
             # Build composite key based on whether this is cross-binary analysis
-            binary_path = task.get("binary_path")
+            binary_path = task.binary_path  # Use attribute access for Pydantic model
             if binary_path:
                 # Cross-binary trace: "{binary_path}:{function}:{variable}"
-                composite_key = f"{binary_path}:{trace.function}:{trace.variable}"
+                composite_key = create_trace_key(trace.function, trace.variable, binary_path)
             else:
                 # Main binary trace: "function:variable"
-                composite_key = f"{trace.function}:{trace.variable}"
+                composite_key = create_trace_key(trace.function, trace.variable)
 
             # Store traces as list to support multiple sources per variable
             if composite_key not in all_traces:
@@ -453,21 +456,21 @@ async def dataflow_analysis_node(
                     parameter_name = trace.source_details.parameter_name
 
                     # Find the original variable's security_mapping to preserve it
-                    original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
-                    security_mapping = original_var.get("security_mapping", {}) if original_var else {}
+                    original_var = next((v for v in variables if v.variable == trace.variable and v.function == trace.function), None)
+                    security_mapping = original_var.security_mapping if (original_var and original_var.security_mapping) else {}
 
                     # Create NEW variables for the external function's parameter
                     # (NOT the original function's variable - that would confuse the next agent)
-                    new_variables = [{
-                        "variable": parameter_name,
-                        "function": function_name,
-                        "function_address": None,  # External function address unknown
-                        "security_mapping": security_mapping,  # Preserve security mapping
-                    }]
+                    new_variables = [VariableSpec(
+                        variable=parameter_name,
+                        function=function_name,
+                        function_address=None,  # External function address unknown
+                        security_mapping=security_mapping,  # Preserve security mapping
+                    )]
 
                     # Create a "needs_caller_discovery" task
                     caller_discovery_task = DataflowTask(
-                        type="needs_caller_discovery",
+                        type=TaskType.NEEDS_CALLER_DISCOVERY,
                         target=function_name,
                         variables=new_variables,  # New variables for external function parameter
                         binary_path=None,
@@ -485,21 +488,20 @@ async def dataflow_analysis_node(
                     arg_name = trace.source_details.arg_name or "CLI argument"
 
                     # Find the original variable's security_mapping
-                    original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
-                    security_mapping = original_var.get("security_mapping", {}) if original_var else {}
+                    original_var = next((v for v in variables if v.variable == trace.variable and v.function == trace.function), None)
+                    security_mapping = original_var.security_mapping if (original_var and original_var.security_mapping) else {}
 
                     # Create variables for CLI arg analysis in calling scripts/binaries
-                    cli_variables = [{
-                        "variable": trace.variable,
-                        "function": trace.function,
-                        "function_address": None,
-                        "security_mapping": security_mapping,
-                        "cli_arg_name": arg_name,  # Extra context for script analysis
-                    }]
+                    cli_variables = [VariableSpec(
+                        variable=trace.variable,
+                        function=trace.function,
+                        function_address=None,
+                        security_mapping=security_mapping,
+                    )]
 
                     # Create a "needs_script_discovery" task to find startup scripts/binaries
                     script_discovery_task = DataflowTask(
-                        type="needs_script_discovery",
+                        type=TaskType.NEEDS_SCRIPT_DISCOVERY,
                         target=binary_path,  # The binary being invoked
                         variables=cli_variables,
                         binary_path=None,
@@ -587,12 +589,12 @@ async def firmware_explore_node(
     config_fetch_tasks = state.get("pending_config_fetch_tasks", [])
 
     # Find tasks that need caller discovery
-    caller_discovery_tasks = [t for t in pending_tasks if t.get("type") == "needs_caller_discovery"]
+    caller_discovery_tasks = [t for t in pending_tasks if t.type == TaskType.NEEDS_CALLER_DISCOVERY]
 
     if caller_discovery_tasks:
         # Find caller binaries for cross-binary analysis
         # Extract all unique function names from all discovery tasks (deduplicate)
-        function_names = list(dict.fromkeys(task["target"] for task in caller_discovery_tasks))
+        function_names = list(dict.fromkeys(task.target for task in caller_discovery_tasks))  # Use attribute access
 
         console.print(f"[dim]  Finding binaries that call {len(function_names)} function(s): {', '.join(function_names)}[/dim]")
 
@@ -636,15 +638,15 @@ async def firmware_explore_node(
             else:
                 # Fallback: assume all binaries call all functions (backward compatibility)
                 console.print(f"[yellow]⚠ No function_calls mapping - assigning all variables to all binaries[/yellow]")
-                all_function_names = {task["target"] for task in caller_discovery_tasks}
+                all_function_names = {task.target for task in caller_discovery_tasks}  # Use attribute access
                 for binary_path in result.executables:
                     binary_to_functions[binary_path] = all_function_names
 
             # Create function_to_variables mapping for efficient lookup
-            function_to_variables: Dict[str, List[Dict[str, Any]]] = {}
+            function_to_variables: Dict[str, List[VariableSpec]] = {}
             for task in caller_discovery_tasks:
-                function_name = task["target"]
-                function_to_variables[function_name] = task["variables"]
+                function_name = task.target  # Use attribute access for Pydantic model
+                function_to_variables[function_name] = task.variables
 
             # Create cross-binary tasks with function-specific variables
             for binary_path in result.executables:
@@ -656,7 +658,7 @@ async def firmware_explore_node(
                     continue
 
                 # Aggregate variables ONLY from functions this binary calls
-                aggregated_variables = []
+                aggregated_variables: List[VariableSpec] = []
                 for function_name in functions_called:
                     if function_name in function_to_variables:
                         aggregated_variables.extend(function_to_variables[function_name])
@@ -669,7 +671,7 @@ async def firmware_explore_node(
                 console.print(f"[dim]  Binary {binary_path} calls: {', '.join(sorted(functions_called))} ({len(aggregated_variables)} variables)[/dim]")
 
                 binary_task = DataflowTask(
-                    type="binary",
+                    type=TaskType.BINARY,
                     target=binary_path,
                     variables=aggregated_variables,
                     binary_path=binary_path,
@@ -696,13 +698,13 @@ async def firmware_explore_node(
             return state_update
 
     # Find tasks that need script discovery (for CLI arguments)
-    script_discovery_tasks = [t for t in pending_tasks if t.get("type") == "needs_script_discovery"]
+    script_discovery_tasks = [t for t in pending_tasks if t.type == TaskType.NEEDS_SCRIPT_DISCOVERY]
 
     if script_discovery_tasks:
         # Find startup scripts/binaries that invoke the target binary
         task = script_discovery_tasks[0]  # Process first task
-        binary_target = task["target"]
-        context = task.get("context", "")
+        binary_target = task.target  # Use attribute access for Pydantic model
+        context = task.context or ""  # Use attribute access
 
         console.print(f"[dim]  Finding scripts/binaries that invoke: {binary_target}[/dim]")
         console.print(f"[dim]  Context: {context}[/dim]")
@@ -869,9 +871,9 @@ async def binary_analysis_sequential(
         all_traces[key] = value.copy() if isinstance(value, list) else [value]
 
     for task in cross_binary_tasks:
-        binary_path = task["binary_path"]
-        variables = task["variables"]
-        context = task.get("context", "")
+        binary_path = task.binary_path  # Use attribute access for Pydantic model
+        variables = task.variables
+        context = task.context or ""  # Use attribute access
 
         console.print(f"[dim]  Analyzing caller: {binary_path}[/dim]")
         console.print(f"[dim]  Context: {context}[/dim]")
@@ -886,7 +888,7 @@ async def binary_analysis_sequential(
             # Build request with specific variables to trace
             if variables:
                 variables_desc = "\n".join([
-                    f"  - Variable '{v['variable']}' in function '{v.get('function', 'unknown')}'"
+                    f"  - Variable '{v.variable}' in function '{v.function}'"
                     for v in variables
                 ])
                 request = f"{context}\n\nTrace the following variables:\n{variables_desc}"
@@ -904,7 +906,7 @@ async def binary_analysis_sequential(
 
             # Store traces using binary-qualified keys: "{binary_path}:{function}:{variable}"
             for trace in result.traces:
-                composite_key = f"{binary_path}:{trace.function}:{trace.variable}"
+                composite_key = create_trace_key(trace.function, trace.variable, binary_path)
                 if composite_key not in all_traces:
                     all_traces[composite_key] = []
                 all_traces[composite_key].append(trace)

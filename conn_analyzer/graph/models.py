@@ -49,6 +49,95 @@ class ExternalSourceType(str, Enum):
     CONFIG = "config"
 
 
+class TaskType(str, Enum):
+    """Type of dataflow analysis task."""
+
+    BINARY = "binary"
+    SCRIPT = "script"
+    CONFIG = "config"
+    NEEDS_CALLER_DISCOVERY = "needs_caller_discovery"
+    NEEDS_SCRIPT_DISCOVERY = "needs_script_discovery"
+
+
+# ============================================================================
+# Task Models
+# ============================================================================
+
+class VariableSpec(BaseModel):
+    """
+    Specification for a variable to trace in dataflow analysis.
+
+    Provides type-safe structure for variable tracing requests with all
+    necessary context (function, address, security mappings).
+    """
+
+    variable: str = Field(
+        description="Variable or parameter name to trace (e.g., 'verify_mode', 'v20')"
+    )
+
+    function: str = Field(
+        description="Function where variable is used (e.g., 'SSL_CTX_set_verify', 'sub_AB123')"
+    )
+
+    function_address: Optional[str] = Field(
+        None,
+        description="Hex address of function (e.g., '0xAB123') - optional but helpful for IDA analysis"
+    )
+
+    security_mapping: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Optional mapping of variable values to security outcomes. "
+            "Example: {'0': 'FAIL - disables verification', '1': 'PASS - enables verification'}"
+        )
+    )
+
+    parameter_name: Optional[str] = Field(
+        None,
+        description="Parameter name if tracing function parameter (e.g., 'mode', 'arg1')"
+    )
+
+
+class DataflowTask(BaseModel):
+    """
+    Task specification for dataflow analysis (Pydantic version).
+
+    Replaces the TypedDict version with full type safety and validation.
+    """
+
+    type: TaskType = Field(
+        description="Type of analysis to perform"
+    )
+
+    target: str = Field(
+        description=(
+            "Target for analysis: "
+            "- For 'binary'/'script'/'config': Path to file "
+            "- For 'needs_caller_discovery': Function name to find callers "
+            "- For 'needs_script_discovery': Binary path to find invoking scripts"
+        )
+    )
+
+    variables: List[VariableSpec] = Field(
+        default_factory=list,
+        description="List of variables to trace with their context"
+    )
+
+    binary_path: Optional[str] = Field(
+        None,
+        description=(
+            "Binary to analyze for cross-binary analysis. "
+            "None = main binary (current binary_path from state), "
+            "Set = cross-binary task (analyze different binary)"
+        )
+    )
+
+    context: Optional[str] = Field(
+        None,
+        description="Optional description for task context (e.g., 'traces call to init_ssl')"
+    )
+
+
 # ============================================================================
 # SSL Analysis Models
 # ============================================================================

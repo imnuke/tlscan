@@ -6,8 +6,14 @@ intermediate results.
 """
 
 from enum import Enum
-from typing import TypedDict, Optional, Dict, List, Set
-from conn_analyzer.graph.models import RuleResult, VariableTrace, ExternalValue, ConfigFetchTask
+from typing import TypedDict, Optional, Dict, List, Set, Tuple
+from conn_analyzer.graph.models import (
+    RuleResult,
+    VariableTrace,
+    ExternalValue,
+    ConfigFetchTask,
+    DataflowTask,
+)
 
 
 # ============================================================================
@@ -26,26 +32,60 @@ class AnalysisPhase(str, Enum):
 
 
 # ============================================================================
-# Task Definitions
+# Composite Key Helpers
 # ============================================================================
 
-class DataflowTask(TypedDict, total=False):
+def create_trace_key(function: str, variable: str, binary_path: Optional[str] = None) -> str:
     """
-    Task specification for dataflow analysis.
+    Create composite key for variable traces.
 
-    Attributes:
-        type: Type of analysis - "binary", "script", "config", or "needs_caller_discovery"
-        target: Path to binary, script, or config file, or function name for caller discovery
-        variables: List of variables to trace with their context
-        binary_path: Optional binary to analyze (None = main binary, set for cross-binary tasks)
-        context: Optional description for task context (e.g., "traces call to init_ssl")
+    Args:
+        function: Function name where variable is used
+        variable: Variable name to trace
+        binary_path: Optional binary path for cross-binary analysis
+
+    Returns:
+        Composite key in format:
+        - Main binary: "function:variable"
+        - Cross-binary: "binary_path:function:variable"
+
+    Examples:
+        >>> create_trace_key("SSL_CTX_set_verify", "mode")
+        "SSL_CTX_set_verify:mode"
+        >>> create_trace_key("init_ssl", "mode", "/usr/bin/app")
+        "/usr/bin/app:init_ssl:mode"
     """
+    if binary_path:
+        return f"{binary_path}:{function}:{variable}"
+    return f"{function}:{variable}"
 
-    type: str  # "binary" | "script" | "config" | "needs_caller_discovery"
-    target: str
-    variables: List[Dict[str, str]]  # [{"variable": "name", "function": "func", ...}]
-    binary_path: Optional[str]  # None for main binary, path for cross-binary analysis
-    context: Optional[str]  # Description of task context
+
+def parse_trace_key(key: str) -> Tuple[Optional[str], str, str]:
+    """
+    Parse composite key into components.
+
+    Args:
+        key: Composite key from create_trace_key()
+
+    Returns:
+        Tuple of (binary_path, function, variable)
+        - binary_path is None for main binary traces
+        - binary_path is set for cross-binary traces
+
+    Examples:
+        >>> parse_trace_key("SSL_CTX_set_verify:mode")
+        (None, "SSL_CTX_set_verify", "mode")
+        >>> parse_trace_key("/usr/bin/app:init_ssl:mode")
+        ("/usr/bin/app", "init_ssl", "mode")
+    """
+    parts = key.split(":")
+    if len(parts) == 2:
+        return None, parts[0], parts[1]
+    elif len(parts) >= 3:
+        # Handle cases where binary_path or function might contain colons
+        return parts[0], parts[1], ":".join(parts[2:])
+    else:
+        raise ValueError(f"Invalid trace key format: {key}")
 
 
 # ============================================================================
