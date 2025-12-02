@@ -1033,6 +1033,12 @@ async def synthesis_node(
     for rule_id, rule in rules.items():
         report_lines.append(f"Rule: {rule.rule_name}")
         report_lines.append(f"Status: {rule.result.value.upper()}")
+
+        # Show resolving status for CONDITIONAL rules
+        if rule.result == RuleResultStatus.CONDITIONAL:
+            status_symbol = "✓" if rule.resolving_status == RuleResolvingStatus.RESOLVED else "✗"
+            report_lines.append(f"Resolution: {status_symbol} {rule.resolving_status.value.upper()}")
+
         report_lines.append(f"Evidence: {rule.evidence}")
 
         # If conditional, show variable traces
@@ -1129,11 +1135,59 @@ async def synthesis_node(
                         report_lines.append(f"    Value: {trace.value}")
             report_lines.append("")
 
+    # Update resolving_status for CONDITIONAL rules based on trace resolution
+    updated_rules = {}
+    for rule_id, rule in rules.items():
+        if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
+            # Track resolution for this rule's conditions
+            total_conditions = len(rule.conditions)
+            resolved_conditions = 0
+
+            for cond in rule.conditions:
+                composite_key = create_trace_key(cond.function, cond.variable)
+
+                if composite_key in main_traces:
+                    traces_list = main_traces[composite_key]
+                    # Check if any trace has a value that maps to an outcome
+                    for trace in traces_list:
+                        if trace.value and trace.value in cond.security_mapping:
+                            resolved_conditions += 1
+                            break  # Count this condition as resolved
+
+            # Update resolving status based on resolution success
+            if resolved_conditions == total_conditions:
+                # All conditions successfully resolved
+                new_resolving_status = RuleResolvingStatus.RESOLVED
+                console.print(f"[green]✓ Rule '{rule.rule_name}': All {total_conditions} condition(s) resolved[/green]")
+            elif resolved_conditions > 0:
+                # Partial resolution - still mark as resolved
+                new_resolving_status = RuleResolvingStatus.RESOLVED
+                console.print(f"[yellow]⚠ Rule '{rule.rule_name}': {resolved_conditions}/{total_conditions} condition(s) resolved[/yellow]")
+            else:
+                # Could not resolve any conditions
+                new_resolving_status = RuleResolvingStatus.CANNOT_RESOLVE
+                console.print(f"[red]✗ Rule '{rule.rule_name}': Cannot resolve conditions[/red]")
+
+            # Create updated rule with new resolving_status
+            updated_rule = RuleResult(
+                rule_id=rule.rule_id,
+                rule_name=rule.rule_name,
+                result=rule.result,
+                resolving_status=new_resolving_status,
+                evidence=rule.evidence,
+                conditions=rule.conditions,
+            )
+            updated_rules[rule_id] = updated_rule
+        else:
+            # Non-conditional rules keep their existing status (already RESOLVED)
+            updated_rules[rule_id] = rule
+
     final_report = "\n".join(report_lines)
 
     console.print("[green]✓ Final report generated[/green]")
 
     return {
         "final_report": final_report,
+        "rule_result": updated_rules,  # Update rules with resolution status
         "current_phase": AnalysisPhase.COMPLETED,
     }
