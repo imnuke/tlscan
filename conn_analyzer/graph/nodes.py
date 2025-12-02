@@ -311,6 +311,75 @@ def create_follow_up_tasks_from_trace(
 
 
 # ============================================================================
+# Helper: Execute Single Dataflow Task
+# ============================================================================
+
+async def execute_single_dataflow_task(
+    task: DataflowTask,
+    static_engine: StaticAnalysisEngine,
+    agent_factory: AgentFactory,
+    firmware_tools: List[any],
+) -> DataflowAnalysisOutput:
+    """Execute dataflow analysis for a single task.
+
+    Extracts common logic shared by dataflow_analysis_node and
+    binary_analysis_sequential to eliminate ~190 lines of duplication.
+
+    Args:
+        task: DataflowTask to process
+        static_engine: Static Analysis Engine for IDA tools
+        agent_factory: Agent factory for creating dataflow agent
+        firmware_tools: Firmware tools for script analysis
+
+    Returns:
+        DataflowAnalysisOutput with traced variables
+
+    Raises:
+        Exception: If agent execution fails
+    """
+    task_type = task.type
+    target = task.target
+    variables = task.variables
+    context = task.context or ""
+
+    # Get appropriate tools based on task type
+    if task_type == TaskType.BINARY:
+        tools = await static_engine.get_tools(target)
+        agent = agent_factory.create_dataflow_agent(tools=tools)
+    elif task_type == TaskType.SCRIPT:
+        # For scripts, dataflow agent uses firmware tools to read script
+        agent = agent_factory.create_dataflow_agent(tools=firmware_tools)
+    else:
+        raise ValueError(f"Unknown task type: {task_type}")
+
+    # Build request message
+    if variables:
+        variables_desc = "\n".join([
+            f"  - Variable '{v.variable}' in function '{v.function}' at {v.function_address or 'unknown'}"
+            for v in variables
+        ])
+        if context:
+            request = f"{context}\n\nTrace the following variables:\n{variables_desc}"
+        else:
+            request = f"Trace the following variables:\n{variables_desc}"
+    else:
+        request = context
+
+    messages = [HumanMessage(content=request)]
+
+    # Execute dataflow agent
+    result: DataflowAnalysisOutput = await stream_and_log_agent(
+        agent=agent,
+        messages=messages,
+        agent_name=f"Dataflow ({target.split('/')[-1] if '/' in target else target})",
+        agent_emoji="🔍",
+        output_model=DataflowAnalysisOutput
+    )
+
+    return result
+
+
+# ============================================================================
 # Node: Dataflow Analysis
 # ============================================================================
 
@@ -364,47 +433,19 @@ async def dataflow_analysis_node(
     total_tasks = len(pending_tasks)
 
     for task_idx, task in enumerate(pending_tasks):
-        task_type = task.type  # Use attribute access for Pydantic model
-        target = task.target
-        variables = task.variables
+        console.print(f"[dim]  Processing {task.type.value} task: {task.target} ({len(task.variables)} variables)[/dim]")
 
-        console.print(f"[dim]  Processing {task_type.value} task: {target} ({len(variables)} variables)[/dim]")
-
-        # Get appropriate tools based on task type
-        if task_type == TaskType.BINARY:
-            tools = await static_engine.get_tools(target)
-            agent = agent_factory.create_dataflow_agent(tools=tools)
-        elif task_type == TaskType.SCRIPT:
-            # For scripts, dataflow agent uses firmware tools to read script
-            # NOTE: Passing firmware_tools seems not good.
-            agent = agent_factory.create_dataflow_agent(tools=firmware_tools)
-        else:
-            console.print(f"[yellow]⚠ Unknown task type: {task_type}[/yellow]")
+        # Execute dataflow analysis for this task using shared helper
+        try:
+            result: DataflowAnalysisOutput = await execute_single_dataflow_task(
+                task=task,
+                static_engine=static_engine,
+                agent_factory=agent_factory,
+                firmware_tools=firmware_tools,
+            )
+        except Exception as e:
+            console.print(f"[red]✗ Error processing task: {e}[/red]")
             continue
-
-        # Build request with all variables for this task
-        variables_desc = "\n".join([
-            f"  - Variable '{v.variable}' in function '{v.function}' at {v.function_address or 'unknown'}"
-            for v in variables
-        ])
-
-        request = f"Trace the following variables:\n{variables_desc}"
-        messages = [HumanMessage(content=request)]
-
-        # Track traces before this task
-        traces_before = set(all_traces.keys())
-        config_tasks_before = len(config_fetch_tasks)
-        dataflow_tasks_before = len(new_dataflow_tasks)
-
-        # Execute dataflow agent with task index
-        agent_name_with_progress = f"Dataflow Agent ({task_idx + 1}/{total_tasks})"
-        result: DataflowAnalysisOutput = await stream_and_log_agent(
-            agent=agent,
-            messages=messages,
-            agent_name=agent_name_with_progress,
-            agent_emoji="🔍",
-            output_model=DataflowAnalysisOutput
-        )
 
         # NOTE:
         # Firmware Agent needs to report file type and file type.
@@ -456,7 +497,7 @@ async def dataflow_analysis_node(
                     parameter_name = trace.source_details.parameter_name
 
                     # Find the original variable's security_mapping to preserve it
-                    original_var = next((v for v in variables if v.variable == trace.variable and v.function == trace.function), None)
+                    original_var = next((v for v in task.variables if v.variable == trace.variable and v.function == trace.function), None)
                     security_mapping = original_var.security_mapping if (original_var and original_var.security_mapping) else {}
 
                     # Create NEW variables for the external function's parameter
@@ -488,7 +529,7 @@ async def dataflow_analysis_node(
                     arg_name = trace.source_details.arg_name or "CLI argument"
 
                     # Find the original variable's security_mapping
-                    original_var = next((v for v in variables if v.variable == trace.variable and v.function == trace.function), None)
+                    original_var = next((v for v in task.variables if v.variable == trace.variable and v.function == trace.function), None)
                     security_mapping = original_var.security_mapping if (original_var and original_var.security_mapping) else {}
 
                     # Create variables for CLI arg analysis in calling scripts/binaries
@@ -871,37 +912,20 @@ async def binary_analysis_sequential(
         all_traces[key] = value.copy() if isinstance(value, list) else [value]
 
     for task in cross_binary_tasks:
-        binary_path = task.binary_path  # Use attribute access for Pydantic model
-        variables = task.variables
-        context = task.context or ""  # Use attribute access
+        binary_path = task.binary_path
+        context = task.context or ""
 
         console.print(f"[dim]  Analyzing caller: {binary_path}[/dim]")
-        console.print(f"[dim]  Context: {context}[/dim]")
+        if context:
+            console.print(f"[dim]  Context: {context}[/dim]")
 
         try:
-            # Get IDA tools for this binary
-            tools = await static_engine.get_tools(binary_path)
-
-            # Create dataflow agent
-            agent = agent_factory.create_dataflow_agent(tools=tools)
-
-            # Build request with specific variables to trace
-            if variables:
-                variables_desc = "\n".join([
-                    f"  - Variable '{v.variable}' in function '{v.function}'"
-                    for v in variables
-                ])
-                request = f"{context}\n\nTrace the following variables:\n{variables_desc}"
-            else:
-                request = context
-            messages = [HumanMessage(content=request)]
-
-            result: DataflowAnalysisOutput = await stream_and_log_agent(
-                agent=agent,
-                messages=messages,
-                agent_name=f"Dataflow ({binary_path.split('/')[-1]})",
-                agent_emoji="🔍",
-                output_model=DataflowAnalysisOutput
+            # Execute dataflow analysis using shared helper
+            result: DataflowAnalysisOutput = await execute_single_dataflow_task(
+                task=task,
+                static_engine=static_engine,
+                agent_factory=agent_factory,
+                firmware_tools=[],  # Cross-binary tasks are always BINARY type, no firmware tools needed
             )
 
             # Store traces using binary-qualified keys: "{binary_path}:{function}:{variable}"
