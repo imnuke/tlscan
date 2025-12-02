@@ -220,8 +220,8 @@ async def run_analysis(
                         checkpoint_tuple = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
                         if checkpoint_tuple:
                             checkpoint_id = checkpoint_tuple.checkpoint['id']
-                            # Display checkpoint ID (first 8 chars for brevity)
-                            console.print(f"[cyan]💾 Checkpoint saved:[/cyan] {checkpoint_id[:8]}... (after {list(event.keys())[0]})")
+                            # Display full checkpoint ID
+                            console.print(f"[cyan]💾 Checkpoint saved:[/cyan] {checkpoint_id} (after {list(event.keys())[0]})")
                     except Exception:
                         # Checkpoint retrieval may fail, ignore
                         pass

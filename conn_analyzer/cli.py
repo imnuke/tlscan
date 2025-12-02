@@ -161,13 +161,12 @@ def run():
             parent_id = cp.get('parent_id', 'None')
             timestamp = cp.get('timestamp', 'N/A')
 
-            # Format IDs (show first 8 chars)
-            if checkpoint_id != 'N/A':
-                checkpoint_id = checkpoint_id[:8] + "..."
-            if parent_id and parent_id != 'None':
-                parent_id = parent_id[:8] + "..."
-
-            table.add_row(checkpoint_id, parent_id or 'None', str(timestamp))
+            # Show full IDs (UUIDs)
+            table.add_row(
+                checkpoint_id if checkpoint_id != 'N/A' else 'N/A',
+                parent_id if parent_id and parent_id != 'None' else 'None',
+                str(timestamp)
+            )
 
         console.print(table)
         sys.exit(0)
