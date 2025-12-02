@@ -435,6 +435,12 @@ async def dataflow_analysis_node(
     for task_idx, task in enumerate(pending_tasks):
         console.print(f"[dim]  Processing {task.type.value} task: {task.target} ({len(task.variables)} variables)[/dim]")
 
+        # Capture state before processing this task (for per-task delta logging)
+        traces_before = set(all_traces.keys())
+        config_tasks_before = len(config_fetch_tasks)
+        dataflow_tasks_before = len(new_dataflow_tasks)
+        agent_name_with_progress = f"Dataflow Agent ({task_idx + 1}/{total_tasks})"
+
         # Execute dataflow analysis for this task using shared helper
         try:
             result: DataflowAnalysisOutput = await execute_single_dataflow_task(
@@ -660,7 +666,7 @@ async def firmware_explore_node(
         )
 
         # Remove ALL caller discovery tasks from pending
-        remaining_tasks = [t for t in pending_tasks if t.get("type") != "needs_caller_discovery"]
+        remaining_tasks = [t for t in pending_tasks if t.type != TaskType.NEEDS_CALLER_DISCOVERY]
 
         if result.found and result.executables:
             console.print(f"[green]✓ Found {len(result.executables)} caller binaries for {len(caller_discovery_tasks)} function(s)[/green]")
@@ -762,7 +768,7 @@ async def firmware_explore_node(
         )
 
         # Remove the script discovery task from pending tasks
-        remaining_tasks = [t for t in pending_tasks if t.get("type") != "needs_script_discovery" or t != task]
+        remaining_tasks = [t for t in pending_tasks if t.type != TaskType.NEEDS_SCRIPT_DISCOVERY or t != task]
 
         if result.found and result.executables:
             console.print(f"[green]✓ Found {len(result.executables)} startup scripts/binaries[/green]")
@@ -892,7 +898,7 @@ async def binary_analysis_sequential(
     pending_tasks = state.get("pending_dataflow_tasks", [])
 
     # Filter tasks that have binary_path set (cross-binary tasks)
-    cross_binary_tasks = [t for t in pending_tasks if t.get("binary_path") is not None]
+    cross_binary_tasks = [t for t in pending_tasks if t.binary_path is not None]
 
     if not cross_binary_tasks:
         console.print("[yellow]⚠ No cross-binary tasks to process[/yellow]")

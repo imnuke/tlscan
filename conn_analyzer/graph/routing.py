@@ -8,6 +8,7 @@ pending tasks, etc.) rather than parsing agent responses.
 from typing import Literal
 
 from conn_analyzer.graph.state import AnalysisState, AnalysisPhase
+from conn_analyzer.graph.models import TaskType
 
 
 # Maximum recursion depth for cross-binary analysis
@@ -61,7 +62,7 @@ def route_after_dataflow(
     # Check if any pending dataflow tasks need caller discovery
     pending_tasks = state.get("pending_dataflow_tasks", [])
     needs_firmware = any(
-        task.get("type") == "needs_caller_discovery" for task in pending_tasks
+        task.type == TaskType.NEEDS_CALLER_DISCOVERY for task in pending_tasks
     )
 
     if needs_firmware:
@@ -106,28 +107,28 @@ def route_after_firmware(
 
     # Priority 1: Check for cross-binary tasks (analyze discovered binaries)
     has_cross_binary = any(
-        task.get("binary_path") is not None for task in pending_tasks
+        task.binary_path is not None for task in pending_tasks
     )
 
     if has_cross_binary:
-        cross_binary_count = sum(1 for t in pending_tasks if t.get("binary_path") is not None)
+        cross_binary_count = sum(1 for t in pending_tasks if t.binary_path is not None)
         console.print(f"[green]   → Routing to binary_analysis_sequential ({cross_binary_count} cross-binary tasks)[/green]")
         console.print()
         return "binary_analysis_sequential"
 
     # Priority 2: Check for remaining discovery tasks
     has_caller_discovery = any(
-        task.get("type") == "needs_caller_discovery" for task in pending_tasks
+        task.type == TaskType.NEEDS_CALLER_DISCOVERY for task in pending_tasks
     )
 
     has_script_discovery = any(
-        task.get("type") == "needs_script_discovery" for task in pending_tasks
+        task.type == TaskType.NEEDS_SCRIPT_DISCOVERY for task in pending_tasks
     )
 
     if has_caller_discovery or has_script_discovery:
         discovery_count = sum(
             1 for t in pending_tasks
-            if t.get("type") in ["needs_caller_discovery", "needs_script_discovery"]
+            if t.type in [TaskType.NEEDS_CALLER_DISCOVERY, TaskType.NEEDS_SCRIPT_DISCOVERY]
         )
         console.print(f"[green]   → Routing to firmware_explore ({discovery_count} discovery tasks remaining)[/green]")
         console.print()
@@ -175,7 +176,7 @@ def route_after_cross_binary(
 
     # Check for caller discovery or script discovery tasks
     needs_firmware = any(
-        task.get("type") in ["needs_caller_discovery", "needs_script_discovery"]
+        task.type in [TaskType.NEEDS_CALLER_DISCOVERY, TaskType.NEEDS_SCRIPT_DISCOVERY]
         for task in pending_tasks
     )
 
