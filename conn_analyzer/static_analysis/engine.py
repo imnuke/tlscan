@@ -105,11 +105,45 @@ class StaticAnalysisEngine:
         else:
             return os.path.abspath(binary_path)
 
+    def _is_session_alive(self, session: MCPSession) -> bool:
+        """Check if an MCP session is still alive.
+
+        Args:
+            session: MCPSession to check
+
+        Returns:
+            True if session is alive, False otherwise
+        """
+        if session.server_process is None:
+            return False
+
+        # Check if process is still running (poll() returns None if running)
+        return session.server_process.poll() is None
+
+    def _cleanup_session(self, session: MCPSession):
+        """Clean up a dead session's resources.
+
+        Args:
+            session: MCPSession to clean up
+        """
+        # Terminate server process if still exists
+        if session.server_process:
+            try:
+                session.server_process.terminate()
+                session.server_process.wait(timeout=2)
+            except:
+                pass
+
+        # Release port
+        if session.port:
+            self._port_manager.release_port(session.port)
+
     async def get_tools(self, binary_path: str) -> List[any]:
         """Get IDA tools for a binary, starting MCP server if needed.
 
         This is the main entry point for obtaining static analysis tools.
         If the binary already has an active session, returns cached tools.
+        If the session is dead (e.g., from previous run), restarts it.
         Otherwise, starts a new MCP server session.
 
         Args:
@@ -128,8 +162,17 @@ class StaticAnalysisEngine:
 
             # Check if session already exists
             if normalized_path in self._sessions:
-                console.print(f"[dim]📦 Reusing existing MCP session: {binary_path}[/dim]")
-                return self._sessions[normalized_path].tools
+                session = self._sessions[normalized_path]
+
+                # Verify session is alive
+                if self._is_session_alive(session):
+                    console.print(f"[dim]📦 Reusing existing MCP session: {binary_path}[/dim]")
+                    return session.tools
+                else:
+                    # Session died - clean up and restart
+                    console.print(f"[yellow]⚠ MCP session died, restarting: {binary_path}[/yellow]")
+                    self._cleanup_session(session)
+                    del self._sessions[normalized_path]
 
             # Start new session
             console.print(f"[cyan]📦 Starting MCP session for: {binary_path}[/cyan]")

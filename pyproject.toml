@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "aiosqlite>=0.20.0",
     "ida-domain>=0.2.0",
     "idapro>=0.0.6",
     "langchain>=1.0.1",

@@ -22,7 +22,8 @@ def create_analysis_graph(
     static_engine: StaticAnalysisEngine,
     agent_factory: AgentFactory,
     firmware_tools: Optional[List[Any]] = None,
-    firmware_path: Optional[str] = None
+    firmware_path: Optional[str] = None,
+    checkpointer = None
 ) -> StateGraph:
     """
     Create the SSL analysis workflow graph v2.
@@ -32,6 +33,7 @@ def create_analysis_graph(
     - Uses AgentFactory for structured output agents
     - Dependency injection with functools.partial
     - Simplified routing based on state
+    - Optional checkpointing for state persistence
 
     This graph coordinates:
     1. SSL analysis (runs ONCE, returns structured output)
@@ -46,6 +48,7 @@ def create_analysis_graph(
         agent_factory: Agent Factory for creating agents
         firmware_tools: Firmware file system tools (optional)
         firmware_path: Path to firmware root (optional)
+        checkpointer: Optional checkpointer for state persistence
 
     Returns:
         Compiled StateGraph ready for execution
@@ -170,7 +173,7 @@ def create_analysis_graph(
     # Compile graph
     # ========================================================================
 
-    compiled_graph = graph.compile()
+    compiled_graph = graph.compile(checkpointer=checkpointer)
 
     return compiled_graph
 
@@ -178,7 +181,8 @@ def create_analysis_graph(
 async def run_analysis(
     graph: StateGraph,
     initial_state: AnalysisState,
-    config: dict = None
+    config: dict = None,
+    show_checkpoints: bool = False
 ) -> AnalysisState:
     """
     Run the SSL analysis workflow.
@@ -187,13 +191,45 @@ async def run_analysis(
         graph: Compiled state graph
         initial_state: Initial analysis state
         config: Optional configuration (e.g., recursion_limit)
+        show_checkpoints: Whether to display checkpoint IDs in real-time
 
     Returns:
         Final state after workflow completion
     """
+    from rich.console import Console
+    console = Console()
+
     config = config or {"recursion_limit": 100}
 
-    # Execute graph
-    final_state = await graph.ainvoke(initial_state, config=config)
+    if show_checkpoints:
+        # Stream events to show checkpoints in real-time
+        final_state = None
+        async for event in graph.astream(initial_state, config=config, stream_mode="updates"):
+            # event = {node_name: node_output}
+            for node_name, node_output in event.items():
+                # Display which node just completed
+                console.print(f"[dim]✓ {node_name} complete[/dim]")
 
-    return final_state
+            # After node completes, checkpoint is auto-saved
+            # Get the latest checkpoint
+            checkpointer = graph.checkpointer
+            if checkpointer:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    try:
+                        checkpoint_tuple = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
+                        if checkpoint_tuple:
+                            checkpoint_id = checkpoint_tuple.checkpoint['id']
+                            # Display checkpoint ID (first 8 chars for brevity)
+                            console.print(f"[cyan]💾 Checkpoint saved:[/cyan] {checkpoint_id[:8]}... (after {list(event.keys())[0]})")
+                    except Exception:
+                        # Checkpoint retrieval may fail, ignore
+                        pass
+
+            final_state = node_output
+
+        return final_state
+    else:
+        # Normal execution without streaming
+        final_state = await graph.ainvoke(initial_state, config=config)
+        return final_state

@@ -60,6 +60,34 @@ def parse_args():
         choices=["openssl", "curl", "libcurl", "gnutls", "mbedtls", "php_curl", "wget"],
         help="SSL/TLS library rules to use (default: openssl)"
     )
+    parser.add_argument(
+        "--save-checkpoints",
+        action="store_true",
+        help="Enable automatic state checkpointing after each workflow node"
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        metavar="THREAD_ID",
+        help="Resume workflow from saved checkpoint thread ID"
+    )
+    parser.add_argument(
+        "--from-checkpoint",
+        type=str,
+        metavar="CHECKPOINT_ID",
+        help="Resume from specific checkpoint ID (requires --resume)"
+    )
+    parser.add_argument(
+        "--list-threads",
+        action="store_true",
+        help="List all available checkpoint threads and exit"
+    )
+    parser.add_argument(
+        "--list-checkpoints",
+        type=str,
+        metavar="THREAD_ID",
+        help="List all checkpoints in a specific thread and exit"
+    )
     return parser.parse_args()
 
 
@@ -67,13 +95,98 @@ def run():
     """Main entry point for CLI."""
     args = parse_args()
 
+    # Handle --list-threads
+    if args.list_threads:
+        from conn_analyzer.persistence import CheckpointManager
+        from rich.table import Table
+
+        checkpoint_manager = CheckpointManager()
+        threads = checkpoint_manager.list_threads()
+
+        if not threads:
+            console.print("[yellow]No checkpoint threads found[/yellow]")
+            sys.exit(0)
+
+        # Create table
+        table = Table(title="Checkpoint Threads", show_header=True, header_style="bold cyan")
+        table.add_column("Thread ID", style="cyan")
+        table.add_column("Binary", style="green")
+        table.add_column("Rules", style="yellow")
+        table.add_column("Model", style="magenta")
+        table.add_column("Created At", style="dim")
+
+        for thread in threads:
+            binary_name = Path(thread['binary_path']).name
+            created_at = thread.get('created_at', 'N/A')
+            # Format timestamp
+            if created_at != 'N/A':
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(created_at)
+                    created_at = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    pass
+
+            table.add_row(
+                thread['thread_id'],
+                binary_name,
+                thread.get('rules', 'N/A'),
+                thread.get('model', 'N/A'),
+                created_at
+            )
+
+        console.print(table)
+        sys.exit(0)
+
+    # Handle --list-checkpoints
+    if args.list_checkpoints:
+        from conn_analyzer.persistence import CheckpointManager
+        from rich.table import Table
+
+        checkpoint_manager = CheckpointManager()
+        checkpoints = checkpoint_manager.list_checkpoints(args.list_checkpoints)
+
+        if not checkpoints:
+            console.print(f"[yellow]No checkpoints found for thread: {args.list_checkpoints}[/yellow]")
+            sys.exit(0)
+
+        # Create table
+        table = Table(title=f"Checkpoints for {args.list_checkpoints}", show_header=True, header_style="bold cyan")
+        table.add_column("Checkpoint ID", style="cyan")
+        table.add_column("Parent ID", style="dim")
+        table.add_column("Timestamp", style="green")
+
+        for cp in checkpoints:
+            checkpoint_id = cp.get('checkpoint_id', 'N/A')
+            parent_id = cp.get('parent_id', 'None')
+            timestamp = cp.get('timestamp', 'N/A')
+
+            # Format IDs (show first 8 chars)
+            if checkpoint_id != 'N/A':
+                checkpoint_id = checkpoint_id[:8] + "..."
+            if parent_id and parent_id != 'None':
+                parent_id = parent_id[:8] + "..."
+
+            table.add_row(checkpoint_id, parent_id or 'None', str(timestamp))
+
+        console.print(table)
+        sys.exit(0)
+
+    # Validate --from-checkpoint requires --resume
+    if args.from_checkpoint and not args.resume:
+        console.print("[red]Error: --from-checkpoint requires --resume[/red]")
+        sys.exit(1)
+
     try:
         asyncio.run(main(
             file_path=args.binary_path,
             model=args.model,
             conn_type=args.conn_type,
             firmware_path=args.firmware_path,
-            rules=args.rules
+            rules=args.rules,
+            save_checkpoints=args.save_checkpoints,
+            thread_id=args.resume,
+            checkpoint_id=args.from_checkpoint
         ))
     except KeyboardInterrupt:
         console.print()

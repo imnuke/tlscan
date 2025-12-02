@@ -100,7 +100,10 @@ async def main(
     model: str = "deepseek-chat",
     conn_type: str = "headless_ida",
     firmware_path: str = None,
-    rules: str = "openssl"
+    rules: str = "openssl",
+    save_checkpoints: bool = False,
+    thread_id: str = None,
+    checkpoint_id: str = None
 ):
     """
     Main function to analyze SSL/TLS connections using LangGraph v2 architecture.
@@ -109,6 +112,7 @@ async def main(
     - StaticAnalysisEngine: Manages MCP servers independently
     - AgentFactory: Creates agents with structured Pydantic output
     - State-driven workflow: No context passing through agents
+    - Optional checkpointing for state persistence and resumability
 
     Args:
         file_path: Path to binary file to analyze
@@ -116,6 +120,9 @@ async def main(
         conn_type: Connection type (currently unused, always headless_ida)
         firmware_path: Path to firmware filesystem root (optional)
         rules: SSL/TLS library rules to use (default: "openssl")
+        save_checkpoints: Enable automatic state checkpointing (default: False)
+        thread_id: Resume from this thread ID (optional)
+        checkpoint_id: Resume from specific checkpoint (requires thread_id)
     """
     total_start_time = time.perf_counter()
 
@@ -126,7 +133,33 @@ async def main(
     ))
     console.print()
 
-    # 1. Load config and resolve paths
+    # 1. Handle resume mode
+    checkpointer = None
+    run_thread_id = thread_id
+    checkpoint_manager = None
+
+    if thread_id:
+        # Resume mode - load metadata
+        from conn_analyzer.persistence import CheckpointManager
+        checkpoint_manager = CheckpointManager()
+        metadata = checkpoint_manager.get_thread_metadata(thread_id)
+
+        if not metadata:
+            console.print(f"[red]Error: Thread ID '{thread_id}' not found[/red]")
+            return
+
+        # Override parameters from metadata
+        file_path = metadata['binary_path']
+        rules = metadata['rules']
+        model = metadata.get('model', model)
+        firmware_path = metadata.get('firmware_path')
+
+        console.print(f"[cyan]🔄 Resuming from thread:[/cyan] {thread_id}")
+        if checkpoint_id:
+            console.print(f"[dim]  └─ From checkpoint: {checkpoint_id}[/dim]")
+        console.print()
+
+    # 2. Load config and resolve paths
     file_path = resolve_binary_path(file_path, firmware_path)
     console.print(f"[cyan]📁 Analyzing binary:[/cyan] {file_path}")
     console.print(f"[cyan]📚 Library rules:[/cyan] {rules}")
@@ -144,7 +177,33 @@ async def main(
     console.print(f"[cyan]🌡️  Temperature:[/cyan] {config.get_default_temperature()} (default)")
     console.print()
 
-    # 2. Initialize port manager
+    # 3. Initialize checkpointing (if requested or resuming)
+    if save_checkpoints or thread_id:
+        from conn_analyzer.persistence import CheckpointManager
+
+        if not checkpoint_manager:
+            checkpoint_manager = CheckpointManager()
+
+        # Initialize the async checkpointer
+        await checkpoint_manager.initialize()
+
+        checkpointer = checkpoint_manager.get_checkpointer()
+
+        if not thread_id:
+            # New run - generate thread ID and save metadata
+            run_thread_id = checkpoint_manager.create_thread_id(file_path)
+            checkpoint_manager.save_metadata(
+                run_thread_id,
+                file_path,
+                rules,
+                model_name,
+                firmware_path
+            )
+            console.print(f"[cyan]💾 Checkpointing enabled[/cyan]")
+            console.print(f"[cyan]📌 Thread ID:[/cyan] {run_thread_id}")
+            console.print()
+
+    # 4. Initialize port manager
     console.print("[cyan]🔧 Initializing port manager...[/cyan]")
     port_manager = PortManager()
     stale_count = port_manager.cleanup_stale_locks()
@@ -152,7 +211,7 @@ async def main(
         console.print(f"[dim]  └─ Cleaned up {stale_count} stale port locks[/dim]")
     console.print()
 
-    # 3. Initialize Static Analysis Engine (v2 architecture)
+    # 5. Initialize Static Analysis Engine (v2 architecture)
     console.print("[cyan]🔬 Initializing Static Analysis Engine...[/cyan]")
     static_engine = StaticAnalysisEngine(
         firmware_path=firmware_path,
@@ -161,7 +220,7 @@ async def main(
     console.print("[green]✓ Static Analysis Engine ready[/green]")
     console.print()
 
-    # 4. Initialize Agent Factory (v2 architecture)
+    # 6. Initialize Agent Factory (v2 architecture)
     console.print("[cyan]🏭 Initializing Agent Factory...[/cyan]")
     agent_factory = AgentFactory(llm=llm, config=config)
     console.print("[green]✓ Agent Factory ready (structured output enabled)[/green]")
@@ -171,12 +230,12 @@ async def main(
     console.print()
 
     try:
-        # 5. Pre-start MCP session for main binary
+        # 7. Pre-start MCP session for main binary
         console.print(f"[cyan]🚀 Starting MCP session for:[/cyan] {file_path}")
         await static_engine.get_tools(file_path)
         console.print()
 
-        # 6. Prepare firmware tools (if firmware provided)
+        # 8. Prepare firmware tools (if firmware provided)
         firmware_tools_list = None
         if firmware_path:
             console.print("[cyan]🗂️  Initializing firmware tools...[/cyan]")
@@ -193,24 +252,25 @@ async def main(
             console.print(f"[green]✓ Firmware tools ready ({len(firmware_tools_list)} tools)[/green]")
             console.print()
 
-        # 7. Create LangGraph workflow with dependency injection
+        # 9. Create LangGraph workflow with dependency injection and checkpointing
         console.print("[cyan]🎯 Building analysis workflow graph...[/cyan]")
         graph = create_analysis_graph(
             static_engine=static_engine,
             agent_factory=agent_factory,
             firmware_tools=firmware_tools_list,
-            firmware_path=firmware_path
+            firmware_path=firmware_path,
+            checkpointer=checkpointer
         )
         console.print("[green]✓ Workflow graph ready (v2 architecture)[/green]")
         console.print()
 
-        # 8. Create initial state
+        # 10. Create initial state
         initial_state = create_initial_state(
             binary_path=file_path,
             security_rules=security_rules_content
         )
 
-        # 9. Execute workflow
+        # 11. Execute workflow with checkpointing
         console.print()
         console.print(Panel.fit(
             "[bold green]🚀 Starting Structured Security Analysis[/bold green]",
@@ -218,13 +278,21 @@ async def main(
         ))
         console.print()
 
+        # Build config with thread/checkpoint info
+        workflow_config = {"recursion_limit": 100}
+        if run_thread_id:
+            workflow_config["configurable"] = {"thread_id": run_thread_id}
+            if checkpoint_id:
+                workflow_config["configurable"]["checkpoint_id"] = checkpoint_id
+
         final_state = await run_analysis(
             graph=graph,
             initial_state=initial_state,
-            config={"recursion_limit": 100}
+            config=workflow_config,
+            show_checkpoints=save_checkpoints or (thread_id is not None)
         )
 
-        # 10. Display final report
+        # 12. Display final report
         console.print()
         console.print(Panel.fit(
             "[bold green]✓ Analysis Complete[/bold green]",
@@ -263,12 +331,17 @@ async def main(
         raise
 
     finally:
-        # 11. Cleanup all resources
+        # 13. Cleanup all resources
         console.print()
         console.print("[cyan]🧹 Cleaning up resources...[/cyan]")
 
         if 'static_engine' in locals():
             static_engine.cleanup_all()
+
+        # Close checkpointer connection to allow process to exit
+        if 'checkpoint_manager' in locals() and checkpoint_manager:
+            await checkpoint_manager.close()
+            console.print("[dim]  └─ Checkpoint connection closed[/dim]")
 
         if 'port_manager' in locals():
             port_manager.cleanup_stale_locks()
