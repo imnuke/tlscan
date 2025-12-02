@@ -354,10 +354,20 @@ async def execute_single_dataflow_task(
 
     # Build request message
     if variables:
-        variables_desc = "\n".join([
-            f"  - Variable '{v.variable}' in function '{v.function}' at {v.function_address or 'unknown'}"
-            for v in variables
-        ])
+        # Detect cross-binary task by checking if binary_path is set
+        if task.binary_path:
+            # Cross-binary analysis: omit address clause since we're looking for function calls
+            variables_desc = "\n".join([
+                f"  - Variable '{v.variable}' in function '{v.function}'"
+                for v in variables
+            ])
+        else:
+            # Regular dataflow: include address if available
+            variables_desc = "\n".join([
+                f"  - Variable '{v.variable}' in function '{v.function}' at {v.function_address or 'unknown'}"
+                for v in variables
+            ])
+
         if context:
             request = f"{context}\n\nTrace the following variables:\n{variables_desc}"
         else:
