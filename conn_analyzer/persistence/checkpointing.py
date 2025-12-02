@@ -6,6 +6,7 @@ to persist workflow state after each node execution.
 
 import asyncio
 import json
+import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -148,7 +149,10 @@ class CheckpointManager:
         return threads
 
     def list_checkpoints(self, thread_id: str) -> List[Dict]:
-        """List all checkpoints for a specific thread.
+        """List all checkpoints for a specific thread using direct SQLite query.
+
+        This is a synchronous method that doesn't require async initialization,
+        making it suitable for CLI commands.
 
         Args:
             thread_id: Thread identifier
@@ -156,34 +160,37 @@ class CheckpointManager:
         Returns:
             List of checkpoint info dicts with:
             - checkpoint_id: Checkpoint identifier
-            - node_name: Which node just completed
-            - timestamp: When checkpoint was created
+            - parent_id: Parent checkpoint ID
+            - timestamp: When checkpoint was created (if available)
         """
-        if not self._checkpointer:
+        if not self._db_path:
             return []
 
         checkpoints = []
-
-        # Get all checkpoints for this thread
-        config = {"configurable": {"thread_id": thread_id}}
-
         try:
-            # List all checkpoints for the thread
-            for checkpoint_tuple in self._checkpointer.list(config):
-                checkpoint = checkpoint_tuple.checkpoint
-                metadata = checkpoint_tuple.metadata
+            # Use synchronous SQLite connection for read-only listing
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
 
-                # Extract checkpoint info
-                checkpoint_info = {
-                    "checkpoint_id": checkpoint["id"],
-                    "parent_id": checkpoint.get("parent_checkpoint_id"),
-                    "metadata": metadata,
-                    "timestamp": checkpoint.get("ts", "")
-                }
+            # Query checkpoints table for this thread
+            cursor.execute("""
+                SELECT checkpoint_id, parent_checkpoint_id
+                FROM checkpoints
+                WHERE thread_id = ?
+                ORDER BY checkpoint_id
+            """, (thread_id,))
 
-                checkpoints.append(checkpoint_info)
+            for row in cursor.fetchall():
+                checkpoint_id, parent_id = row
+                checkpoints.append({
+                    "checkpoint_id": checkpoint_id,
+                    "parent_id": parent_id if parent_id else None,
+                    "timestamp": "N/A"  # Timestamp would require parsing checkpoint blob
+                })
+
+            conn.close()
         except Exception as e:
-            # If checkpoints don't exist or error occurs
+            # Database error or table doesn't exist
             pass
 
         return checkpoints
