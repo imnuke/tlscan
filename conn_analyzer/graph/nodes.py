@@ -8,7 +8,7 @@ This module implements all graph nodes with:
 """
 
 import time
-from typing import Dict, Any, List, Sequence, Set
+from typing import Dict, Any, List, Sequence, Set, Optional
 from langchain_core.messages import HumanMessage
 
 from langgraph.types import Send
@@ -492,7 +492,7 @@ async def dataflow_analysis_node(
                 # Extract config path from typed source_details
                 config_reference = None
                 if isinstance(trace.source_details, ConfigFileDetails):
-                    config_reference = trace.source_details.config_path
+                    config_reference = trace.source_details.config_file
                     if trace.source_details.config_key:
                         config_reference = f"{config_reference} (key: {trace.source_details.config_key})"
 
@@ -608,6 +608,234 @@ async def dataflow_analysis_node(
 
 
 # ============================================================================
+# Node: Firmware Exploration - Helper Functions
+# ============================================================================
+
+async def _process_caller_discovery(
+    caller_discovery_tasks: List[DataflowTask],
+    firmware_agent,
+    pending_tasks: List[DataflowTask],
+) -> tuple[List[DataflowTask], str]:
+    """Process caller discovery tasks and return new cross-binary tasks.
+
+    Args:
+        caller_discovery_tasks: Tasks that need caller discovery
+        firmware_agent: Firmware agent for searching
+        pending_tasks: All pending tasks
+
+    Returns:
+        Tuple of (remaining_tasks_with_cross_binary_tasks, firmware_details)
+    """
+    # Extract all unique function names from all discovery tasks (deduplicate)
+    function_names = list(dict.fromkeys(task.target for task in caller_discovery_tasks))
+
+    console.print(f"[dim]  Finding binaries that call {len(function_names)} function(s): {', '.join(function_names)}[/dim]")
+
+    # Build batch request (backward compatible for single task)
+    if len(function_names) == 1:
+        request = f"Find all binaries in firmware that call the function: {function_names[0]}"
+    else:
+        functions_list = "\n".join([f"  - {fname}" for fname in function_names])
+        request = (
+            f"Find all binaries in firmware that call ANY of these functions:\n"
+            f"{functions_list}\n\n"
+            f"For each binary found, specify which function(s) it calls."
+        )
+    messages = [HumanMessage(content=request)]
+
+    result: FirmwareSearchResult = await stream_and_log_agent(
+        agent=firmware_agent,
+        messages=messages,
+        agent_name="Firmware Agent",
+        agent_emoji="📂",
+        output_model=FirmwareSearchResult
+    )
+
+    # Remove ALL caller discovery tasks from pending
+    remaining_tasks = [t for t in pending_tasks if t.type != TaskType.NEEDS_CALLER_DISCOVERY]
+
+    if result.found and result.executables:
+        console.print(f"[green]✓ Found {len(result.executables)} caller binaries for {len(caller_discovery_tasks)} function(s)[/green]")
+
+        # Build reverse mapping: binary → functions it calls
+        binary_to_functions: Dict[str, Set[str]] = {}
+
+        if result.function_calls:
+            # Use structured mapping from firmware agent
+            console.print(f"[dim]  Using structured function_calls mapping[/dim]")
+            for function_name, binary_paths in result.function_calls.items():
+                for binary_path in binary_paths:
+                    if binary_path not in binary_to_functions:
+                        binary_to_functions[binary_path] = set()
+                    binary_to_functions[binary_path].add(function_name)
+        else:
+            # Fallback: assume all binaries call all functions (backward compatibility)
+            console.print(f"[yellow]⚠ No function_calls mapping - assigning all variables to all binaries[/yellow]")
+            all_function_names = {task.target for task in caller_discovery_tasks}
+            for binary_path in result.executables:
+                binary_to_functions[binary_path] = all_function_names
+
+        # Create function_to_variables mapping for efficient lookup
+        function_to_variables: Dict[str, List[VariableSpec]] = {}
+        for task in caller_discovery_tasks:
+            function_name = task.target
+            function_to_variables[function_name] = task.variables
+
+        # Create cross-binary tasks with function-specific variables
+        for binary_path in result.executables:
+            # Get functions this binary calls
+            functions_called = binary_to_functions.get(binary_path, set())
+
+            if not functions_called:
+                console.print(f"[yellow]⚠ Binary {binary_path} has no function mapping - skipping[/yellow]")
+                continue
+
+            # Aggregate variables ONLY from functions this binary calls
+            aggregated_variables: List[VariableSpec] = []
+            for function_name in functions_called:
+                if function_name in function_to_variables:
+                    aggregated_variables.extend(function_to_variables[function_name])
+
+            if not aggregated_variables:
+                console.print(f"[dim]  Binary {binary_path} calls {functions_called} but no variables to trace[/dim]")
+                continue
+
+            # Log which functions and how many variables
+            console.print(f"[dim]  Binary {binary_path} calls: {', '.join(sorted(functions_called))} ({len(aggregated_variables)} variables)[/dim]")
+
+            binary_task = DataflowTask(
+                type=TaskType.BINARY,
+                target=binary_path,
+                variables=aggregated_variables,
+                binary_path=binary_path,
+            )
+            remaining_tasks.append(binary_task)
+
+        return remaining_tasks, result.details
+    else:
+        console.print(f"[yellow]⚠ No caller binaries found for function(s): {', '.join(function_names)}[/yellow]")
+        return remaining_tasks, result.details
+
+
+async def _process_script_discovery(
+    script_discovery_tasks: List[DataflowTask],
+    firmware_agent,
+    pending_tasks: List[DataflowTask],
+) -> tuple[List[DataflowTask], Optional[List[str]], str]:
+    """Process script discovery tasks to find startup scripts.
+
+    Args:
+        script_discovery_tasks: Tasks that need script discovery
+        firmware_agent: Firmware agent for searching
+        pending_tasks: All pending tasks
+
+    Returns:
+        Tuple of (remaining_tasks, script_findings, firmware_details)
+    """
+    # Process first task
+    task = script_discovery_tasks[0]
+    binary_target = task.target
+    context = task.context or ""
+
+    console.print(f"[dim]  Finding scripts/binaries that invoke: {binary_target}[/dim]")
+    console.print(f"[dim]  Context: {context}[/dim]")
+
+    request = f"Find all startup scripts and binaries in firmware that invoke the binary: {binary_target}\n\n{context}"
+    messages = [HumanMessage(content=request)]
+
+    result: FirmwareSearchResult = await stream_and_log_agent(
+        agent=firmware_agent,
+        messages=messages,
+        agent_name="Firmware Agent",
+        agent_emoji="📂",
+        output_model=FirmwareSearchResult
+    )
+
+    # Remove the script discovery task from pending tasks
+    remaining_tasks = [t for t in pending_tasks if t.type != TaskType.NEEDS_SCRIPT_DISCOVERY or t != task]
+
+    if result.found and result.executables:
+        console.print(f"[green]✓ Found {len(result.executables)} startup scripts/binaries[/green]")
+        # For now, just report the findings (future: could parse scripts to extract CLI args)
+        return remaining_tasks, result.executables, result.details
+    else:
+        console.print(f"[yellow]⚠ No startup scripts found for {binary_target}[/yellow]")
+        return remaining_tasks, None, result.details
+
+
+async def _process_config_fetch(
+    config_fetch_tasks: List[ConfigFetchTask],
+    firmware_agent,
+    current_traces: Dict[str, List[VariableTrace]],
+) -> tuple[Dict[str, List[VariableTrace]], str]:
+    """Process config fetch tasks and update variable traces with values.
+
+    Args:
+        config_fetch_tasks: Tasks that need config value fetching
+        firmware_agent: Firmware agent for searching
+        current_traces: Current variable traces to update
+
+    Returns:
+        Tuple of (updated_variable_traces, firmware_details)
+    """
+    console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
+
+    # Build request with all config variables to fetch
+    config_requests = []
+    for task in config_fetch_tasks:
+        config_ref = task.config_reference or "configuration file"
+        config_requests.append(f"  - {config_ref}")
+
+    request = (
+        f"Search the firmware and extract the following configuration values:\n"
+        + "\n".join(config_requests)
+    )
+    messages = [HumanMessage(content=request)]
+
+    result: FirmwareSearchResult = await stream_and_log_agent(
+        agent=firmware_agent,
+        messages=messages,
+        agent_name="Firmware Agent",
+        agent_emoji="📂",
+        output_model=FirmwareSearchResult
+    )
+
+    # Deep copy traces to avoid modifying input
+    all_traces: Dict[str, List[VariableTrace]] = {}
+    for key, value in current_traces.items():
+        all_traces[key] = value.copy() if isinstance(value, list) else [value]
+
+    if result.found and result.config_values:
+        console.print(f"[green]✓ Found {len(result.config_values)} config values[/green]")
+
+        # Update variable traces with fetched config values
+        for task in config_fetch_tasks:
+            composite_key = f"{task.function}:{task.variable}"
+            if composite_key in all_traces:
+                # Find the config trace in the list and update it
+                traces_list = all_traces[composite_key]
+                for i, original_trace in enumerate(traces_list):
+                    if original_trace.source == VariableSourceType.CONFIG_FILE and task.variable in result.config_values:
+                        # Create updated trace with fetched value
+                        updated_trace = VariableTrace(
+                            function=original_trace.function,
+                            variable=original_trace.variable,
+                            source=original_trace.source,
+                            value=result.config_values[task.variable],
+                            source_details=original_trace.source_details,
+                            confidence=original_trace.confidence,
+                            trace_path=original_trace.trace_path
+                        )
+                        traces_list[i] = updated_trace
+                        console.print(f"[dim]    ✓ Updated {task.variable} = {updated_trace.value}[/dim]")
+
+        return all_traces, result.details
+    else:
+        console.print(f"[yellow]⚠ No config values found[/yellow]")
+        return all_traces, result.details
+
+
+# ============================================================================
 # Node: Firmware Exploration
 # ============================================================================
 
@@ -617,12 +845,15 @@ async def firmware_explore_node(
     firmware_tools: List[any],
     firmware_path: str,
 ) -> Dict[str, Any]:
-    """Execute firmware exploration for various purposes.
+    """Execute firmware exploration for ALL pending tasks.
 
-    This node handles:
-    1. Finding caller binaries (for cross-binary analysis via needs_caller_discovery tasks)
-    2. Fetching config values (when dataflow traces to CONFIG_FILE)
-    3. Reading scripts (when dataflow needs script content)
+    Processes tasks in priority order:
+    1. Caller discovery (cross-binary analysis)
+    2. Script discovery (CLI argument sources)
+    3. Config fetch (configuration values)
+
+    All task types are processed in a single execution to prevent
+    task starvation due to early returns.
 
     Args:
         state: Current analysis state
@@ -635,252 +866,104 @@ async def firmware_explore_node(
     """
     console.print(f"[cyan]📂 Firmware exploration[/cyan]")
 
-    # Create firmware agent
+    # Create firmware agent (shared for all task types)
     firmware_agent = agent_factory.create_firmware_agent(
         firmware_tools=firmware_tools,
         firmware_path=firmware_path
     )
 
-    # Determine what type of firmware operation is needed
+    # Get pending tasks
     pending_tasks = state.get("pending_dataflow_tasks", [])
     config_fetch_tasks = state.get("pending_config_fetch_tasks", [])
 
-    # Find tasks that need caller discovery
+    # Categorize tasks by type
     caller_discovery_tasks = [t for t in pending_tasks if t.type == TaskType.NEEDS_CALLER_DISCOVERY]
-
-    if caller_discovery_tasks:
-        # Find caller binaries for cross-binary analysis
-        # Extract all unique function names from all discovery tasks (deduplicate)
-        function_names = list(dict.fromkeys(task.target for task in caller_discovery_tasks))  # Use attribute access
-
-        console.print(f"[dim]  Finding binaries that call {len(function_names)} function(s): {', '.join(function_names)}[/dim]")
-
-        # Build batch request (backward compatible for single task)
-        if len(function_names) == 1:
-            request = f"Find all binaries in firmware that call the function: {function_names[0]}"
-        else:
-            functions_list = "\n".join([f"  - {fname}" for fname in function_names])
-            request = (
-                f"Find all binaries in firmware that call ANY of these functions:\n"
-                f"{functions_list}\n\n"
-                f"For each binary found, specify which function(s) it calls."
-            )
-        messages = [HumanMessage(content=request)]
-
-        result: FirmwareSearchResult = await stream_and_log_agent(
-            agent=firmware_agent,
-            messages=messages,
-            agent_name="Firmware Agent",
-            agent_emoji="📂",
-            output_model=FirmwareSearchResult
-        )
-
-        # Remove ALL caller discovery tasks from pending
-        remaining_tasks = [t for t in pending_tasks if t.type != TaskType.NEEDS_CALLER_DISCOVERY]
-
-        if result.found and result.executables:
-            console.print(f"[green]✓ Found {len(result.executables)} caller binaries for {len(caller_discovery_tasks)} function(s)[/green]")
-
-            # Build reverse mapping: binary → functions it calls
-            binary_to_functions: Dict[str, Set[str]] = {}
-
-            if result.function_calls:
-                # Use structured mapping from firmware agent
-                console.print(f"[dim]  Using structured function_calls mapping[/dim]")
-                for function_name, binary_paths in result.function_calls.items():
-                    for binary_path in binary_paths:
-                        if binary_path not in binary_to_functions:
-                            binary_to_functions[binary_path] = set()
-                        binary_to_functions[binary_path].add(function_name)
-            else:
-                # Fallback: assume all binaries call all functions (backward compatibility)
-                console.print(f"[yellow]⚠ No function_calls mapping - assigning all variables to all binaries[/yellow]")
-                all_function_names = {task.target for task in caller_discovery_tasks}  # Use attribute access
-                for binary_path in result.executables:
-                    binary_to_functions[binary_path] = all_function_names
-
-            # Create function_to_variables mapping for efficient lookup
-            function_to_variables: Dict[str, List[VariableSpec]] = {}
-            for task in caller_discovery_tasks:
-                function_name = task.target  # Use attribute access for Pydantic model
-                function_to_variables[function_name] = task.variables
-
-            # Create cross-binary tasks with function-specific variables
-            for binary_path in result.executables:
-                # Get functions this binary calls
-                functions_called = binary_to_functions.get(binary_path, set())
-
-                if not functions_called:
-                    console.print(f"[yellow]⚠ Binary {binary_path} has no function mapping - skipping[/yellow]")
-                    continue
-
-                # Aggregate variables ONLY from functions this binary calls
-                aggregated_variables: List[VariableSpec] = []
-                for function_name in functions_called:
-                    if function_name in function_to_variables:
-                        aggregated_variables.extend(function_to_variables[function_name])
-
-                if not aggregated_variables:
-                    console.print(f"[dim]  Binary {binary_path} calls {functions_called} but no variables to trace[/dim]")
-                    continue
-
-                # Log which functions and how many variables
-                console.print(f"[dim]  Binary {binary_path} calls: {', '.join(sorted(functions_called))} ({len(aggregated_variables)} variables)[/dim]")
-
-                binary_task = DataflowTask(
-                    type=TaskType.BINARY,
-                    target=binary_path,
-                    variables=aggregated_variables,
-                    binary_path=binary_path,
-                )
-                remaining_tasks.append(binary_task)
-
-            state_update = {
-                "pending_dataflow_tasks": remaining_tasks,
-                "firmware_details": result.details,
-                "current_phase": AnalysisPhase.CROSS_BINARY_ANALYSIS,
-            }
-            # Log state after agent execution with changes
-            log_agent_state("Firmware Agent", state, changes=state_update)
-            return state_update
-        else:
-            console.print(f"[yellow]⚠ No caller binaries found for function(s): {', '.join(function_names)}[/yellow]")
-            state_update = {
-                "pending_dataflow_tasks": remaining_tasks,
-                "firmware_details": result.details,
-                "current_phase": AnalysisPhase.SYNTHESIS,
-            }
-            # Log state after agent execution with changes
-            log_agent_state("Firmware Agent", state, changes=state_update)
-            return state_update
-
-    # Find tasks that need script discovery (for CLI arguments)
     script_discovery_tasks = [t for t in pending_tasks if t.type == TaskType.NEEDS_SCRIPT_DISCOVERY]
 
+    # Initialize accumulated state update
+    accumulated_update = {
+        "pending_dataflow_tasks": [t for t in pending_tasks
+                                   if t.type not in [TaskType.NEEDS_CALLER_DISCOVERY,
+                                                     TaskType.NEEDS_SCRIPT_DISCOVERY]],
+        "pending_config_fetch_tasks": [],
+        "variable_traces": {k: v.copy() if isinstance(v, list) else [v]
+                           for k, v in state.get("variable_traces", {}).items()},
+        "firmware_details": "",
+        "script_findings": state.get("script_findings"),
+    }
+
+    errors = []
+    details_parts = []
+
+    # ========================================================================
+    # Priority 1: Caller Discovery (Cross-Binary Analysis)
+    # ========================================================================
+    if caller_discovery_tasks:
+        try:
+            remaining, details = await _process_caller_discovery(
+                caller_discovery_tasks, firmware_agent, pending_tasks
+            )
+            accumulated_update["pending_dataflow_tasks"] = remaining
+            details_parts.append(details)
+        except Exception as e:
+            errors.append(f"Caller discovery failed: {e}")
+            console.print(f"[red]✗ Caller discovery error: {e}[/red]")
+
+    # ========================================================================
+    # Priority 2: Script Discovery (CLI Arguments) - NO elif!
+    # ========================================================================
     if script_discovery_tasks:
-        # Find startup scripts/binaries that invoke the target binary
-        task = script_discovery_tasks[0]  # Process first task
-        binary_target = task.target  # Use attribute access for Pydantic model
-        context = task.context or ""  # Use attribute access
+        try:
+            remaining, script_findings, details = await _process_script_discovery(
+                script_discovery_tasks, firmware_agent,
+                accumulated_update["pending_dataflow_tasks"]
+            )
+            accumulated_update["pending_dataflow_tasks"] = remaining
+            accumulated_update["script_findings"] = script_findings
+            details_parts.append(details)
+        except Exception as e:
+            errors.append(f"Script discovery failed: {e}")
+            console.print(f"[red]✗ Script discovery error: {e}[/red]")
 
-        console.print(f"[dim]  Finding scripts/binaries that invoke: {binary_target}[/dim]")
-        console.print(f"[dim]  Context: {context}[/dim]")
+    # ========================================================================
+    # Priority 3: Config Fetch (Configuration Values) - Changed from elif to if!
+    # ========================================================================
+    if config_fetch_tasks:
+        try:
+            updated_traces, details = await _process_config_fetch(
+                config_fetch_tasks, firmware_agent,
+                accumulated_update["variable_traces"]
+            )
+            accumulated_update["variable_traces"] = updated_traces
+            accumulated_update["pending_config_fetch_tasks"] = []
+            details_parts.append(details)
+        except Exception as e:
+            errors.append(f"Config fetch failed: {e}")
+            console.print(f"[red]✗ Config fetch error: {e}[/red]")
 
-        request = f"Find all startup scripts and binaries in firmware that invoke the binary: {binary_target}\n\n{context}"
-        messages = [HumanMessage(content=request)]
+    # Merge all firmware details
+    accumulated_update["firmware_details"] = "\n\n".join(filter(None, details_parts))
 
-        result: FirmwareSearchResult = await stream_and_log_agent(
-            agent=firmware_agent,
-            messages=messages,
-            agent_name="Firmware Agent",
-            agent_emoji="📂",
-            output_model=FirmwareSearchResult
-        )
+    # Add any errors
+    if errors:
+        accumulated_update["errors"] = state.get("errors", []) + errors
 
-        # Remove the script discovery task from pending tasks
-        remaining_tasks = [t for t in pending_tasks if t.type != TaskType.NEEDS_SCRIPT_DISCOVERY or t != task]
-
-        if result.found and result.executables:
-            console.print(f"[green]✓ Found {len(result.executables)} startup scripts/binaries[/green]")
-            # For now, just report the findings (future: could parse scripts to extract CLI args)
-            # Store script findings for synthesis to report
-            state_update = {
-                "pending_dataflow_tasks": remaining_tasks,
-                "script_findings": result.executables,
-                "firmware_details": result.details,
-                "current_phase": AnalysisPhase.SYNTHESIS,
-            }
-            # Log state after agent execution with changes
-            log_agent_state("Firmware Agent", state, changes=state_update)
-            return state_update
+    # Determine next phase based on what remains
+    if accumulated_update["pending_dataflow_tasks"]:
+        # Check if there are cross-binary tasks
+        has_cross_binary = any(t.binary_path is not None
+                               for t in accumulated_update["pending_dataflow_tasks"])
+        if has_cross_binary:
+            accumulated_update["current_phase"] = AnalysisPhase.CROSS_BINARY_ANALYSIS
         else:
-            console.print(f"[yellow]⚠ No startup scripts found for {binary_target}[/yellow]")
-            state_update = {
-                "pending_dataflow_tasks": remaining_tasks,
-                "firmware_details": result.details,
-                "current_phase": AnalysisPhase.SYNTHESIS,
-            }
-            # Log state after agent execution with changes
-            log_agent_state("Firmware Agent", state, changes=state_update)
-            return state_update
+            # Still have discovery tasks - loop back
+            accumulated_update["current_phase"] = AnalysisPhase.FIRMWARE_EXPLORATION
+    else:
+        accumulated_update["current_phase"] = AnalysisPhase.SYNTHESIS
 
-    elif config_fetch_tasks:
-        # Fetch configuration values from firmware
-        console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
-
-        # Build request with all config variables to fetch
-        config_requests = []
-        for task in config_fetch_tasks:
-            config_ref = task.config_reference or "configuration file"
-            config_requests.append(f"  - {config_ref}")
-
-        request = (
-            f"Search the firmware and extract the following configuration values:\n"
-            + "\n".join(config_requests)
-        )
-        messages = [HumanMessage(content=request)]
-
-        result: FirmwareSearchResult = await stream_and_log_agent(
-            agent=firmware_agent,
-            messages=messages,
-            agent_name="Firmware Agent",
-            agent_emoji="📂",
-            output_model=FirmwareSearchResult
-        )
-
-        if result.found and result.config_values:
-            console.print(f"[green]✓ Found {len(result.config_values)} config values[/green]")
-
-            # Update variable traces with fetched config values
-            all_traces: Dict[str, List[VariableTrace]] = {}
-            for key, value in state.get("variable_traces", {}).items():
-                all_traces[key] = value.copy() if isinstance(value, list) else [value]
-
-            for task in config_fetch_tasks:
-                composite_key = f"{task.function}:{task.variable}"
-                if composite_key in all_traces:
-                    # Find the config trace in the list and update it
-                    traces_list = all_traces[composite_key]
-                    for i, original_trace in enumerate(traces_list):
-                        if original_trace.source == VariableSourceType.CONFIG_FILE and task.variable in result.config_values:
-                            # Create updated trace with fetched value
-                            updated_trace = VariableTrace(
-                                function=original_trace.function,
-                                variable=original_trace.variable,
-                                source=original_trace.source,
-                                value=result.config_values[task.variable],
-                                source_details=original_trace.source_details,
-                                confidence=original_trace.confidence,
-                                trace_path=original_trace.trace_path
-                            )
-                            traces_list[i] = updated_trace
-                            console.print(f"[dim]    ✓ Updated {task.variable} = {updated_trace.value}[/dim]")
-
-            state_update = {
-                "variable_traces": all_traces,
-                "pending_config_fetch_tasks": [],  # Clear completed tasks
-                "firmware_details": result.details,
-                "current_phase": AnalysisPhase.SYNTHESIS,
-            }
-            # Log state after agent execution with changes
-            log_agent_state("Firmware Agent", state, changes=state_update)
-            return state_update
-        else:
-            console.print(f"[yellow]⚠ No config values found[/yellow]")
-            state_update = {
-                "pending_config_fetch_tasks": [],
-                "firmware_details": result.details,
-                "current_phase": AnalysisPhase.SYNTHESIS,
-            }
-            # Log state after agent execution with changes
-            log_agent_state("Firmware Agent", state, changes=state_update)
-            return state_update
-
-    # If no tasks, proceed to synthesis
-    state_update = {"current_phase": AnalysisPhase.SYNTHESIS}
-    # Log state after (no agent execution in this case)
-    log_agent_state("Firmware Agent", state, changes=state_update)
-    return state_update
+    # Single return point - log state after firmware exploration
+    log_agent_state("Firmware Agent", state, changes=accumulated_update)
+    return accumulated_update
 
 
 # ============================================================================
@@ -1150,6 +1233,22 @@ async def synthesis_node(
                     if trace.value:
                         report_lines.append(f"    Value: {trace.value}")
             report_lines.append("")
+
+    # Script findings (CLI argument sources)
+    if state.get("script_findings"):
+        report_lines.append("=" * 80)
+        report_lines.append("STARTUP SCRIPTS FOUND (MANUAL REVIEW REQUIRED)")
+        report_lines.append("=" * 80)
+        report_lines.append("")
+        report_lines.append("⚠️  TODO: Implement automated CLI argument extraction from scripts")
+        report_lines.append("")
+        report_lines.append("The following scripts invoke the analyzed binary:")
+        for script in state["script_findings"]:
+            report_lines.append(f"  - {script}")
+        report_lines.append("")
+        report_lines.append("Manual inspection of these scripts is recommended to determine")
+        report_lines.append("the values passed via command-line arguments.")
+        report_lines.append("")
 
     # Update resolving_status for CONDITIONAL rules based on trace resolution
     updated_rules = {}
