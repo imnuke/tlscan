@@ -151,8 +151,16 @@ async def main(
         # Override parameters from metadata
         file_path = metadata['binary_path']
         rules = metadata['rules']
-        model = metadata.get('model', model)
         firmware_path = metadata.get('firmware_path')
+
+        # Use saved model only if user didn't provide --model
+        if model is None:
+            # User didn't provide --model, use saved metadata
+            model = metadata.get('model')
+            if not model:
+                console.print(f"[red]Error: No model specified and no model in saved metadata[/red]")
+                return
+        # else: keep the CLI model parameter (user explicitly provided it)
 
         console.print(f"[cyan]🔄 Resuming from thread:[/cyan] {thread_id}")
         if checkpoint_id:
@@ -196,7 +204,7 @@ async def main(
                 run_thread_id,
                 file_path,
                 rules,
-                model_name,
+                model,
                 firmware_path
             )
             console.print(f"[cyan]💾 Checkpointing enabled[/cyan]")

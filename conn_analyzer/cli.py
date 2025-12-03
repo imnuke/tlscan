@@ -43,9 +43,9 @@ def parse_args():
     parser.add_argument(
         "-m", "--model",
         type=str,
-        default="deepseek-chat",
-        help="LLM model to use (default: deepseek-chat). "
-             "Examples: openai:gpt-4o, anthropic:claude-sonnet-4-5, deepseek-chat"
+        default=None,
+        help="LLM model to use. "
+             "Examples: openai:gpt-4o, anthropic:claude-sonnet-4-5, deepseek:deepseek-chat"
     )
     parser.add_argument(
         "-f", "--firmware-path",
