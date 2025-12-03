@@ -72,10 +72,11 @@ def parse_args():
         help="Resume workflow from saved checkpoint thread ID"
     )
     parser.add_argument(
-        "--from-checkpoint",
+        "--fork-from-checkpoint",
         type=str,
         metavar="CHECKPOINT_ID",
-        help="Resume from specific checkpoint ID (requires --resume)"
+        help="Create new run from this checkpoint's state (requires --resume). "
+             "Loads checkpoint state and re-runs all subsequent nodes with fresh LLM calls."
     )
     parser.add_argument(
         "--list-threads",
@@ -171,9 +172,9 @@ def run():
         console.print(table)
         sys.exit(0)
 
-    # Validate --from-checkpoint requires --resume
-    if args.from_checkpoint and not args.resume:
-        console.print("[red]Error: --from-checkpoint requires --resume[/red]")
+    # Validate --fork-from-checkpoint requires --resume
+    if args.fork_from_checkpoint and not args.resume:
+        console.print("[red]Error: --fork-from-checkpoint requires --resume[/red]")
         sys.exit(1)
 
     try:
@@ -185,7 +186,7 @@ def run():
             rules=args.rules,
             save_checkpoints=args.save_checkpoints,
             thread_id=args.resume,
-            checkpoint_id=args.from_checkpoint
+            fork_checkpoint_id=args.fork_from_checkpoint
         ))
     except KeyboardInterrupt:
         console.print()

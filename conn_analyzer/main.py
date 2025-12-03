@@ -97,13 +97,13 @@ def parse_model_string(model: str):
 
 async def main(
     file_path: str,
-    model: str = "deepseek-chat",
+    model: str = None,
     conn_type: str = "headless_ida",
     firmware_path: str = None,
     rules: str = "openssl",
     save_checkpoints: bool = False,
     thread_id: str = None,
-    checkpoint_id: str = None
+    fork_checkpoint_id: str = None
 ):
     """
     Main function to analyze SSL/TLS connections using LangGraph v2 architecture.
@@ -116,13 +116,13 @@ async def main(
 
     Args:
         file_path: Path to binary file to analyze
-        model: LLM model to use (default: "deepseek-chat")
+        model: LLM model to use (required if not resuming with saved model)
         conn_type: Connection type (currently unused, always headless_ida)
         firmware_path: Path to firmware filesystem root (optional)
         rules: SSL/TLS library rules to use (default: "openssl")
         save_checkpoints: Enable automatic state checkpointing (default: False)
         thread_id: Resume from this thread ID (optional)
-        checkpoint_id: Resume from specific checkpoint (requires thread_id)
+        fork_checkpoint_id: Fork from specific checkpoint with fresh execution (requires thread_id)
     """
     total_start_time = time.perf_counter()
 
@@ -162,9 +162,12 @@ async def main(
                 return
         # else: keep the CLI model parameter (user explicitly provided it)
 
-        console.print(f"[cyan]🔄 Resuming from thread:[/cyan] {thread_id}")
-        if checkpoint_id:
-            console.print(f"[dim]  └─ From checkpoint: {checkpoint_id}[/dim]")
+        if fork_checkpoint_id:
+            console.print(f"[cyan]🔀 Forking from thread:[/cyan] {thread_id}")
+            console.print(f"[dim]  └─ From checkpoint: {fork_checkpoint_id}[/dim]")
+            console.print(f"[yellow]  └─ Creating NEW thread with fresh execution[/yellow]")
+        else:
+            console.print(f"[cyan]🔄 Resuming latest checkpoint from thread:[/cyan] {thread_id}")
         console.print()
 
     # 2. Load config and resolve paths
@@ -278,6 +281,47 @@ async def main(
             security_rules=security_rules_content
         )
 
+        # If fork_checkpoint_id is provided, load that checkpoint's state for forking
+        if fork_checkpoint_id and checkpointer:
+            console.print(f"[cyan]🔀 Loading state from checkpoint...[/cyan]")
+            try:
+                # Load checkpoint state from the original thread
+                checkpoint_tuple = await checkpointer.aget_tuple({
+                    "configurable": {"thread_id": run_thread_id, "checkpoint_id": fork_checkpoint_id}
+                })
+
+                if checkpoint_tuple:
+                    # Extract state from checkpoint
+                    fork_state = checkpoint_tuple.checkpoint['channel_values']
+                    initial_state = fork_state  # Use checkpoint state as initial state
+
+                    # Create NEW thread ID for fresh execution
+                    original_thread_id = run_thread_id
+                    run_thread_id = checkpoint_manager.create_thread_id(file_path)
+
+                    # Save metadata for forked thread
+                    checkpoint_manager.save_metadata(
+                        run_thread_id,
+                        file_path,
+                        rules,
+                        model,
+                        firmware_path
+                    )
+
+                    console.print(f"[green]✓ Loaded checkpoint state[/green]")
+                    console.print(f"[cyan]📌 New thread ID:[/cyan] {run_thread_id}")
+                    console.print(f"[cyan]💾 Checkpointing enabled for forked thread[/cyan]")
+                    console.print(f"[dim]  └─ Fresh execution will start from checkpoint state[/dim]")
+                    console.print()
+                else:
+                    console.print(f"[red]Error: Checkpoint {fork_checkpoint_id} not found in thread {original_thread_id}[/red]")
+                    return
+            except Exception as e:
+                console.print(f"[red]Error loading checkpoint: {e}[/red]")
+                import traceback
+                traceback.print_exc()
+                return
+
         # 11. Execute workflow with checkpointing
         console.print()
         console.print(Panel.fit(
@@ -286,15 +330,13 @@ async def main(
         ))
         console.print()
 
-        # Build config with thread_id and optionally checkpoint_id
+        # Build config with thread_id
         workflow_config = {"recursion_limit": 100}
         if run_thread_id:
             workflow_config["configurable"] = {"thread_id": run_thread_id}
-            if checkpoint_id:
-                workflow_config["configurable"]["checkpoint_id"] = checkpoint_id
 
-        # Determine if this is a resumption from checkpoint
-        is_resuming = checkpoint_id is not None
+        # Always use fresh execution (no replay mode)
+        is_resuming = False
 
         final_state = await run_analysis(
             graph=graph,
