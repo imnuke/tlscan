@@ -14,8 +14,58 @@ from langgraph.graph import StateGraph, END
 from conn_analyzer.graph.state import AnalysisState
 from conn_analyzer.graph import nodes
 from conn_analyzer.graph import routing
+from conn_analyzer.graph.models import TaskType
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
+
+
+def checkpoint_router_node(state: AnalysisState, firmware_available: bool = False) -> dict:
+    """Route to appropriate node when resuming from checkpoint.
+
+    Examines state to determine which node should run next based on
+    what has been completed.
+
+    Args:
+        state: Current analysis state
+        firmware_available: Whether firmware exploration nodes are available
+
+    Returns:
+        Dict with _next_node field indicating which node to route to
+    """
+    # If no rules analyzed yet → run SSL analysis
+    if not state.get("rule_result"):
+        return {"_next_node": "ssl_analysis"}
+
+    # If SSL complete but pending dataflow tasks → run dataflow
+    if state.get("pending_dataflow_tasks"):
+        return {"_next_node": "dataflow_analysis"}
+
+    # If dataflow complete but pending config/cross-binary → run firmware (if available)
+    if firmware_available and state.get("pending_config_fetch_tasks"):
+        return {"_next_node": "firmware_explore"}
+
+    # Check for cross-binary tasks that need firmware exploration
+    pending_tasks = state.get("pending_dataflow_tasks", [])
+    has_caller_discovery = any(
+        task.type == TaskType.NEEDS_CALLER_DISCOVERY for task in pending_tasks
+    )
+    if firmware_available and has_caller_discovery:
+        return {"_next_node": "firmware_explore"}
+
+    # If firmware complete but pending binary analysis → run binary analysis
+    has_cross_binary = any(
+        task.binary_path is not None for task in pending_tasks
+    )
+    if firmware_available and has_cross_binary:
+        return {"_next_node": "binary_analysis_sequential"}
+
+    # Everything done → run synthesis
+    return {"_next_node": "synthesis"}
+
+
+def route_from_checkpoint_router(state: AnalysisState) -> str:
+    """Extract routing decision from checkpoint router."""
+    return state.get("_next_node", "ssl_analysis")
 
 
 def create_analysis_graph(
@@ -55,6 +105,17 @@ def create_analysis_graph(
     """
     # Create state graph
     graph = StateGraph(AnalysisState)
+
+    # ========================================================================
+    # Add checkpoint router as conditional entry point
+    # ========================================================================
+    graph.add_node(
+        "checkpoint_router",
+        partial(
+            checkpoint_router_node,
+            firmware_available=bool(firmware_tools and firmware_path)
+        )
+    )
 
     # ========================================================================
     # Add nodes with dependency injection
@@ -113,8 +174,25 @@ def create_analysis_graph(
     # Define workflow edges
     # ========================================================================
 
-    # Set entry point
-    graph.set_entry_point("ssl_analysis")
+    # Set checkpoint router as entry point
+    graph.set_entry_point("checkpoint_router")
+
+    # Route from checkpoint router to appropriate node
+    # Build routing dict conditionally based on available nodes
+    router_edges = {
+        "ssl_analysis": "ssl_analysis",
+        "dataflow_analysis": "dataflow_analysis",
+        "synthesis": "synthesis",
+    }
+    if firmware_tools and firmware_path:
+        router_edges["firmware_explore"] = "firmware_explore"
+        router_edges["binary_analysis_sequential"] = "binary_analysis_sequential"
+
+    graph.add_conditional_edges(
+        "checkpoint_router",
+        route_from_checkpoint_router,
+        router_edges
+    )
 
     # Conditional routing from SSL analysis
     graph.add_conditional_edges(

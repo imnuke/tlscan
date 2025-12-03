@@ -128,6 +128,9 @@ class AnalysisState(TypedDict, total=False):
     depth: int
     """Depth of cross-binary recursion (for preventing infinite loops)."""
 
+    _next_node: str
+    """Used by checkpoint router to determine next node when resuming from checkpoint."""
+
     # ========================================================================
     # SSL Analysis Results
     # ========================================================================
