@@ -243,3 +243,87 @@ class CheckpointManager:
             )
 
         return self._checkpointer
+
+    def get_old_threads(self, max_age_days: int = 7) -> List[Dict]:
+        """Get list of checkpoint threads older than max_age_days.
+
+        Args:
+            max_age_days: Find threads older than this many days
+
+        Returns:
+            List of thread metadata dicts for old threads
+        """
+        from datetime import datetime, timedelta
+
+        cutoff_date = datetime.now() - timedelta(days=max_age_days)
+        old_threads = []
+
+        for metadata_file in self.metadata_dir.glob("*.json"):
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                    created_at = datetime.fromisoformat(metadata.get('created_at', ''))
+                    if created_at < cutoff_date:
+                        old_threads.append(metadata)
+            except (json.JSONDecodeError, ValueError, KeyError):
+                continue
+
+        # Sort by creation time (oldest first)
+        old_threads.sort(key=lambda x: x.get('created_at', ''))
+
+        return old_threads
+
+    def clean_old_checkpoints(self, max_age_days: int = 7) -> int:
+        """Clean checkpoint threads older than max_age_days.
+
+        Deletes both SQLite checkpoint entries and metadata JSON files.
+
+        Args:
+            max_age_days: Delete threads older than this many days
+
+        Returns:
+            Number of threads deleted
+        """
+        from datetime import datetime, timedelta
+        import sqlite3
+
+        cutoff_date = datetime.now() - timedelta(days=max_age_days)
+        deleted_count = 0
+
+        # 1. Get threads to delete from metadata
+        threads_to_delete = []
+        for metadata_file in self.metadata_dir.glob("*.json"):
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                    created_at = datetime.fromisoformat(metadata.get('created_at', ''))
+                    if created_at < cutoff_date:
+                        threads_to_delete.append(metadata['thread_id'])
+            except (json.JSONDecodeError, ValueError, KeyError):
+                continue
+
+        # 2. Delete from SQLite database
+        if self._db_path and threads_to_delete:
+            try:
+                conn = sqlite3.connect(self._db_path)
+                cursor = conn.cursor()
+                for thread_id in threads_to_delete:
+                    cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+                conn.commit()
+                conn.close()
+            except Exception:
+                # Database error, but continue with metadata cleanup
+                pass
+
+        # 3. Delete metadata files
+        for thread_id in threads_to_delete:
+            metadata_file = self.metadata_dir / f"{thread_id}.json"
+            if metadata_file.exists():
+                try:
+                    metadata_file.unlink()
+                    deleted_count += 1
+                except OSError:
+                    # File deletion failed, skip
+                    continue
+
+        return deleted_count

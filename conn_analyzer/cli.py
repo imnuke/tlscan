@@ -28,6 +28,7 @@ def parse_args():
     parser.add_argument(
         "binary_path",
         type=str,
+        nargs='?',
         help="Path to binary file to analyze (absolute or relative). "
              "Relative paths are resolved against --firmware-path if provided, "
              "otherwise against current working directory."
@@ -88,6 +89,18 @@ def parse_args():
         type=str,
         metavar="THREAD_ID",
         help="List all checkpoints in a specific thread and exit"
+    )
+    parser.add_argument(
+        "--clean-threads",
+        action="store_true",
+        help="Clean old checkpoint threads (entire analysis runs) and exit"
+    )
+    parser.add_argument(
+        "--max-age",
+        type=int,
+        default=7,
+        metavar="DAYS",
+        help="Delete threads older than DAYS days (default: 7, used with --clean-threads)"
     )
     return parser.parse_args()
 
@@ -172,9 +185,52 @@ def run():
         console.print(table)
         sys.exit(0)
 
+    # Handle --clean-threads
+    if args.clean_threads:
+        from conn_analyzer.persistence import CheckpointManager
+        from datetime import datetime
+
+        checkpoint_manager = CheckpointManager()
+
+        console.print(f"[yellow]🧹 Cleaning threads older than {args.max_age} days...[/yellow]")
+        console.print()
+
+        # Get old threads
+        old_threads = checkpoint_manager.get_old_threads(max_age_days=args.max_age)
+
+        if not old_threads:
+            console.print("[green]✓ No old threads to clean[/green]")
+            sys.exit(0)
+
+        # Show what will be deleted
+        console.print(f"[cyan]Found {len(old_threads)} old thread(s):[/cyan]")
+        for thread in old_threads[:5]:
+            created_at = thread.get('created_at', 'N/A')
+            if created_at != 'N/A':
+                try:
+                    dt = datetime.fromisoformat(created_at)
+                    created_at = dt.strftime("%Y-%m-%d")
+                except:
+                    pass
+            console.print(f"  - {thread['thread_id']} (created {created_at})")
+
+        if len(old_threads) > 5:
+            console.print(f"  ... and {len(old_threads) - 5} more")
+        console.print()
+
+        # Perform cleanup
+        deleted = checkpoint_manager.clean_old_checkpoints(max_age_days=args.max_age)
+        console.print(f"[green]✓ Cleaned {deleted} thread(s)[/green]")
+        sys.exit(0)
+
     # Validate --fork-from-checkpoint requires --resume
     if args.fork_from_checkpoint and not args.resume:
         console.print("[red]Error: --fork-from-checkpoint requires --resume[/red]")
+        sys.exit(1)
+
+    # Validate binary_path is provided for analysis commands
+    if not args.binary_path:
+        console.print("[red]Error: binary_path is required for analysis[/red]")
         sys.exit(1)
 
     try:
