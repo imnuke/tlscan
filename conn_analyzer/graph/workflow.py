@@ -182,16 +182,18 @@ async def run_analysis(
     graph: StateGraph,
     initial_state: AnalysisState,
     config: dict = None,
-    show_checkpoints: bool = False
+    show_checkpoints: bool = False,
+    is_resuming: bool = False
 ) -> AnalysisState:
     """
     Run the SSL analysis workflow.
 
     Args:
         graph: Compiled state graph
-        initial_state: Initial analysis state
+        initial_state: Initial analysis state (ignored if is_resuming=True)
         config: Optional configuration (e.g., recursion_limit)
         show_checkpoints: Whether to display checkpoint IDs in real-time
+        is_resuming: Whether resuming from checkpoint (passes None as input)
 
     Returns:
         Final state after workflow completion
@@ -201,10 +203,13 @@ async def run_analysis(
 
     config = config or {"recursion_limit": 100}
 
+    # When resuming from checkpoint, pass None so LangGraph loads state from checkpoint
+    input_state = None if is_resuming else initial_state
+
     if show_checkpoints:
         # Stream events to show checkpoints in real-time
         final_state = None
-        async for event in graph.astream(initial_state, config=config, stream_mode="updates"):
+        async for event in graph.astream(input_state, config=config, stream_mode="updates"):
             # event = {node_name: node_output}
             for node_name, node_output in event.items():
                 # Display which node just completed
@@ -231,5 +236,5 @@ async def run_analysis(
         return final_state
     else:
         # Normal execution without streaming
-        final_state = await graph.ainvoke(initial_state, config=config)
+        final_state = await graph.ainvoke(input_state, config=config)
         return final_state

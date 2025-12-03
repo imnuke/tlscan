@@ -286,18 +286,22 @@ async def main(
         ))
         console.print()
 
-        # Build config with thread/checkpoint info
+        # Build config with thread_id and optionally checkpoint_id
         workflow_config = {"recursion_limit": 100}
         if run_thread_id:
             workflow_config["configurable"] = {"thread_id": run_thread_id}
             if checkpoint_id:
                 workflow_config["configurable"]["checkpoint_id"] = checkpoint_id
 
+        # Determine if this is a resumption from checkpoint
+        is_resuming = checkpoint_id is not None
+
         final_state = await run_analysis(
             graph=graph,
             initial_state=initial_state,
             config=workflow_config,
-            show_checkpoints=save_checkpoints or (thread_id is not None)
+            show_checkpoints=save_checkpoints or (thread_id is not None),
+            is_resuming=is_resuming
         )
 
         # 12. Display final report
