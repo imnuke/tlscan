@@ -315,7 +315,7 @@ def create_condition_panel(
         content,
         border_style="dim",
         padding=(1, 2),
-        expand=False
+        expand=True
     )
 
 
