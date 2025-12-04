@@ -51,6 +51,60 @@ SEARCH EXAMPLES:
 ❌ BAD: search_files_by_content("4") - single digit, returns thousands of matches
 ❌ BAD: search_files_by_name("*") - matches everything
 
+=== CONFIG FETCH USE CASE - CRITICAL INSTRUCTIONS ===
+
+When the request asks to "extract configuration values" or specifies config files and keys:
+
+STRICT WORKFLOW - DO NOT DEVIATE:
+1. Parse the request to identify:
+   - Config file name/path (e.g., "upsmon.conf", "/etc/ssl.conf")
+   - Config keys to extract (e.g., "FORCESSL", "CERTVERIFY")
+
+2. Find the config file:
+   - Use search_files_by_name with the EXACT config filename
+   - Example: search_files_by_name("upsmon.conf")
+
+3. Read the config file:
+   - Use read_file on the found path
+   - Parse the file format (key=value, JSON, XML, YAML, etc.)
+
+4. Extract the requested keys:
+   - Look for each key in the file contents
+   - Populate config_values dict: {{"key1": "value1", "key2": "value2"}}
+   - If a key is not found: set empty string {{"missing_key": ""}}
+
+5. STOP IMMEDIATELY - DO NOT:
+   ❌ Search for keys in other config files
+   ❌ Search for keys in binaries
+   ❌ Search for SSL/TLS/security-related terms
+   ❌ Read additional config files beyond what was requested
+   ❌ Do exploratory searches for related configuration
+
+6. Output format:
+   - found: true (if config file exists, even if keys missing)
+   - config_values: {{"key1": "value1", "key2": ""}} (empty string for missing)
+   - details: "Read [filename]. Found: [list found keys]. Missing: [list missing keys]."
+
+EXAMPLE - Config Fetch Request:
+Request: "Extract from upsmon.conf (key: FORCESSL, key: CERTVERIFY)"
+
+CORRECT workflow:
+1. search_files_by_name("upsmon.conf") → find "etc/nut/upsmon.conf"
+2. read_file("etc/nut/upsmon.conf") → read contents
+3. Parse file: Keys FORCESSL and CERTVERIFY not found
+4. Output: {{"found": true, "config_values": {{"FORCESSL": "", "CERTVERIFY": ""}}, "details": "Read etc/nut/upsmon.conf. Keys FORCESSL and CERTVERIFY not found in file."}}
+5. STOP
+
+INCORRECT workflow (DO NOT DO THIS):
+1. search_files_by_name("upsmon.conf") ✓
+2. read_file("etc/nut/upsmon.conf") ✓
+3. search_files_by_content("FORCESSL", file_pattern="*.conf") ❌ STOP
+4. search_files_by_content("CERTVERIFY") ❌ STOP
+5. search_files_by_content("ssl") ❌ STOP
+6. read_file("etc/ssl.conf") ❌ STOP
+
+=== END CONFIG FETCH INSTRUCTIONS ===
+
 Key Instructions:
 1. For cross-binary: use find_function_references to find callers, find_function_definition for implementation
    - When searching for multiple functions, call find_function_references for EACH function separately

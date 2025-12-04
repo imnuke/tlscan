@@ -780,15 +780,21 @@ async def _process_config_fetch(
     """
     console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
 
-    # Build request with all config variables to fetch
+    # Build structured request with explicit constraints
     config_requests = []
     for task in config_fetch_tasks:
         config_ref = task.config_reference or "configuration file"
         config_requests.append(f"  - {config_ref}")
 
     request = (
-        f"Search the firmware and extract the following configuration values:\n"
-        + "\n".join(config_requests)
+        f"CONFIG FETCH TASK:\n\n"
+        f"Extract the following configuration values from their respective files:\n"
+        + "\n".join(config_requests) + "\n\n"
+        f"INSTRUCTIONS:\n"
+        f"1. Find and read ONLY the specified config files\n"
+        f"2. Extract ONLY the specified keys from each file\n"
+        f"3. Use empty string (\"\") for keys not found in the file\n"
+        f"4. STOP after reading the files - do NOT search binaries or other configs\n"
     )
     messages = [HumanMessage(content=request)]
 
@@ -799,6 +805,13 @@ async def _process_config_fetch(
         agent_emoji="📂",
         output_model=FirmwareSearchResult
     )
+
+    # Validation: warn if agent returned unexpected results for config fetch
+    if result.executables and len(result.executables) > 0:
+        console.print(
+            f"[yellow]⚠ Warning: Config fetch returned {len(result.executables)} binaries. "
+            f"This suggests the agent did unnecessary searches.[/yellow]"
+        )
 
     # Deep copy traces to avoid modifying input
     all_traces: Dict[str, List[VariableTrace]] = {}
