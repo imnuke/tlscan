@@ -12,7 +12,7 @@ wheels/
 temp_files/
 
 # State snapshots and checkpoints
-.state_snapshots/
+.state_snapshots
 
 # LLM API configuration (contains secrets)
 llm_config.yaml
