@@ -12,7 +12,9 @@ It does NOT create agents - that's the responsibility of AgentFactory.
 """
 
 import os
+import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -23,7 +25,7 @@ from rich.console import Console
 
 from conn_analyzer.ida_integration.server import start_headless_ida_server
 from conn_analyzer.ida_integration.port_manager import PortManager
-from conn_analyzer.config import IDA_SERVER_HOST
+from conn_analyzer.config import IDA_SERVER_HOST, TEMP_BINARIES_DIR
 
 # Initialize console for output
 console = Console()
@@ -34,13 +36,15 @@ class MCPSession:
     """Represents an active MCP server session for a binary.
 
     Attributes:
-        binary_path: Absolute path to the binary file
+        binary_path: Absolute path to the binary file (original path for user-facing messages)
+        temp_binary_path: Path to temporary copy used by IDA server (None if no copy made)
         port: Allocated MCP server port
         server_process: Server subprocess handle
         mcp_client: MCP client instance for this binary
         tools: List of IDA tools from the MCP server
     """
     binary_path: str
+    temp_binary_path: Optional[str]
     port: int
     server_process: any  # subprocess.Popen
     mcp_client: MultiServerMCPClient
@@ -105,6 +109,63 @@ class StaticAnalysisEngine:
         else:
             return os.path.abspath(binary_path)
 
+    def _create_temp_binary_copy(self, original_path: str) -> str:
+        """Create temporary copy of binary for isolated IDA analysis.
+
+        Directory structure: /tmp/conn_analyzer/binaries/{session_id}/{binary_name}
+        where session_id is an 8-char UUID for uniqueness.
+
+        Args:
+            original_path: Absolute path to original binary
+
+        Returns:
+            Absolute path to temporary binary copy
+
+        Raises:
+            IOError: If copy operation fails
+        """
+        # Generate unique session ID (8 chars)
+        session_id = str(uuid.uuid4())[:8]
+
+        # Create temp directory
+        binary_name = Path(original_path).name
+        temp_dir = TEMP_BINARIES_DIR / session_id
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        temp_binary_path = temp_dir / binary_name
+
+        # Copy binary
+        try:
+            shutil.copy2(original_path, temp_binary_path)
+            console.print(f"[dim]  ├─ Created temp binary: {temp_binary_path}[/dim]")
+            return str(temp_binary_path)
+        except Exception as e:
+            # Clean up temp directory on failure
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+            raise IOError(f"Failed to copy binary to temp location: {e}") from e
+
+    def _cleanup_temp_binary(self, temp_binary_path: str):
+        """Remove temporary binary and its containing directory.
+
+        Args:
+            temp_binary_path: Path to temporary binary
+        """
+        if not temp_binary_path:
+            return
+
+        try:
+            temp_path = Path(temp_binary_path)
+            # Remove parent directory (session_id directory)
+            temp_session_dir = temp_path.parent
+            if temp_session_dir.exists():
+                shutil.rmtree(temp_session_dir)
+                console.print(f"[dim]  ├─ Removed temp directory: {temp_session_dir}[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]  ├─ Warning: Failed to remove temp binary: {e}[/yellow]")
+
     def _is_session_alive(self, session: MCPSession) -> bool:
         """Check if an MCP session is still alive.
 
@@ -121,7 +182,7 @@ class StaticAnalysisEngine:
         return session.server_process.poll() is None
 
     def _cleanup_session(self, session: MCPSession):
-        """Clean up a dead session's resources.
+        """Clean up a dead session's resources including temp binary.
 
         Args:
             session: MCPSession to clean up
@@ -138,13 +199,20 @@ class StaticAnalysisEngine:
         if session.port:
             self._port_manager.release_port(session.port)
 
+        # Clean up temp binary
+        if session.temp_binary_path:
+            self._cleanup_temp_binary(session.temp_binary_path)
+
     async def get_tools(self, binary_path: str) -> List[any]:
         """Get IDA tools for a binary, starting MCP server if needed.
 
         This is the main entry point for obtaining static analysis tools.
-        If the binary already has an active session, returns cached tools.
-        If the session is dead (e.g., from previous run), restarts it.
-        Otherwise, starts a new MCP server session.
+
+        Cache behavior:
+        - Searches for existing session by original binary path
+        - Reuses session if found and alive (intra-run caching)
+        - Creates new temp copy and session if not cached
+        - Cache keyed by temp path to support concurrent runs
 
         Args:
             binary_path: Path to binary (can be relative or absolute)
@@ -160,24 +228,30 @@ class StaticAnalysisEngine:
             # Normalize path
             normalized_path = self._normalize_path(binary_path)
 
-            # Check if session already exists
-            if normalized_path in self._sessions:
-                session = self._sessions[normalized_path]
+            # Check if session already exists for this binary (search by original path)
+            existing_session = None
+            for session in self._sessions.values():
+                if session.binary_path == normalized_path:
+                    existing_session = session
+                    break
 
-                # Verify session is alive
-                if self._is_session_alive(session):
-                    console.print(f"[dim]📦 Reusing existing MCP session: {binary_path}[/dim]")
-                    return session.tools
-                else:
-                    # Session died - clean up and restart
-                    console.print(f"[yellow]⚠ MCP session died, restarting: {binary_path}[/yellow]")
-                    self._cleanup_session(session)
-                    del self._sessions[normalized_path]
+            # If session exists and alive, reuse it
+            if existing_session and self._is_session_alive(existing_session):
+                console.print(f"[dim]📦 Reusing existing MCP session: {binary_path}[/dim]")
+                return existing_session.tools
 
-            # Start new session
+            # If session exists but dead, clean it up
+            if existing_session:
+                console.print(f"[yellow]⚠ MCP session died, restarting: {binary_path}[/yellow]")
+                self._cleanup_session(existing_session)
+                del self._sessions[existing_session.temp_binary_path]
+
+            # Start new session (creates unique temp copy)
             console.print(f"[cyan]📦 Starting MCP session for: {binary_path}[/cyan]")
             session = await self._start_session(normalized_path)
-            self._sessions[normalized_path] = session
+
+            # Store in cache using temp path as key (enables concurrent sessions)
+            self._sessions[session.temp_binary_path] = session
 
             console.print(f"[green]✓ MCP session ready: {len(session.tools)} tools available[/green]")
             return session.tools
@@ -187,9 +261,9 @@ class StaticAnalysisEngine:
 
         This method:
         1. Validates binary exists
-        2. Allocates port
-        3. Pre-initializes IDA database
-        4. Starts headless IDA MCP server
+        2. Creates temporary binary copy
+        3. Allocates port
+        4. Starts headless IDA MCP server (with temp copy)
         5. Initializes MCP client
         6. Gets IDA tools
 
@@ -207,13 +281,18 @@ class StaticAnalysisEngine:
         if not os.path.exists(normalized_path):
             raise FileNotFoundError(f"Binary file not found: {normalized_path}")
 
+        temp_binary_path = None
+
         try:
-            # Allocate port
-            port = self._port_manager.allocate_port(binary_path=normalized_path)
+            # Create temporary copy
+            temp_binary_path = self._create_temp_binary_copy(normalized_path)
+
+            # Allocate port (use temp path for lock file identification)
+            port = self._port_manager.allocate_port(binary_path=temp_binary_path)
             console.print(f"[dim]  ├─ Allocated port: {port}[/dim]")
 
-            # Start headless IDA server
-            server_process = start_headless_ida_server(normalized_path, port=port)
+            # Start headless IDA server with temp path
+            server_process = start_headless_ida_server(temp_binary_path, port=port)
             console.print(f"[dim]  ├─ Started MCP server on port {port}[/dim]")
 
             # Initialize MCP client
@@ -228,9 +307,10 @@ class StaticAnalysisEngine:
             tools = await client.get_tools()
             console.print(f"[dim]  └─ Loaded {len(tools)} IDA tools from MCP server[/dim]")
 
-            # Create session
+            # Create session with both paths
             return MCPSession(
-                binary_path=normalized_path,
+                binary_path=normalized_path,           # Original path
+                temp_binary_path=temp_binary_path,     # Temp path
                 port=port,
                 server_process=server_process,
                 mcp_client=client,
@@ -240,6 +320,10 @@ class StaticAnalysisEngine:
         except Exception as e:
             # Cleanup on failure
             console.print(f"[red]✗ Failed to start MCP session: {e}[/red]")
+
+            # Clean up temp binary if created
+            if temp_binary_path:
+                self._cleanup_temp_binary(temp_binary_path)
 
             # Release port if allocated
             if 'port' in locals():
@@ -269,12 +353,13 @@ class StaticAnalysisEngine:
             return self._sessions.get(normalized_path)
 
     def cleanup(self, binary_path: str) -> bool:
-        """Cleanup MCP session for a binary.
+        """Cleanup MCP session for a binary including temp binary.
 
         This method:
         1. Terminates the MCP server
         2. Releases the allocated port
-        3. Removes the session
+        3. Removes temporary binary copy
+        4. Removes the session
 
         Args:
             binary_path: Path to binary (can be relative or absolute)
@@ -285,7 +370,15 @@ class StaticAnalysisEngine:
         with self._lock:
             normalized_path = self._normalize_path(binary_path)
 
-            session = self._sessions.get(normalized_path)
+            # Find session by original binary path (cache is keyed by temp path)
+            session = None
+            session_key = None
+            for key, sess in self._sessions.items():
+                if sess.binary_path == normalized_path:
+                    session = sess
+                    session_key = key
+                    break
+
             if session is None:
                 console.print(f"[yellow]⚠ No MCP session for: {binary_path}[/yellow]")
                 return False
@@ -309,8 +402,12 @@ class StaticAnalysisEngine:
                 except Exception as e:
                     console.print(f"[yellow]  ├─ Warning: Failed to release port: {e}[/yellow]")
 
+                # Clean up temp binary
+                if session.temp_binary_path:
+                    self._cleanup_temp_binary(session.temp_binary_path)
+
                 # Remove from sessions
-                del self._sessions[normalized_path]
+                del self._sessions[session_key]
                 console.print(f"[green]  └─ Cleanup complete[/green]")
 
                 return True
@@ -320,7 +417,7 @@ class StaticAnalysisEngine:
                 return False
 
     def cleanup_all(self):
-        """Cleanup all MCP sessions.
+        """Cleanup all MCP sessions including temp binaries.
 
         This method is typically called during shutdown to ensure
         all resources are properly released.
@@ -343,10 +440,10 @@ class StaticAnalysisEngine:
                         # First try graceful termination (SIGTERM)
                         session.server_process.terminate()
                         session.server_process.wait(timeout=5)
-                        console.print(f"[dim]  ✓ Server for {Path(path).name} terminated gracefully[/dim]")
+                        console.print(f"[dim]  ✓ Server for {Path(session.binary_path).name} terminated gracefully[/dim]")
                     except subprocess.TimeoutExpired:
                         # Process didn't respond to SIGTERM, force kill (SIGKILL)
-                        console.print(f"[yellow]  ⚠ Server for {Path(path).name} unresponsive, forcing termination...[/yellow]")
+                        console.print(f"[yellow]  ⚠ Server for {Path(session.binary_path).name} unresponsive, forcing termination...[/yellow]")
                         try:
                             session.server_process.kill()
                             session.server_process.wait(timeout=2)
@@ -361,6 +458,10 @@ class StaticAnalysisEngine:
                     self._port_manager.release_port(session.port)
                 except Exception as e:
                     console.print(f"[yellow]  ⚠ Warning: Failed to release port {session.port}: {e}[/yellow]")
+
+                # Clean up temp binary
+                if session.temp_binary_path:
+                    self._cleanup_temp_binary(session.temp_binary_path)
 
             # Clear sessions
             self._sessions.clear()
