@@ -52,6 +52,9 @@ PORT_LOCK_DIR = TEMP_FILES_DIR / "port_locks"
 IDA_SERVER_LOGS_DIR = TEMP_FILES_DIR / "ida_server_logs"
 """Directory for IDA MCP server log files."""
 
+TEMP_BINARIES_DIR = TEMP_FILES_DIR / "binaries"
+"""Directory for temporary binary copies used during analysis."""
+
 SECURITY_RULES_DIR = Path("security_rules")
 """Directory containing security rule markdown files."""
 
