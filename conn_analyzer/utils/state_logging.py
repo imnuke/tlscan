@@ -90,3 +90,62 @@ def log_agent_state(
         border_style="cyan",
         padding=(0, 1)
     ))
+
+
+def display_recovered_state(
+    state: Dict[str, Any],
+    metadata: Dict[str, Any],
+    output_console: Console = None
+) -> None:
+    """Display recovered checkpoint state before resuming analysis.
+
+    Uses generic JSON serialization for future compatibility - no field-specific
+    parsing so new/removed state fields are handled automatically.
+
+    Args:
+        state: Recovered AnalysisState from checkpoint
+        metadata: Thread metadata (thread_id, binary_path, rules, model, etc.)
+        output_console: Rich console for output (defaults to module console)
+    """
+    if output_console is None:
+        output_console = console
+
+    # Fields to exclude from display (internal/large)
+    EXCLUDE_FIELDS = {"security_rules"}  # Large content, not useful for display
+
+    # Filter and serialize state
+    filtered_state = {k: v for k, v in state.items() if k not in EXCLUDE_FIELDS}
+    serialized_state = _serialize_and_truncate(filtered_state, max_str_len=200)
+
+    # Format as JSON
+    state_json = json.dumps(serialized_state, indent=2, default=str)
+
+    # Create syntax-highlighted display
+    state_syntax = Syntax(state_json, "json", theme="monokai", line_numbers=False)
+
+    # Display metadata header
+    output_console.print()
+    output_console.print(Panel.fit(
+        "[bold cyan]📋 Recovered Checkpoint State[/bold cyan]",
+        border_style="cyan"
+    ))
+    output_console.print()
+
+    # Display thread metadata
+    output_console.print(f"[cyan]Thread:[/cyan] {metadata.get('thread_id', 'N/A')}")
+    output_console.print(f"[cyan]Binary:[/cyan] {metadata.get('binary_path', 'N/A')}")
+    output_console.print(f"[cyan]Rules:[/cyan] {metadata.get('rules', 'N/A')}")
+    output_console.print(f"[cyan]Model:[/cyan] {metadata.get('model', 'N/A')}")
+    if metadata.get('firmware_path'):
+        output_console.print(f"[cyan]Firmware:[/cyan] {metadata.get('firmware_path')}")
+    output_console.print(f"[cyan]Created:[/cyan] {metadata.get('created_at', 'N/A')}")
+    output_console.print()
+
+    # Display full state as JSON
+    output_console.print(Panel(
+        state_syntax,
+        title="[bold cyan]Analysis State[/bold cyan]",
+        border_style="dim",
+        padding=(0, 1)
+    ))
+    output_console.print()

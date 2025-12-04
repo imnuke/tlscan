@@ -137,6 +137,7 @@ async def main(
     checkpointer = None
     run_thread_id = thread_id
     checkpoint_manager = None
+    recovered_state = None  # Loaded checkpoint state for resume/fork
 
     if thread_id:
         # Resume mode - load metadata
@@ -168,7 +169,25 @@ async def main(
             console.print(f"[yellow]  └─ Creating NEW thread with fresh execution[/yellow]")
         else:
             console.print(f"[cyan]🔄 Resuming latest checkpoint from thread:[/cyan] {thread_id}")
-        console.print()
+
+        # Initialize checkpointer early to load and display recovered state
+        await checkpoint_manager.initialize()
+        checkpointer = checkpoint_manager.get_checkpointer()
+
+        # Load checkpoint state for display
+        checkpoint_config = {"configurable": {"thread_id": thread_id}}
+        if fork_checkpoint_id:
+            checkpoint_config["configurable"]["checkpoint_id"] = fork_checkpoint_id
+
+        checkpoint_tuple = await checkpointer.aget_tuple(checkpoint_config)
+        if checkpoint_tuple and checkpoint_tuple.checkpoint:
+            recovered_state = checkpoint_tuple.checkpoint.get('channel_values', {})
+            from conn_analyzer.utils.state_logging import display_recovered_state
+            display_recovered_state(recovered_state, metadata, console)
+        else:
+            console.print(f"[yellow]⚠ No checkpoint state found for thread {thread_id}[/yellow]")
+            console.print()
+            recovered_state = None
 
     # 2. Load config and resolve paths
     file_path = resolve_binary_path(file_path, firmware_path)
@@ -188,8 +207,9 @@ async def main(
     console.print(f"[cyan]🌡️  Temperature:[/cyan] {config.get_default_temperature()} (default)")
     console.print()
 
-    # 3. Initialize checkpointing (if requested or resuming)
-    if save_checkpoints or thread_id:
+    # 3. Initialize checkpointing (if requested and not already done during resume)
+    if save_checkpoints and not checkpointer:
+        # New run with checkpointing - initialize checkpoint manager
         from conn_analyzer.persistence import CheckpointManager
 
         if not checkpoint_manager:
@@ -200,19 +220,18 @@ async def main(
 
         checkpointer = checkpoint_manager.get_checkpointer()
 
-        if not thread_id:
-            # New run - generate thread ID and save metadata
-            run_thread_id = checkpoint_manager.create_thread_id(file_path)
-            checkpoint_manager.save_metadata(
-                run_thread_id,
-                file_path,
-                rules,
-                model,
-                firmware_path
-            )
-            console.print(f"[cyan]💾 Checkpointing enabled[/cyan]")
-            console.print(f"[cyan]📌 Thread ID:[/cyan] {run_thread_id}")
-            console.print()
+        # New run - generate thread ID and save metadata
+        run_thread_id = checkpoint_manager.create_thread_id(file_path)
+        checkpoint_manager.save_metadata(
+            run_thread_id,
+            file_path,
+            rules,
+            model,
+            firmware_path
+        )
+        console.print(f"[cyan]💾 Checkpointing enabled[/cyan]")
+        console.print(f"[cyan]📌 Thread ID:[/cyan] {run_thread_id}")
+        console.print()
 
     # 4. Initialize port manager
     console.print("[cyan]🔧 Initializing port manager...[/cyan]")
@@ -281,46 +300,30 @@ async def main(
             security_rules=security_rules_content
         )
 
-        # If fork_checkpoint_id is provided, load that checkpoint's state for forking
-        if fork_checkpoint_id and checkpointer:
-            console.print(f"[cyan]🔀 Loading state from checkpoint...[/cyan]")
-            try:
-                # Load checkpoint state from the original thread
-                checkpoint_tuple = await checkpointer.aget_tuple({
-                    "configurable": {"thread_id": run_thread_id, "checkpoint_id": fork_checkpoint_id}
-                })
+        # If fork_checkpoint_id is provided, use already-loaded state for forking
+        if fork_checkpoint_id and recovered_state:
+            # Use already-loaded checkpoint state as initial state
+            initial_state = recovered_state
 
-                if checkpoint_tuple:
-                    # Extract state from checkpoint
-                    fork_state = checkpoint_tuple.checkpoint['channel_values']
-                    initial_state = fork_state  # Use checkpoint state as initial state
+            # Create NEW thread ID for fresh execution
+            run_thread_id = checkpoint_manager.create_thread_id(file_path)
 
-                    # Create NEW thread ID for fresh execution
-                    original_thread_id = run_thread_id
-                    run_thread_id = checkpoint_manager.create_thread_id(file_path)
+            # Save metadata for forked thread
+            checkpoint_manager.save_metadata(
+                run_thread_id,
+                file_path,
+                rules,
+                model,
+                firmware_path
+            )
 
-                    # Save metadata for forked thread
-                    checkpoint_manager.save_metadata(
-                        run_thread_id,
-                        file_path,
-                        rules,
-                        model,
-                        firmware_path
-                    )
-
-                    console.print(f"[green]✓ Loaded checkpoint state[/green]")
-                    console.print(f"[cyan]📌 New thread ID:[/cyan] {run_thread_id}")
-                    console.print(f"[cyan]💾 Checkpointing enabled for forked thread[/cyan]")
-                    console.print(f"[dim]  └─ Fresh execution will start from checkpoint state[/dim]")
-                    console.print()
-                else:
-                    console.print(f"[red]Error: Checkpoint {fork_checkpoint_id} not found in thread {original_thread_id}[/red]")
-                    return
-            except Exception as e:
-                console.print(f"[red]Error loading checkpoint: {e}[/red]")
-                import traceback
-                traceback.print_exc()
-                return
+            console.print(f"[cyan]📌 New thread ID:[/cyan] {run_thread_id}")
+            console.print(f"[cyan]💾 Checkpointing enabled for forked thread[/cyan]")
+            console.print(f"[dim]  └─ Fresh execution will start from checkpoint state[/dim]")
+            console.print()
+        elif fork_checkpoint_id and not recovered_state:
+            console.print(f"[red]Error: Could not load checkpoint state for forking[/red]")
+            return
 
         # 11. Execute workflow with checkpointing
         console.print()
