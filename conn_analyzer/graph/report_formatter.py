@@ -6,7 +6,7 @@ and other widgets for better visual hierarchy and readability.
 """
 
 from typing import Dict, Any, List
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -221,33 +221,33 @@ def create_rule_panel(rule: RuleResult, traces: Dict[str, List[VariableTrace]]) 
     Returns:
         Rich Panel with formatted rule information
     """
-    lines = []
+    renderables = []
 
     # Status
-    lines.append(f"[bold]Status:[/bold] {format_status_badge(rule.result)}")
-
-    # Show resolution status for CONDITIONAL rules
+    status_text = f"[bold]Status:[/bold] {format_status_badge(rule.result)}"
     if rule.result == RuleResultStatus.CONDITIONAL:
-        lines.append(f"[bold]Resolution:[/bold] {format_resolution_badge(rule.resolving_status)}")
+        status_text += f"\n[bold]Resolution:[/bold] {format_resolution_badge(rule.resolving_status)}"
 
-    lines.append("")
+    renderables.append(Text.from_markup(status_text))
+    renderables.append(Text(""))  # Empty line
 
     # Evidence
-    lines.append("[bold]Evidence:[/bold]")
-    lines.append(f"[dim]{rule.evidence}[/dim]")
+    evidence_text = f"[bold]Evidence:[/bold]\n[dim]{rule.evidence}[/dim]"
+    renderables.append(Text.from_markup(evidence_text))
 
     # Conditions (if conditional)
     if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
-        lines.append("")
-        lines.append("[bold]Conditions:[/bold]")
-        lines.append("")
+        renderables.append(Text(""))  # Empty line
+        renderables.append(Text.from_markup("[bold]Conditions:[/bold]"))
+        renderables.append(Text(""))  # Empty line
 
         for cond in rule.conditions:
             # Create nested panel for each condition
             cond_panel = create_condition_panel(cond, traces)
-            lines.append(cond_panel)
+            renderables.append(cond_panel)
 
-    content = "\n".join(str(line) for line in lines)
+    # Use Group to combine text and panels
+    content = Group(*renderables)
 
     # Get border color based on status
     border_color = get_border_color(rule.result)
