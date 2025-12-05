@@ -1059,6 +1059,103 @@ async def binary_analysis_sequential(
 # Node: Synthesis (Final Report Generation)
 # ============================================================================
 
+# ----------------------------------------------------------------------------
+# Markdown Formatting Helper Functions
+# ----------------------------------------------------------------------------
+
+def format_status_badge(status: RuleResultStatus) -> str:
+    """Format rule status with emoji and markdown bold."""
+    badges = {
+        RuleResultStatus.PASS: "**✅ PASS**",
+        RuleResultStatus.FAIL: "**❌ FAIL**",
+        RuleResultStatus.CONDITIONAL: "**⚠️ CONDITIONAL**",
+        RuleResultStatus.UNDETERMINED: "**❓ UNDETERMINED**",
+    }
+    return badges.get(status, f"**{status.value.upper()}**")
+
+
+def format_resolution_badge(resolution: RuleResolvingStatus) -> str:
+    """Format resolution status with emoji and markdown."""
+    badges = {
+        RuleResolvingStatus.RESOLVED: "**✓ RESOLVED**",
+        RuleResolvingStatus.UNRESOLVED: "**✗ UNRESOLVED**",
+        RuleResolvingStatus.CANNOT_RESOLVE: "**⚫ CANNOT_RESOLVE**",
+    }
+    return badges.get(resolution, f"**{resolution.value.upper()}**")
+
+
+def format_source_type_badge(source_type: VariableSourceType) -> str:
+    """Format source type with emoji badge."""
+    badges = {
+        VariableSourceType.CONSTANT: "🔢",
+        VariableSourceType.CONFIG_FILE: "🗂️",
+        VariableSourceType.ENVIRONMENT_VARIABLE: "🔧",
+        VariableSourceType.COMMAND_LINE_ARG: "📝",
+        VariableSourceType.FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: "🔗",
+        VariableSourceType.UNKNOWN: "❓",
+    }
+    emoji = badges.get(source_type, "")
+    return f"{emoji} {source_type.value.upper()}"
+
+
+def calculate_rule_statistics(rules: Dict[str, RuleResult]) -> Dict[str, int]:
+    """Calculate counts for each rule status."""
+    stats = {
+        "total": len(rules),
+        "pass": 0,
+        "fail": 0,
+        "conditional": 0,
+        "undetermined": 0,
+    }
+    for rule in rules.values():
+        if rule.result == RuleResultStatus.PASS:
+            stats["pass"] += 1
+        elif rule.result == RuleResultStatus.FAIL:
+            stats["fail"] += 1
+        elif rule.result == RuleResultStatus.CONDITIONAL:
+            stats["conditional"] += 1
+        elif rule.result == RuleResultStatus.UNDETERMINED:
+            stats["undetermined"] += 1
+    return stats
+
+
+def format_summary_table(stats: Dict[str, int], trace_count: int, cross_binary_count: int) -> str:
+    """Format statistics as Markdown table."""
+    lines = [
+        "| Metric | Count |",
+        "|--------|-------|",
+        f"| Total Rules | {stats['total']} |",
+        f"| ✅ Passed | {stats['pass']} |",
+        f"| ❌ Failed | {stats['fail']} |",
+        f"| ⚠️ Conditional | {stats['conditional']} |",
+        f"| ❓ Undetermined | {stats['undetermined']} |",
+        f"| Variables Traced | {trace_count} |",
+        f"| Cross-Binary Traces | {cross_binary_count} |",
+    ]
+    return "\n".join(lines)
+
+
+def format_timestamp() -> str:
+    """Get current UTC timestamp in ISO format."""
+    from datetime import datetime
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def escape_markdown(text: str) -> str:
+    """Escape special markdown characters in text."""
+    if not text:
+        return text
+    # Escape pipe characters for table cells
+    return text.replace("|", "\\|")
+
+
+def wrap_long_text(text: str, width: int = 200) -> str:
+    """Wrap very long text in code block if it exceeds width."""
+    if len(text) > width:
+        return f"```\n{text}\n```"
+    return text
+
+
 async def synthesis_node(
     state: AnalysisState,
 ) -> Dict[str, Any]:
@@ -1107,148 +1204,21 @@ async def synthesis_node(
                 cross_binary_by_path[binary_path] = {}
             cross_binary_by_path[binary_path][trace_key] = traces_list
 
-    # Build report sections
-    report_lines = []
+    # Calculate statistics for summary
+    stats = calculate_rule_statistics(rules)
+    trace_count = sum(len(traces) for traces in variable_traces.values())
+    cross_binary_count = sum(
+        len(traces)
+        for binary_traces in cross_binary_by_path.values()
+        for traces in binary_traces.values()
+    )
 
-    # Header
-    report_lines.append("=" * 80)
-    report_lines.append("SSL/TLS SECURITY ANALYSIS REPORT")
-    report_lines.append("=" * 80)
-    report_lines.append("")
+    # Add counts to stats dict for display
+    stats["trace_count"] = trace_count
+    stats["cross_binary_count"] = cross_binary_count
 
-    # Client summary
-    report_lines.append(f"Client Type: {client_type}")
-    report_lines.append("")
-    report_lines.append("Summary:")
-    report_lines.append(ssl_summary)
-    report_lines.append("")
-
-    # Rules section
-    report_lines.append("=" * 80)
-    report_lines.append("SECURITY RULES ANALYSIS")
-    report_lines.append("=" * 80)
-    report_lines.append("")
-
-    for rule_id, rule in rules.items():
-        report_lines.append(f"Rule: {rule.rule_name}")
-        report_lines.append(f"Status: {rule.result.value.upper()}")
-
-        # Show resolving status for CONDITIONAL rules
-        if rule.result == RuleResultStatus.CONDITIONAL:
-            status_symbol = "✓" if rule.resolving_status == RuleResolvingStatus.RESOLVED else "✗"
-            report_lines.append(f"Resolution: {status_symbol} {rule.resolving_status.value.upper()}")
-
-        report_lines.append(f"Evidence: {rule.evidence}")
-
-        # If conditional, show variable traces
-        if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
-            report_lines.append("Conditions:")
-            for cond in rule.conditions:
-                report_lines.append(f"  - Variable: {cond.variable} in {cond.function}")
-
-                # Look up trace using composite key "function:variable"
-                composite_key = f"{cond.function}:{cond.variable}"
-                if composite_key in main_traces:
-                    traces_list = main_traces[composite_key]
-
-                    # Handle single vs multiple sources
-                    if len(traces_list) == 1:
-                        # Single source - existing format
-                        trace = traces_list[0]
-                        report_lines.append(f"    Source: {trace.source.value}")
-
-                        # Show detailed source information from typed details
-                        if isinstance(trace.source_details, ConstantDetails):
-                            if trace.source_details.constant_name:
-                                report_lines.append(f"    Details: Constant {trace.source_details.constant_name} = {trace.source_details.constant_value}")
-                        elif isinstance(trace.source_details, ConfigFileDetails):
-                            details_str = f"    Details: Config file {trace.source_details.config_path}"
-                            if trace.source_details.config_key:
-                                details_str += f" (key: {trace.source_details.config_key})"
-                            report_lines.append(details_str)
-                        elif isinstance(trace.source_details, FunctionParameterDetails):
-                            report_lines.append(f"    Details: External call to {trace.source_details.external_function} (parameter: {trace.source_details.parameter_name})")
-                        elif isinstance(trace.source_details, EnvironmentVariableDetails):
-                            report_lines.append(f"    Details: Environment variable {trace.source_details.env_var_name}")
-                        elif isinstance(trace.source_details, CommandLineArgDetails):
-                            details_str = "    Details: Command-line argument"
-                            if trace.source_details.arg_name:
-                                details_str += f" {trace.source_details.arg_name}"
-                            report_lines.append(details_str)
-
-                        if trace.value:
-                            report_lines.append(f"    Value: {trace.value}")
-                            # Apply security mapping
-                            if trace.value in cond.security_mapping:
-                                outcome = cond.security_mapping[trace.value]
-                                report_lines.append(f"    Outcome: {outcome}")
-                        report_lines.append(f"    Trace: {trace.trace_path}")
-
-                    else:
-                        # Multiple sources - show all
-                        report_lines.append(f"    ⚠️  Variable computed from {len(traces_list)} sources:")
-                        for i, trace in enumerate(traces_list, 1):
-                            report_lines.append(f"      Source {i}: {trace.source.value}")
-
-                            # Show details for each source
-                            if isinstance(trace.source_details, ConfigFileDetails):
-                                details_str = f"        Config: {trace.source_details.config_path}"
-                                if trace.source_details.config_key:
-                                    details_str += f" (key: {trace.source_details.config_key})"
-                                report_lines.append(details_str)
-                            elif isinstance(trace.source_details, CommandLineArgDetails):
-                                details_str = "        CLI Arg:"
-                                if trace.source_details.arg_name:
-                                    details_str += f" {trace.source_details.arg_name}"
-                                report_lines.append(details_str)
-                            elif isinstance(trace.source_details, ConstantDetails):
-                                report_lines.append(f"        Constant: {trace.source_details.constant_value}")
-
-                            if trace.value:
-                                report_lines.append(f"        Value: {trace.value}")
-                                # Apply security mapping
-                                if trace.value in cond.security_mapping:
-                                    outcome = cond.security_mapping[trace.value]
-                                    report_lines.append(f"        → Outcome: {outcome}")
-
-                            report_lines.append(f"        Trace: {trace.trace_path}")
-                else:
-                    report_lines.append(f"    [No trace available]")
-
-        report_lines.append("")
-
-    # Cross-binary findings
-    if cross_binary_by_path:
-        report_lines.append("=" * 80)
-        report_lines.append("CROSS-BINARY ANALYSIS")
-        report_lines.append("=" * 80)
-        report_lines.append("")
-
-        for binary_path, traces in cross_binary_by_path.items():
-            report_lines.append(f"Binary: {binary_path}")
-            for trace_key, traces_list in traces.items():
-                # trace_key is "function:variable", traces_list is List[VariableTrace]
-                for trace in traces_list:
-                    report_lines.append(f"  - {trace.variable} in {trace.function}: {trace.source.value}")
-                    if trace.value:
-                        report_lines.append(f"    Value: {trace.value}")
-            report_lines.append("")
-
-    # Script findings (CLI argument sources)
-    if state.get("script_findings"):
-        report_lines.append("=" * 80)
-        report_lines.append("STARTUP SCRIPTS FOUND (MANUAL REVIEW REQUIRED)")
-        report_lines.append("=" * 80)
-        report_lines.append("")
-        report_lines.append("⚠️  TODO: Implement automated CLI argument extraction from scripts")
-        report_lines.append("")
-        report_lines.append("The following scripts invoke the analyzed binary:")
-        for script in state["script_findings"]:
-            report_lines.append(f"  - {script}")
-        report_lines.append("")
-        report_lines.append("Manual inspection of these scripts is recommended to determine")
-        report_lines.append("the values passed via command-line arguments.")
-        report_lines.append("")
+    # Script findings for display
+    script_findings = state.get('script_findings', [])
 
     # Update resolving_status for CONDITIONAL rules based on trace resolution
     updated_rules = {}
@@ -1297,12 +1267,24 @@ async def synthesis_node(
             # Non-conditional rules keep their existing status (already RESOLVED)
             updated_rules[rule_id] = rule
 
-    final_report = "\n".join(report_lines)
-
-    console.print("[green]✓ Final report generated[/green]")
+    console.print("[green]✓ Report data prepared[/green]")
 
     return {
-        "final_report": final_report,
+        "report_data": {
+            "summary_stats": stats,
+            "context": {
+                "binary_path": state.get("binary_path"),
+                "client_type": client_type,
+                "firmware_path": state.get("firmware_path"),
+                "summary": ssl_summary
+            },
+            "rules": updated_rules,
+            "traces": {
+                "main": main_traces,
+                "cross_binary": cross_binary_by_path
+            },
+            "scripts": script_findings
+        },
         "rule_result": updated_rules,  # Update rules with resolution status
         "current_phase": AnalysisPhase.COMPLETED,
     }

@@ -37,6 +37,7 @@ from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
 from conn_analyzer.graph.state import create_initial_state
 from conn_analyzer.graph.workflow import create_analysis_graph, run_analysis
+from conn_analyzer.graph.report_formatter import format_and_display_report
 
 from conn_analyzer.static_analysis import firmware_tools
 
@@ -357,23 +358,12 @@ async def main(
         ))
         console.print()
 
-        final_report = final_state.get("final_report")
-        if final_report:
-            console.print("[bold cyan]📊 Final Security Report:[/bold cyan]")
-            console.print()
-            console.print(final_report)
+        # Display report using Rich widgets
+        report_data = final_state.get("report_data")
+        if report_data:
+            format_and_display_report(console, report_data)
         else:
-            console.print("[yellow]⚠ No final report generated[/yellow]")
-
-        # Display analysis details
-        console.print()
-        console.print("[bold cyan]📈 Analysis Statistics:[/bold cyan]")
-        console.print(f"  - Client Type: {final_state.get('client_type', 'N/A')}")
-        console.print(f"  - Rules Analyzed: {len(final_state.get('rules', {}))}")
-        console.print(f"  - Variables Traced: {len(final_state.get('variable_traces', {}))}")
-        console.print(f"  - Binaries Analyzed: {len(final_state.get('analyzed_binaries', set())) + 1}")  # +1 for main
-        if final_state.get('errors'):
-            console.print(f"  - Errors Encountered: {len(final_state['errors'])}")
+            console.print("[yellow]⚠ No report data generated[/yellow]")
 
     except KeyboardInterrupt:
         console.print()
