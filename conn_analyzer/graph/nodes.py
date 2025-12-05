@@ -21,7 +21,7 @@ from conn_analyzer.graph.state import (
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
-    RuleResolvingStatus,
+    TraceResolvingStatus,
     SSLAnalysisOutput,
     DataflowAnalysisOutput,
     FirmwareSearchResult,
@@ -31,13 +31,8 @@ from conn_analyzer.graph.models import (
     DataflowTask,
     VariableSpec,
     TaskType,
-    VariableSourceType,
-    FunctionParameterDetails,
-    ConstantDetails,
-    ConfigFileDetails,
-    EnvironmentVariableDetails,
-    CommandLineArgDetails,
-    UnknownDetails,
+    SourceKind,
+    TraceStepType,
 )
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
@@ -122,27 +117,11 @@ async def ssl_analysis_node(
     console.print(f"[green]✓ SSL analysis complete: {result.client_type}[/green]")
     console.print(f"[dim]  Rules analyzed: {len(result.rules)}[/dim]")
 
-    # Convert rules list to dict and set correct resolving_status
+    # Convert rules list to dict
+    # Note: Resolution status is now at trace level, not rule level
     rules_dict: Dict[str, RuleResult] = {}
     for rule in result.rules:
-        # Determine resolving_status based on result type and conditions
-        if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
-            # Needs dataflow analysis - keep as UNRESOLVED
-            resolving_status = RuleResolvingStatus.UNRESOLVED
-        else:
-            # Definitive result (PASS/FAIL/UNDETERMINED) - mark as RESOLVED
-            resolving_status = RuleResolvingStatus.RESOLVED
-
-        # Create updated rule with correct status
-        updated_rule = RuleResult(
-            rule_id=rule.rule_id,
-            rule_name=rule.rule_name,
-            result=rule.result,
-            resolving_status=resolving_status,
-            evidence=rule.evidence,
-            conditions=rule.conditions
-        )
-        rules_dict[rule.rule_id] = updated_rule
+        rules_dict[rule.rule_id] = rule
 
     # Create dataflow tasks for all CONDITIONAL rules
     pending_dataflow_tasks: List[DataflowTask] = []
@@ -208,87 +187,67 @@ def create_follow_up_tasks_from_trace(
     new_dataflow_tasks = []
     config_fetch_tasks = []
 
+    # Get source info from the final step of trace_path
+    if not trace.trace_path:
+        return new_dataflow_tasks, config_fetch_tasks
+
+    last_step = trace.trace_path[-1]
+
+    # Only process TRACE_END steps with source_kind
+    if last_step.step_type != TraceStepType.TRACE_END or not last_step.source_kind:
+        return new_dataflow_tasks, config_fetch_tasks
+
+    source_kind = last_step.source_kind
+
     # Check if this trace needs config fetching
-    if trace.source == VariableSourceType.CONFIG_FILE:
-        # Extract config path (handle both Pydantic model and dict)
-        config_details = None
-        if isinstance(trace.source_details, ConfigFileDetails):
-            config_details = trace.source_details
-        elif isinstance(trace.source_details, dict):
-            try:
-                config_details = ConfigFileDetails(**trace.source_details)
-            except Exception:
-                pass
+    if source_kind == SourceKind.CONFIG_FILE:
+        config_reference = last_step.config_file or "unknown_config_file"
+        if last_step.config_key:
+            config_reference = f"{config_reference} (key: {last_step.config_key})"
 
-        if config_details:
-            config_reference = config_details.config_file or "unknown_config_file"
-            if config_details.config_key:
-                config_reference = f"{config_reference} (key: {config_details.config_key})"
-
-            config_task = ConfigFetchTask(
-                variable=trace.variable,
-                function=trace.function,
-                config_reference=config_reference,
-                trace_details=trace.trace_path
-            )
-            config_fetch_tasks.append(config_task)
+        config_task = ConfigFetchTask(
+            variable=trace.variable,
+            function=trace.function,
+            config_reference=config_reference,
+            trace_details=str(trace.trace_path)  # Convert to string for storage
+        )
+        config_fetch_tasks.append(config_task)
 
     # Check if this trace comes from command-line arguments
-    elif trace.source == VariableSourceType.COMMAND_LINE_ARG:
-        # Extract CLI arg details (handle both Pydantic model and dict)
-        cli_details = None
-        if isinstance(trace.source_details, CommandLineArgDetails):
-            cli_details = trace.source_details
-        elif isinstance(trace.source_details, dict):
-            try:
-                cli_details = CommandLineArgDetails(**trace.source_details)
-            except Exception:
-                pass
+    elif source_kind == SourceKind.COMMAND_LINE_ARG:
+        # Get binary path from composite_key: "binary_path:function:variable"
+        key_parts = composite_key.split(":")
+        if len(key_parts) >= 3:
+            binary_path = ":".join(key_parts[:-2])
+        else:
+            binary_path = None
 
-        if cli_details:
-            # Get binary path from composite_key: "binary_path:function:variable"
-            key_parts = composite_key.split(":")
-            if len(key_parts) >= 3:
-                binary_path = ":".join(key_parts[:-2])
-            else:
-                binary_path = None
+        arg_name = last_step.arg_name or "CLI argument"
 
-            arg_name = cli_details.arg_name or "CLI argument"
+        # Find the original variable's security_mapping
+        original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
+        security_mapping = original_var.get("security_mapping", {}) if original_var else {}
 
-            # Find the original variable's security_mapping
-            original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
-            security_mapping = original_var.get("security_mapping", {}) if original_var else {}
-
-            script_discovery_task = DataflowTask(
-                type=TaskType.NEEDS_SCRIPT_DISCOVERY,
-                target=binary_path if binary_path else "unknown",
-                variables=[VariableSpec(
-                    variable=trace.variable,
-                    function=trace.function,
-                    function_address=None,
-                    security_mapping=security_mapping,
-                )],
-                binary_path=None,
-                context=f"Find scripts/binaries that invoke this binary and extract CLI argument: {arg_name}"
-            )
-            new_dataflow_tasks.append(script_discovery_task)
+        script_discovery_task = DataflowTask(
+            type=TaskType.NEEDS_SCRIPT_DISCOVERY,
+            target=binary_path if binary_path else "unknown",
+            variables=[VariableSpec(
+                variable=trace.variable,
+                function=trace.function,
+                function_address=None,
+                security_mapping=security_mapping,
+            )],
+            binary_path=None,
+            context=f"Find scripts/binaries that invoke this binary and extract CLI argument: {arg_name}"
+        )
+        new_dataflow_tasks.append(script_discovery_task)
 
     # Check for further cross-binary calls
-    elif trace.source == VariableSourceType.FUNCTION_PARAMETER_FROM_EXTERNAL_CALL:
-        # Create needs_caller_discovery task
-        param_details = None
-        if isinstance(trace.source_details, FunctionParameterDetails):
-            param_details = trace.source_details
-        elif isinstance(trace.source_details, dict):
-            try:
-                param_details = FunctionParameterDetails(**trace.source_details)
-            except Exception:
-                pass
+    elif source_kind == SourceKind.EXTERNAL_CALL:
+        function_name = last_step.external_function
+        parameter_name = last_step.parameter_name
 
-        if param_details:
-            function_name = param_details.external_function
-            parameter_name = param_details.parameter_name
-
+        if function_name and parameter_name:
             # Find the original variable's security_mapping
             original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
             security_mapping = original_var.get("security_mapping", {}) if original_var else {}
@@ -485,89 +444,84 @@ async def dataflow_analysis_node(
             if composite_key not in all_traces:
                 all_traces[composite_key] = []
             all_traces[composite_key].append(trace)
-            console.print(f"[dim]    ✓ {trace.variable}: {trace.source.value}[/dim]")
+
+            # Get source info from final step of trace_path
+            last_step = trace.trace_path[-1] if trace.trace_path else None
+            source_kind = last_step.source_kind if last_step and last_step.step_type == TraceStepType.TRACE_END else None
+            console.print(f"[dim]    ✓ {trace.variable}: {source_kind.value if source_kind else 'unknown'}[/dim]")
 
             # Check if this trace needs config fetching
-            if trace.source == VariableSourceType.CONFIG_FILE:
-                # Extract config path from typed source_details
-                config_reference = None
-                if isinstance(trace.source_details, ConfigFileDetails):
-                    config_reference = trace.source_details.config_file
-                    if trace.source_details.config_key:
-                        config_reference = f"{config_reference} (key: {trace.source_details.config_key})"
+            if source_kind == SourceKind.CONFIG_FILE:
+                config_reference = last_step.config_file or "unknown_config_file"
+                if last_step.config_key:
+                    config_reference = f"{config_reference} (key: {last_step.config_key})"
 
                 config_task = ConfigFetchTask(
                     variable=trace.variable,
                     function=trace.function,
                     config_reference=config_reference,
-                    trace_details=trace.trace_path
+                    trace_details=str(trace.trace_path)
                 )
                 config_fetch_tasks.append(config_task)
                 console.print(f"[dim]    → Config fetch needed for {trace.variable} from {config_reference}[/dim]")
 
             # Check if this trace requires cross-binary analysis
-            elif trace.source == VariableSourceType.FUNCTION_PARAMETER_FROM_EXTERNAL_CALL:
-                # Extract function name from typed source_details
-                if isinstance(trace.source_details, FunctionParameterDetails):
-                    function_name = trace.source_details.external_function
-                    parameter_name = trace.source_details.parameter_name
+            elif source_kind == SourceKind.EXTERNAL_CALL:
+                function_name = last_step.external_function
+                parameter_name = last_step.parameter_name
 
+                if function_name and parameter_name:
                     # Find the original variable's security_mapping to preserve it
                     original_var = next((v for v in task.variables if v.variable == trace.variable and v.function == trace.function), None)
                     security_mapping = original_var.security_mapping if (original_var and original_var.security_mapping) else {}
 
                     # Create NEW variables for the external function's parameter
-                    # (NOT the original function's variable - that would confuse the next agent)
                     new_variables = [VariableSpec(
                         variable=parameter_name,
                         function=function_name,
-                        function_address=None,  # External function address unknown
-                        security_mapping=security_mapping,  # Preserve security mapping
+                        function_address=None,
+                        security_mapping=security_mapping,
                     )]
 
                     # Create a "needs_caller_discovery" task
                     caller_discovery_task = DataflowTask(
                         type=TaskType.NEEDS_CALLER_DISCOVERY,
                         target=function_name,
-                        variables=new_variables,  # New variables for external function parameter
+                        variables=new_variables,
                         binary_path=None,
                         context=f"Find callers of {function_name} and trace parameter {parameter_name}"
                     )
                     new_dataflow_tasks.append(caller_discovery_task)
                     console.print(f"[dim]    → Cross-binary discovery needed for function '{function_name}', parameter '{parameter_name}'[/dim]")
                 else:
-                    console.print(f"[yellow]⚠ Invalid source_details type for FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: {type(trace.source_details)}[/yellow]")
+                    console.print(f"[yellow]⚠ Missing external_function or parameter_name in trace_end step[/yellow]")
 
             # Check if this trace comes from command-line arguments
-            elif trace.source == VariableSourceType.COMMAND_LINE_ARG:
-                # Extract CLI arg details
-                if isinstance(trace.source_details, CommandLineArgDetails):
-                    arg_name = trace.source_details.arg_name or "CLI argument"
+            elif source_kind == SourceKind.COMMAND_LINE_ARG:
+                arg_name = last_step.arg_name or "CLI argument"
 
-                    # Find the original variable's security_mapping
-                    original_var = next((v for v in task.variables if v.variable == trace.variable and v.function == trace.function), None)
-                    security_mapping = original_var.security_mapping if (original_var and original_var.security_mapping) else {}
+                # Find the original variable's security_mapping
+                original_var = next((v for v in task.variables if v.variable == trace.variable and v.function == trace.function), None)
+                security_mapping = original_var.security_mapping if (original_var and original_var.security_mapping) else {}
 
-                    # Create variables for CLI arg analysis in calling scripts/binaries
-                    cli_variables = [VariableSpec(
-                        variable=trace.variable,
-                        function=trace.function,
-                        function_address=None,
-                        security_mapping=security_mapping,
-                    )]
+                # Create variables for CLI arg analysis in calling scripts/binaries
+                cli_variables = [VariableSpec(
+                    variable=trace.variable,
+                    function=trace.function,
+                    function_address=None,
+                    security_mapping=security_mapping,
+                )]
 
-                    # Create a "needs_script_discovery" task to find startup scripts/binaries
-                    script_discovery_task = DataflowTask(
-                        type=TaskType.NEEDS_SCRIPT_DISCOVERY,
-                        target=binary_path,  # The binary being invoked
-                        variables=cli_variables,
-                        binary_path=None,
-                        context=f"Find scripts/binaries that invoke this binary and extract CLI argument: {arg_name}"
-                    )
-                    new_dataflow_tasks.append(script_discovery_task)
-                    console.print(f"[dim]    → Script discovery needed for CLI argument '{arg_name}'[/dim]")
-                else:
-                    console.print(f"[yellow]⚠ Invalid source_details type for COMMAND_LINE_ARG: {type(trace.source_details)}[/yellow]")
+                # Create a "needs_script_discovery" task to find startup scripts/binaries
+                script_discovery_task = DataflowTask(
+                    type=TaskType.NEEDS_SCRIPT_DISCOVERY,
+                    target=binary_path,
+                    variables=cli_variables,
+                    binary_path=None,
+                    context=f"Find scripts/binaries that invoke this binary and extract CLI argument: {arg_name}"
+                )
+                new_dataflow_tasks.append(script_discovery_task)
+                console.print(f"[dim]    → Script discovery needed for CLI argument '{arg_name}'[/dim]")
 
         # Log state changes for this individual task
         traces_after = set(all_traces.keys())
@@ -828,14 +782,19 @@ async def _process_config_fetch(
                 # Find the config trace in the list and update it
                 traces_list = all_traces[composite_key]
                 for i, original_trace in enumerate(traces_list):
-                    if original_trace.source == VariableSourceType.CONFIG_FILE and task.variable in result.config_values:
+                    # Check if this trace is a CONFIG_FILE source using final step
+                    last_step = original_trace.trace_path[-1] if original_trace.trace_path else None
+                    is_config_trace = (
+                        last_step and
+                        last_step.step_type == TraceStepType.TRACE_END and
+                        last_step.source_kind == SourceKind.CONFIG_FILE
+                    )
+                    if is_config_trace and task.variable in result.config_values:
                         # Create updated trace with fetched value
                         updated_trace = VariableTrace(
                             function=original_trace.function,
                             variable=original_trace.variable,
-                            source=original_trace.source,
                             value=result.config_values[task.variable],
-                            source_details=original_trace.source_details,
                             confidence=original_trace.confidence,
                             trace_path=original_trace.trace_path
                         )
@@ -1087,28 +1046,28 @@ def format_status_badge(status: RuleResultStatus) -> str:
     return badges.get(status, f"**{status.value.upper()}**")
 
 
-def format_resolution_badge(resolution: RuleResolvingStatus) -> str:
-    """Format resolution status with emoji and markdown."""
+def format_trace_resolution_badge(resolution: TraceResolvingStatus) -> str:
+    """Format trace resolution status with emoji and markdown."""
     badges = {
-        RuleResolvingStatus.RESOLVED: "**✓ RESOLVED**",
-        RuleResolvingStatus.UNRESOLVED: "**✗ UNRESOLVED**",
-        RuleResolvingStatus.CANNOT_RESOLVE: "**⚫ CANNOT_RESOLVE**",
+        TraceResolvingStatus.PENDING: "**⏳ PENDING**",
+        TraceResolvingStatus.RESOLVED: "**✓ RESOLVED**",
+        TraceResolvingStatus.CANNOT_RESOLVE: "**⊘ CANNOT_RESOLVE**",
     }
     return badges.get(resolution, f"**{resolution.value.upper()}**")
 
 
-def format_source_type_badge(source_type: VariableSourceType) -> str:
-    """Format source type with emoji badge."""
+def format_source_kind_badge(source_kind: SourceKind) -> str:
+    """Format source kind with emoji badge."""
     badges = {
-        VariableSourceType.CONSTANT: "🔢",
-        VariableSourceType.CONFIG_FILE: "🗂️",
-        VariableSourceType.ENVIRONMENT_VARIABLE: "🔧",
-        VariableSourceType.COMMAND_LINE_ARG: "📝",
-        VariableSourceType.FUNCTION_PARAMETER_FROM_EXTERNAL_CALL: "🔗",
-        VariableSourceType.UNKNOWN: "❓",
+        SourceKind.CONSTANT: "🔢",
+        SourceKind.CONFIG_FILE: "🗂️",
+        SourceKind.ENVIRONMENT_VARIABLE: "🔧",
+        SourceKind.COMMAND_LINE_ARG: "📝",
+        SourceKind.EXTERNAL_CALL: "🔗",
+        SourceKind.UNKNOWN: "❓",
     }
-    emoji = badges.get(source_type, "")
-    return f"{emoji} {source_type.value.upper()}"
+    emoji = badges.get(source_kind, "")
+    return f"{emoji} {source_kind.value.upper()}"
 
 
 def calculate_rule_statistics(rules: Dict[str, RuleResult]) -> Dict[str, int]:
@@ -1233,54 +1192,107 @@ async def synthesis_node(
     # Script findings for display
     script_findings = state.get('script_findings', [])
 
-    # Update resolving_status for CONDITIONAL rules based on trace resolution
-    updated_rules = {}
-    for rule_id, rule in rules.items():
-        if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
-            # Track resolution for this rule's conditions
-            total_conditions = len(rule.conditions)
-            resolved_conditions = 0
+    # Build mapping from (function, variable) to security_mapping for quick lookup
+    condition_mappings: Dict[str, Dict[str, str]] = {}
+    for rule in rules.values():
+        for cond in rule.conditions:
+            key = create_trace_key(cond.function, cond.variable)
+            condition_mappings[key] = cond.security_mapping
 
-            for cond in rule.conditions:
-                composite_key = create_trace_key(cond.function, cond.variable)
+    # Update resolving_status for each trace based on condition matching
+    updated_main_traces: Dict[str, List[VariableTrace]] = {}
+    resolved_count = 0
+    cannot_resolve_count = 0
 
-                if composite_key in main_traces:
-                    traces_list = main_traces[composite_key]
-                    # Check if any trace has a value that maps to an outcome
-                    for trace in traces_list:
-                        if trace.value and trace.value in cond.security_mapping:
-                            resolved_conditions += 1
-                            break  # Count this condition as resolved
+    for composite_key, traces_list in main_traces.items():
+        updated_traces = []
+        security_mapping = condition_mappings.get(composite_key)
 
-            # Update resolving status based on resolution success
-            if resolved_conditions == total_conditions:
-                # All conditions successfully resolved
-                new_resolving_status = RuleResolvingStatus.RESOLVED
-                console.print(f"[green]✓ Rule '{rule.rule_name}': All {total_conditions} condition(s) resolved[/green]")
-            elif resolved_conditions > 0:
-                # Partial resolution - still mark as resolved
-                new_resolving_status = RuleResolvingStatus.RESOLVED
-                console.print(f"[yellow]⚠ Rule '{rule.rule_name}': {resolved_conditions}/{total_conditions} condition(s) resolved[/yellow]")
+        for trace in traces_list:
+            # Get source info from final step of trace_path
+            last_step = trace.trace_path[-1] if trace.trace_path else None
+            source_kind = last_step.source_kind if last_step and last_step.step_type == TraceStepType.TRACE_END else None
+
+            # Determine resolution status based on value and mapping
+            if security_mapping and trace.value is not None:
+                if trace.value in security_mapping:
+                    # Successfully resolved - value maps to security outcome
+                    updated_trace = VariableTrace(
+                        function=trace.function,
+                        variable=trace.variable,
+                        value=trace.value,
+                        confidence=trace.confidence,
+                        trace_path=trace.trace_path,
+                        resolving_status=TraceResolvingStatus.RESOLVED,
+                        outcome=security_mapping[trace.value],
+                        resolution_reason=None,
+                    )
+                    resolved_count += 1
+                else:
+                    # Value not in expected mappings
+                    expected_keys = ", ".join(f"'{k}'" for k in security_mapping.keys())
+                    updated_trace = VariableTrace(
+                        function=trace.function,
+                        variable=trace.variable,
+                        value=trace.value,
+                        confidence=trace.confidence,
+                        trace_path=trace.trace_path,
+                        resolving_status=TraceResolvingStatus.CANNOT_RESOLVE,
+                        outcome=None,
+                        resolution_reason=f"Value '{trace.value}' not in expected mappings: [{expected_keys}]",
+                    )
+                    cannot_resolve_count += 1
+            elif trace.value is None:
+                # No concrete value determined
+                if source_kind == SourceKind.EXTERNAL_CALL:
+                    reason = "Value controlled by external caller"
+                    if last_step and last_step.external_function:
+                        reason += f" (via {last_step.external_function})"
+                    reason += " - cannot determine statically"
+                else:
+                    reason = f"No concrete value determined from {source_kind.value if source_kind else 'unknown'}"
+
+                updated_trace = VariableTrace(
+                    function=trace.function,
+                    variable=trace.variable,
+                    value=trace.value,
+                    confidence=trace.confidence,
+                    trace_path=trace.trace_path,
+                    resolving_status=TraceResolvingStatus.CANNOT_RESOLVE,
+                    outcome=None,
+                    resolution_reason=reason,
+                )
+                cannot_resolve_count += 1
             else:
-                # Could not resolve any conditions
-                new_resolving_status = RuleResolvingStatus.CANNOT_RESOLVE
-                console.print(f"[red]✗ Rule '{rule.rule_name}': Cannot resolve conditions[/red]")
+                # No security mapping for this trace (shouldn't happen normally)
+                updated_trace = VariableTrace(
+                    function=trace.function,
+                    variable=trace.variable,
+                    value=trace.value,
+                    confidence=trace.confidence,
+                    trace_path=trace.trace_path,
+                    resolving_status=TraceResolvingStatus.CANNOT_RESOLVE,
+                    outcome=None,
+                    resolution_reason="No matching security condition found",
+                )
+                cannot_resolve_count += 1
 
-            # Create updated rule with new resolving_status
-            updated_rule = RuleResult(
-                rule_id=rule.rule_id,
-                rule_name=rule.rule_name,
-                result=rule.result,
-                resolving_status=new_resolving_status,
-                evidence=rule.evidence,
-                conditions=rule.conditions,
-            )
-            updated_rules[rule_id] = updated_rule
-        else:
-            # Non-conditional rules keep their existing status (already RESOLVED)
-            updated_rules[rule_id] = rule
+            updated_traces.append(updated_trace)
+
+        updated_main_traces[composite_key] = updated_traces
+
+    # Log resolution summary
+    if resolved_count > 0:
+        console.print(f"[green]✓ Traces resolved: {resolved_count}[/green]")
+    if cannot_resolve_count > 0:
+        console.print(f"[yellow]⚠ Traces unresolved: {cannot_resolve_count}[/yellow]")
 
     console.print("[green]✓ Report data prepared[/green]")
+
+    # Merge updated traces back into variable_traces
+    # Note: This updates the state with resolution status on each trace
+    updated_variable_traces = dict(variable_traces)  # Copy original
+    updated_variable_traces.update(updated_main_traces)  # Update with resolved traces
 
     return {
         "report_data": {
@@ -1291,13 +1303,13 @@ async def synthesis_node(
                 "firmware_path": state.get("firmware_path"),
                 "summary": ssl_summary
             },
-            "rules": updated_rules,
+            "rules": rules,
             "traces": {
-                "main": main_traces,
+                "main": updated_main_traces,
                 "cross_binary": cross_binary_by_path
             },
             "scripts": script_findings
         },
-        "rule_result": updated_rules,  # Update rules with resolution status
+        "variable_traces": updated_variable_traces,  # Update traces with resolution status
         "current_phase": AnalysisPhase.COMPLETED,
     }

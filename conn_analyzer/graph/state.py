@@ -193,25 +193,32 @@ class AnalysisState(TypedDict, total=False):
     Using composite keys prevents conflicts when the same variable name appears
     in different functions or binaries.
 
+    Each VariableTrace now contains:
+    - trace_path: List[TraceStep] - structured list of trace steps
+    - resolving_status: TraceResolvingStatus - PENDING/RESOLVED/CANNOT_RESOLVE
+    - outcome: Optional[str] - security outcome when resolved
+    - resolution_reason: Optional[str] - explanation when cannot_resolve
+
     Example:
     {
-        "SSL_CTX_set_verify:verify_mode": VariableTrace(
+        "SSL_CTX_set_verify:verify_mode": [VariableTrace(
             variable="verify_mode",
             function="SSL_CTX_set_verify",
-            source=VariableSourceType.CONSTANT,
-            value="1",
-            source_details="SSL_VERIFY_PEER",
-            confidence="high",
-            trace_path="Traced from parameter 2 → local var → constant 1"
-        ),
-        "/usr/bin/app:init_ssl:ssl_mode": VariableTrace(
-            variable="ssl_mode",
-            function="init_ssl",
-            source=VariableSourceType.CONSTANT,
             value="1",
             confidence="high",
-            trace_path="Cross-binary trace from caller /usr/bin/app"
-        )
+            trace_path=[
+                TraceStep(step_number=1, step_type="trace_start",
+                          description="Begin tracing verify_mode in SSL_CTX_set_verify",
+                          function="SSL_CTX_set_verify"),
+                TraceStep(step_number=2, step_type="trace_end",
+                          description="Found constant value 1",
+                          source_kind="constant",
+                          constant_value="1",
+                          constant_name="SSL_VERIFY_PEER")
+            ],
+            resolving_status=TraceResolvingStatus.RESOLVED,
+            outcome="PASS - enables verification"
+        )]
     }
     """
 

@@ -5,7 +5,7 @@ Using Pydantic ensures type safety and eliminates regex parsing.
 """
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Literal, Optional, List, Dict, Any, Union
+from typing import Literal, Optional, List, Dict, Any
 from enum import Enum
 
 
@@ -21,23 +21,14 @@ class RuleResultStatus(str, Enum):
     FAIL = "fail"
     CONDITIONAL = "conditional"
 
-class RuleResolvingStatus(str, Enum):
-    """Status of rule resolution during analysis."""
-
-    UNRESOLVED = "unresolved"
-    RESOLVED = "resolved"
-    CANNOT_RESOLVE = "cannot_resolve"
-
-
-
-class VariableSourceType(str, Enum):
-    """Source of a variable's value in dataflow analysis."""
+class SourceKind(str, Enum):
+    """What kind of source was found at TRACE_END step."""
 
     CONSTANT = "constant"
     CONFIG_FILE = "config_file"
     ENVIRONMENT_VARIABLE = "environment_variable"
     COMMAND_LINE_ARG = "command_line_arg"
-    FUNCTION_PARAMETER_FROM_EXTERNAL_CALL = "function_parameter_from_external_call"
+    EXTERNAL_CALL = "external_call"
     UNKNOWN = "unknown"
 
 
@@ -57,6 +48,24 @@ class TaskType(str, Enum):
     CONFIG = "config"
     NEEDS_CALLER_DISCOVERY = "needs_caller_discovery"
     NEEDS_SCRIPT_DISCOVERY = "needs_script_discovery"
+
+
+class TraceStepType(str, Enum):
+    """Type of step in a dataflow trace path."""
+
+    TRACE_START = "trace_start"
+    CALL_SITE = "call_site"
+    PARAMETER_TRANSFORM = "parameter_transform"
+    VARIABLE_ASSIGNMENT = "variable_assignment"
+    TRACE_END = "trace_end"
+
+
+class TraceResolvingStatus(str, Enum):
+    """Resolution status for a single trace."""
+
+    PENDING = "pending"
+    RESOLVED = "resolved"
+    CANNOT_RESOLVE = "cannot_resolve"
 
 
 # ============================================================================
@@ -191,11 +200,6 @@ class RuleResult(BaseModel):
         description="Rule status: pass/fail/conditional/undetermined"
     )
 
-    resolving_status: RuleResolvingStatus = Field(
-        RuleResolvingStatus.UNRESOLVED,
-        description="Status of rule resolution during analysis: unresolved/resolved/cannot_resolve"
-    )
-
     evidence: str = Field(
         description="Detailed evidence supporting the status (function calls, addresses, etc.)"
     )
@@ -244,100 +248,100 @@ class SSLAnalysisOutput(BaseModel):
 # Dataflow Analysis Models
 # ============================================================================
 
-# Source-specific detail models for type-safe discriminated union
+class TraceStep(BaseModel):
+    """A single step in the dataflow trace path.
 
-class FunctionParameterDetails(BaseModel):
-    """Details for FUNCTION_PARAMETER_FROM_EXTERNAL_CALL source.
-
-    Represents a variable whose value comes from an external function call
-    outside the current binary.
+    Represents one step in the chain from target variable to its source.
+    When step_type is TRACE_END, source-specific fields are populated.
     """
-    source_type: Literal["function_parameter_from_external_call"] = "function_parameter_from_external_call"
-    external_function: str = Field(
-        description="Name of the function being called from outside (e.g., 'upscli_connect')"
+
+    step_number: int = Field(
+        description="Step number in the trace (1-indexed)"
     )
-    parameter_name: str = Field(
-        description="Name of the parameter in that function (e.g., 'a4', 'verify_mode')"
+
+    step_type: TraceStepType = Field(
+        description="Type of this trace step"
     )
-    # FIXME: not used.
-    parameter_index: Optional[int] = Field(
+
+    description: str = Field(
+        description="Human-readable description of this step"
+    )
+
+    function: Optional[str] = Field(
         None,
-        description="Zero-indexed position of parameter in function signature"
+        description="Function at this step"
     )
 
+    address: Optional[str] = Field(
+        None,
+        description="Hex address if known (e.g., '0x6796')"
+    )
 
-class ConstantDetails(BaseModel):
-    """Details for CONSTANT source.
+    # === Fields only used when step_type == TRACE_END ===
 
-    Represents a variable whose value is a compile-time constant.
-    """
-    source_type: Literal["constant"] = "constant"
-    constant_value: str = Field(
+    source_kind: Optional[SourceKind] = Field(
+        None,
+        description="What kind of source was found (only for TRACE_END step)"
+    )
+
+    # For CONSTANT:
+    constant_value: Optional[str] = Field(
+        None,
         description="The constant value (e.g., '1', '0', '0x10')"
     )
+
     constant_name: Optional[str] = Field(
         None,
         description="Symbolic name of constant if known (e.g., 'SSL_VERIFY_PEER')"
     )
 
-
-class ConfigFileDetails(BaseModel):
-    """Details for CONFIG_FILE source.
-
-    Represents a variable whose value comes from a configuration file.
-    """
-    source_type: Literal["config_file"] = "config_file"
+    # For CONFIG_FILE:
     config_file: Optional[str] = Field(
         None,
-        description=(
-            "Config file identifier - can be:\n"
-            "  - Full path: '/etc/upsmon.conf'\n"
-            "  - Filename only: 'upsmon.conf'\n"
-            "  - Partial path: 'config/ups.conf'\n"
-            "  - Any identifiable clue\n"
-            "Provide ANY information you have - firmware agent will search for it."
-        )
+        description="Config file path or identifier (e.g., '/etc/upsmon.conf', 'upsmon.conf')"
     )
+
     config_key: Optional[str] = Field(
         None,
         description="Key name in the config file if known"
     )
 
-
-class EnvironmentVariableDetails(BaseModel):
-    """Details for ENVIRONMENT_VARIABLE source.
-
-    Represents a variable whose value comes from an environment variable.
-    """
-    source_type: Literal["environment_variable"] = "environment_variable"
-    env_var_name: str = Field(
+    # For ENVIRONMENT_VARIABLE:
+    env_var_name: Optional[str] = Field(
+        None,
         description="Name of the environment variable (e.g., 'SSL_VERIFY_MODE')"
     )
 
-
-class CommandLineArgDetails(BaseModel):
-    """Details for COMMAND_LINE_ARG source.
-
-    Represents a variable whose value comes from command-line arguments.
-    """
-    source_type: Literal["command_line_arg"] = "command_line_arg"
-    arg_position: Optional[int] = Field(
-        None,
-        description="Position in argv array (e.g., 1 for first argument after program name)"
-    )
+    # For COMMAND_LINE_ARG:
     arg_name: Optional[str] = Field(
         None,
         description="Flag or argument name if applicable (e.g., '--verify', '-v')"
     )
 
+    arg_position: Optional[int] = Field(
+        None,
+        description="Position in argv array (e.g., 1 for first argument after program name)"
+    )
 
-class UnknownDetails(BaseModel):
-    """Details for UNKNOWN source.
+    # For EXTERNAL_CALL:
+    external_function: Optional[str] = Field(
+        None,
+        description="Name of the function being called from outside (e.g., 'upscli_connect')"
+    )
 
-    Represents a variable whose source could not be determined.
-    """
-    source_type: Literal["unknown"] = "unknown"
-    reason: str = Field(
+    parameter_name: Optional[str] = Field(
+        None,
+        description="Name of the parameter in that function (e.g., 'a4', 'verify_mode')"
+    )
+
+    parameter_index: Optional[int] = Field(
+        None,
+        description="Zero-indexed position of parameter in function signature"
+    )
+
+    # For UNKNOWN:
+    unknown_reason: Optional[str] = Field(
+        None,
         description="Explanation of why the source could not be determined"
     )
 
@@ -347,7 +351,8 @@ class VariableTrace(BaseModel):
     Result of tracing a single variable through dataflow analysis.
 
     Contains information about where the variable's value comes from
-    and what that value is (if determinable).
+    and what that value is (if determinable). Source information is
+    stored in the final step of trace_path (step_type == TRACE_END).
     """
 
     function: str = Field(
@@ -358,28 +363,9 @@ class VariableTrace(BaseModel):
         description="Variable or parameter name that was traced"
     )
 
-    source: VariableSourceType = Field(
-        description=(
-            "Source of variable value: "
-            "constant/config_file/environment_variable/command_line_arg/function_parameter/unknown"
-        )
-    )
-
     value: Optional[str] = Field(
         None,
         description="Concrete value if determinable (e.g., '1', 'SSL_VERIFY_PEER', '/etc/ssl.conf')"
-    )
-
-    source_details: Union[
-        FunctionParameterDetails,
-        ConstantDetails,
-        ConfigFileDetails,
-        EnvironmentVariableDetails,
-        CommandLineArgDetails,
-        UnknownDetails
-    ] = Field(
-        description="Type-safe details about the variable's source (discriminated by source_type)",
-        discriminator="source_type"
     )
 
     confidence: Literal["high", "medium", "low"] = Field(
@@ -387,12 +373,24 @@ class VariableTrace(BaseModel):
         description="Confidence level in the trace result"
     )
 
-    trace_path: str = Field(
-        description=(
-            "Detailed explanation of the trace path. "
-            "Example: 'Traced from SSL_CTX_set_verify parameter 2 → "
-            "local variable verify_mode → initialized with constant 1'"
-        )
+    trace_path: List[TraceStep] = Field(
+        description="Structured list of steps in the trace path. Final step contains source info."
+    )
+
+    # Resolution fields (set by synthesis_node, not by agent)
+    resolving_status: TraceResolvingStatus = Field(
+        default=TraceResolvingStatus.PENDING,
+        description="Resolution status: pending/resolved/cannot_resolve"
+    )
+
+    outcome: Optional[str] = Field(
+        None,
+        description="Security outcome when resolved (e.g., 'PASS - enables verification')"
+    )
+
+    resolution_reason: Optional[str] = Field(
+        None,
+        description="Why resolution failed (e.g., 'Value controlled by external caller')"
     )
 
 
@@ -464,7 +462,7 @@ class ConfigFetchTask(BaseModel):
     config_reference: Optional[str] = Field(
         None,
         description=(
-            "Config file or key reference from dataflow trace source_details. "
+            "Config file or key reference from dataflow trace final step. "
             "Example: '/etc/ssl.conf', 'CERTVERIFY setting'"
         )
     )

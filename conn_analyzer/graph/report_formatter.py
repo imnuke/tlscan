@@ -15,14 +15,12 @@ from rich import box
 from conn_analyzer.graph.models import (
     RuleResult,
     RuleResultStatus,
-    RuleResolvingStatus,
+    TraceResolvingStatus,
     RuleCondition,
     VariableTrace,
-    ConstantDetails,
-    ConfigFileDetails,
-    FunctionParameterDetails,
-    EnvironmentVariableDetails,
-    CommandLineArgDetails,
+    TraceStep,
+    TraceStepType,
+    SourceKind,
 )
 
 
@@ -41,27 +39,27 @@ def format_status_badge(status: RuleResultStatus) -> str:
     return badges.get(status, f"[white]{status.value.upper()}[/white]")
 
 
-def format_resolution_badge(status: RuleResolvingStatus) -> str:
-    """Format resolution status with color markup."""
+def format_trace_resolution_badge(status: TraceResolvingStatus) -> str:
+    """Format trace resolution status with color markup."""
     badges = {
-        RuleResolvingStatus.RESOLVED: "[green]✓ RESOLVED[/green]",
-        RuleResolvingStatus.UNRESOLVED: "[red]✗ UNRESOLVED[/red]",
-        RuleResolvingStatus.CANNOT_RESOLVE: "[dim]⊘ CANNOT_RESOLVE[/dim]",
+        TraceResolvingStatus.PENDING: "[yellow]⏳ PENDING[/yellow]",
+        TraceResolvingStatus.RESOLVED: "[green]✓ RESOLVED[/green]",
+        TraceResolvingStatus.CANNOT_RESOLVE: "[red]⊘ CANNOT_RESOLVE[/red]",
     }
     return badges.get(status, f"[white]{status.value.upper()}[/white]")
 
 
-def format_source_type_badge(source_type: str) -> str:
-    """Format source type with emoji badge."""
+def format_source_kind_badge(source_kind: str) -> str:
+    """Format source kind with emoji badge."""
     badges = {
         "constant": "🔢",
         "config_file": "📄",
         "environment_variable": "🌐",
         "command_line_arg": "⌨️",
-        "function_parameter_from_external_call": "🔗",
+        "external_call": "🔗",
         "unknown": "❓",
     }
-    return badges.get(source_type, "•")
+    return badges.get(source_kind, "•")
 
 
 def get_border_color(status: RuleResultStatus) -> str:
@@ -223,11 +221,8 @@ def create_rule_panel(rule: RuleResult, traces: Dict[str, List[VariableTrace]]) 
     """
     renderables = []
 
-    # Status
+    # Status (resolution is now at trace level, not rule level)
     status_text = f"[bold]Status:[/bold] {format_status_badge(rule.result)}"
-    if rule.result == RuleResultStatus.CONDITIONAL:
-        status_text += f"\n[bold]Resolution:[/bold] {format_resolution_badge(rule.resolving_status)}"
-
     renderables.append(Text.from_markup(status_text))
     renderables.append(Text(""))  # Empty line
 
@@ -331,7 +326,7 @@ def format_trace(
     """Format a single variable trace.
 
     Args:
-        trace: VariableTrace with source, value, and trace path
+        trace: VariableTrace with trace path containing source info in final step
         condition: RuleCondition with security mapping
         indent: Whether to add extra indentation
 
@@ -341,69 +336,97 @@ def format_trace(
     lines = []
     prefix = "  " if indent else ""
 
+    # Get source info from final step of trace_path
+    last_step = trace.trace_path[-1] if trace.trace_path else None
+    source_kind = None
+    if last_step and last_step.step_type == TraceStepType.TRACE_END:
+        source_kind = last_step.source_kind
+
     # Source badge and type
-    badge = format_source_type_badge(trace.source.value)
-    source_name = escape_rich_markup(trace.source.value)
+    source_kind_str = source_kind.value if source_kind else "unknown"
+    badge = format_source_kind_badge(source_kind_str)
+    source_name = escape_rich_markup(source_kind_str)
     lines.append(f"{prefix}{badge} [bold]Source:[/bold] {source_name}")
+
+    # Resolution status (trace-level)
+    resolution_badge = format_trace_resolution_badge(trace.resolving_status)
+    lines.append(f"{prefix}[bold]Resolution:[/bold] {resolution_badge}")
+
+    # Resolution outcome or reason
+    if trace.resolving_status == TraceResolvingStatus.RESOLVED and trace.outcome:
+        emoji = "✅" if "pass" in trace.outcome.lower() else "❌"
+        lines.append(f"{prefix}[bold]Outcome:[/bold] {emoji} {trace.outcome}")
+    elif trace.resolving_status == TraceResolvingStatus.CANNOT_RESOLVE and trace.resolution_reason:
+        escaped_reason = escape_rich_markup(trace.resolution_reason)
+        lines.append(f"{prefix}[bold]Reason:[/bold] {escaped_reason}")
+
     lines.append(f"{prefix}")
 
-    # Details based on source type
+    # Details based on source kind (from final step)
     lines.append(f"{prefix}[bold]Details:[/bold]")
 
-    if isinstance(trace.source_details, ConstantDetails):
-        const_val = escape_rich_markup(str(trace.source_details.constant_value))
-        if trace.source_details.constant_name:
-            const_name = escape_rich_markup(trace.source_details.constant_name)
-            lines.append(f"{prefix}  • Constant `{const_name}` = `{const_val}`")
-        else:
-            lines.append(f"{prefix}  • Constant value: `{const_val}`")
+    if last_step and source_kind:
+        if source_kind == SourceKind.CONSTANT:
+            const_val = escape_rich_markup(str(last_step.constant_value or "unknown"))
+            if last_step.constant_name:
+                const_name = escape_rich_markup(last_step.constant_name)
+                lines.append(f"{prefix}  • Constant `{const_name}` = `{const_val}`")
+            else:
+                lines.append(f"{prefix}  • Constant value: `{const_val}`")
 
-    elif isinstance(trace.source_details, ConfigFileDetails):
-        config_file = trace.source_details.config_file or "unknown"
-        config_file = escape_rich_markup(config_file)
-        lines.append(f"{prefix}  • Config file: `{config_file}`")
-        if trace.source_details.config_key:
-            key = escape_rich_markup(trace.source_details.config_key)
-            lines.append(f"{prefix}  • Config key: `{key}`")
+        elif source_kind == SourceKind.CONFIG_FILE:
+            config_file = last_step.config_file or "unknown"
+            config_file = escape_rich_markup(config_file)
+            lines.append(f"{prefix}  • Config file: `{config_file}`")
+            if last_step.config_key:
+                key = escape_rich_markup(last_step.config_key)
+                lines.append(f"{prefix}  • Config key: `{key}`")
 
-    elif isinstance(trace.source_details, FunctionParameterDetails):
-        func = escape_rich_markup(trace.source_details.external_function or "unknown")
-        param = escape_rich_markup(trace.source_details.parameter_name or "unknown")
-        lines.append(f"{prefix}  • External call to `{func}`")
-        lines.append(f"{prefix}  • Parameter: `{param}`")
+        elif source_kind == SourceKind.EXTERNAL_CALL:
+            func = escape_rich_markup(last_step.external_function or "unknown")
+            param = escape_rich_markup(last_step.parameter_name or "unknown")
+            lines.append(f"{prefix}  • External call to `{func}`")
+            lines.append(f"{prefix}  • Parameter: `{param}`")
 
-    elif isinstance(trace.source_details, EnvironmentVariableDetails):
-        env_var = escape_rich_markup(trace.source_details.env_var_name)
-        lines.append(f"{prefix}  • Environment variable: `{env_var}`")
+        elif source_kind == SourceKind.ENVIRONMENT_VARIABLE:
+            env_var = escape_rich_markup(last_step.env_var_name or "unknown")
+            lines.append(f"{prefix}  • Environment variable: `{env_var}`")
 
-    elif isinstance(trace.source_details, CommandLineArgDetails):
-        if trace.source_details.arg_name:
-            arg = escape_rich_markup(trace.source_details.arg_name)
-            lines.append(f"{prefix}  • Command-line argument: `{arg}`")
-        else:
-            lines.append(f"{prefix}  • Command-line argument")
+        elif source_kind == SourceKind.COMMAND_LINE_ARG:
+            if last_step.arg_name:
+                arg = escape_rich_markup(last_step.arg_name)
+                lines.append(f"{prefix}  • Command-line argument: `{arg}`")
+            else:
+                lines.append(f"{prefix}  • Command-line argument")
 
-    # Value
+        elif source_kind == SourceKind.UNKNOWN:
+            if last_step.unknown_reason:
+                reason = escape_rich_markup(last_step.unknown_reason)
+                lines.append(f"{prefix}  • Reason: {reason}")
+
+    # Value (if present)
     if trace.value:
         val = escape_rich_markup(trace.value)
         lines.append(f"{prefix}  • [bold]Value:[/bold] `{val}`")
 
-        # Outcome (if value maps to security outcome)
-        if trace.value in condition.security_mapping:
-            outcome = condition.security_mapping[trace.value]
-            emoji = "✅" if "pass" in outcome.lower() else "❌"
-            lines.append(f"{prefix}  • [bold]Outcome:[/bold] {emoji} {outcome}")
-
-    # Trace path
+    # Trace path (structured as List[TraceStep])
     lines.append(f"{prefix}")
     lines.append(f"{prefix}[bold]Trace Path:[/bold]")
 
-    trace_lines = trace.trace_path.split('\n')
-    for line in trace_lines:
-        if line.strip():
-            # Escape any Rich markup in trace content
-            escaped_line = escape_rich_markup(line)
-            lines.append(f"{prefix}  {escaped_line}")
+    if isinstance(trace.trace_path, list):
+        for step in trace.trace_path:
+            step_type_str = step.step_type.value if hasattr(step.step_type, 'value') else str(step.step_type)
+            step_type_badge = f"[{step_type_str}]"
+            description = escape_rich_markup(step.description)
+            address_str = f" @ {step.address}" if step.address else ""
+            lines.append(f"{prefix}  {step.step_number}. {step_type_badge} {description}{address_str}")
+    else:
+        # Legacy string format (backwards compatibility)
+        trace_lines = str(trace.trace_path).split('\n')
+        for line in trace_lines:
+            if line.strip():
+                escaped_line = escape_rich_markup(line)
+                lines.append(f"{prefix}  {escaped_line}")
 
     return "\n".join(lines)
 
@@ -440,26 +463,40 @@ def display_cross_binary(console: Console, cross_binary: Dict[str, Dict[str, Lis
                 var = escape_rich_markup(trace.variable)
                 lines.append(f"  • [bold]Variable:[/bold] `{var}`")
 
-                # Source type
-                badge = format_source_type_badge(trace.source.value)
-                source = escape_rich_markup(trace.source.value)
+                # Get source kind from final step
+                last_step = trace.trace_path[-1] if trace.trace_path else None
+                source_kind = None
+                if last_step and last_step.step_type == TraceStepType.TRACE_END:
+                    source_kind = last_step.source_kind
+
+                source_kind_str = source_kind.value if source_kind else "unknown"
+                badge = format_source_kind_badge(source_kind_str)
+                source = escape_rich_markup(source_kind_str)
                 lines.append(f"    [bold]Source:[/bold] {badge} {source}")
 
-                # Show brief details
-                if isinstance(trace.source_details, ConstantDetails):
-                    val = escape_rich_markup(str(trace.source_details.constant_value))
-                    lines.append(f"    [bold]Value:[/bold] `{val}`")
-                elif isinstance(trace.source_details, ConfigFileDetails):
-                    if trace.source_details.config_file:
-                        cfg = escape_rich_markup(trace.source_details.config_file)
+                # Show brief details based on source kind from final step
+                if last_step and source_kind:
+                    if source_kind == SourceKind.CONSTANT and last_step.constant_value:
+                        val = escape_rich_markup(str(last_step.constant_value))
+                        lines.append(f"    [bold]Value:[/bold] `{val}`")
+                    elif source_kind == SourceKind.CONFIG_FILE and last_step.config_file:
+                        cfg = escape_rich_markup(last_step.config_file)
                         lines.append(f"    [bold]Config:[/bold] `{cfg}`")
 
                 # Trace preview (abbreviated)
                 if trace.trace_path:
-                    preview = trace.trace_path[:100]
-                    if len(trace.trace_path) > 100:
-                        preview += "..."
-                    preview = escape_rich_markup(preview)
+                    if isinstance(trace.trace_path, list) and len(trace.trace_path) > 0:
+                        # Structured trace - show first step
+                        first_step = trace.trace_path[0]
+                        preview = escape_rich_markup(first_step.description)
+                        if len(trace.trace_path) > 1:
+                            preview += f" (+{len(trace.trace_path) - 1} more steps)"
+                    else:
+                        # Legacy string format
+                        preview = str(trace.trace_path)[:100]
+                        if len(str(trace.trace_path)) > 100:
+                            preview += "..."
+                        preview = escape_rich_markup(preview)
                     lines.append(f"    [dim]Trace: {preview}[/dim]")
 
                 lines.append("")

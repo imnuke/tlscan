@@ -8,8 +8,10 @@ from conn_analyzer.graph.state import (
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
-    RuleResolvingStatus,
-    VariableSourceType,
+    TraceResolvingStatus,
+    TraceStepType,
+    TraceStep,
+    SourceKind,
     ExternalSourceType,
     RuleCondition,
     RuleResult,
@@ -28,8 +30,10 @@ __all__ = [
     "create_initial_state",
     # Models
     "RuleResultStatus",
-    "RuleResolvingStatus",
-    "VariableSourceType",
+    "TraceResolvingStatus",
+    "TraceStepType",
+    "TraceStep",
+    "SourceKind",
     "ExternalSourceType",
     "RuleCondition",
     "RuleResult",
