@@ -221,7 +221,7 @@ def search_files_by_content(pattern: str, file_pattern: Optional[str] = None, ma
             "--glob", "!*Finnish*",
         ])
 
-        cmd.extend([pattern, str(FIRMWARE_ROOT)])
+        cmd.extend(["--", pattern, str(FIRMWARE_ROOT)])
 
         result = subprocess.run(
             cmd,
