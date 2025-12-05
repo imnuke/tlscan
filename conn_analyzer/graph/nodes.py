@@ -1023,6 +1023,10 @@ async def binary_analysis_sequential(
     for key, value in state.get("variable_traces", {}).items():
         all_traces[key] = value.copy() if isinstance(value, list) else [value]
 
+    # Accumulate follow-up tasks from cross-binary traces
+    config_fetch_tasks: List[ConfigFetchTask] = []
+    new_dataflow_tasks: List[DataflowTask] = []
+
     for task in cross_binary_tasks:
         binary_path = task.binary_path
         context = task.context or ""
@@ -1047,6 +1051,21 @@ async def binary_analysis_sequential(
                     all_traces[composite_key] = []
                 all_traces[composite_key].append(trace)
 
+                # Create follow-up tasks from this trace (config fetch, caller discovery, etc.)
+                # Note: helper uses dict-style access, so convert VariableSpec to dicts
+                df_tasks, cf_tasks = create_follow_up_tasks_from_trace(
+                    trace=trace,
+                    composite_key=composite_key,
+                    variables=[v.model_dump() for v in task.variables]
+                )
+                new_dataflow_tasks.extend(df_tasks)
+                config_fetch_tasks.extend(cf_tasks)
+
+                if cf_tasks:
+                    console.print(f"[dim]    → Config fetch needed for {trace.variable}[/dim]")
+                if df_tasks:
+                    console.print(f"[dim]    → Follow-up tasks created: {len(df_tasks)}[/dim]")
+
             console.print(f"[green]  ✓ {binary_path}: {len(result.traces)} traces[/green]")
 
         except Exception as e:
@@ -1055,10 +1074,17 @@ async def binary_analysis_sequential(
 
     console.print(f"[green]✓ Cross-binary analysis complete: {len(cross_binary_tasks)} binaries analyzed[/green]")
 
+    # Determine next phase based on tasks created
+    if new_dataflow_tasks or config_fetch_tasks:
+        next_phase = AnalysisPhase.FIRMWARE_EXPLORATION
+    else:
+        next_phase = AnalysisPhase.SYNTHESIS
+
     state_update = {
         "variable_traces": all_traces,
-        "pending_dataflow_tasks": [],  # Clear all tasks
-        "current_phase": AnalysisPhase.SYNTHESIS,
+        "pending_dataflow_tasks": new_dataflow_tasks,
+        "pending_config_fetch_tasks": config_fetch_tasks,
+        "current_phase": next_phase,
     }
 
     # Log state after all agent executions with changes
