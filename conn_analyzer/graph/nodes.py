@@ -18,6 +18,7 @@ from conn_analyzer.graph.state import (
     AnalysisPhase,
     create_trace_key,
     parse_trace_key,
+    parse_condition_key,
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
@@ -26,6 +27,9 @@ from conn_analyzer.graph.models import (
     DataflowAnalysisOutput,
     FirmwareSearchResult,
     VariableTrace,
+    VariableTraceGroup,
+    TraceContinuation,
+    ContinuationType,
     RuleResult,
     ConfigFetchTask,
     DataflowTask,
@@ -252,6 +256,9 @@ def create_follow_up_tasks_from_trace(
             original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
             security_mapping = original_var.get("security_mapping", {}) if original_var else {}
 
+            # Origin condition is the original traced variable (function:variable)
+            origin_condition = f"{trace.function}:{trace.variable}"
+
             caller_discovery_task = DataflowTask(
                 type=TaskType.NEEDS_CALLER_DISCOVERY,
                 target=function_name,
@@ -262,7 +269,8 @@ def create_follow_up_tasks_from_trace(
                     security_mapping=security_mapping,
                 )],
                 binary_path=None,
-                context=f"Find callers of {function_name} and trace parameter {parameter_name}"
+                context=f"Find callers of {function_name} and trace parameter {parameter_name}",
+                origin_condition=origin_condition,
             )
             new_dataflow_tasks.append(caller_discovery_task)
 
@@ -349,6 +357,108 @@ async def execute_single_dataflow_task(
 
 
 # ============================================================================
+# Helper: Trace Group Management
+# ============================================================================
+
+def get_or_create_trace_group(
+    trace_groups: Dict[str, VariableTraceGroup],
+    function: str,
+    variable: str,
+    security_mapping: Optional[Dict[str, str]] = None,
+) -> VariableTraceGroup:
+    """Get existing trace group or create a new one.
+
+    Args:
+        trace_groups: Dict of existing trace groups
+        function: Function name
+        variable: Variable name
+        security_mapping: Optional security mapping for this condition
+
+    Returns:
+        Existing or new VariableTraceGroup
+    """
+    condition_key = f"{function}:{variable}"
+    if condition_key not in trace_groups:
+        trace_groups[condition_key] = VariableTraceGroup(
+            condition_key=condition_key,
+            function=function,
+            variable=variable,
+            security_mapping=security_mapping,
+        )
+    elif security_mapping and not trace_groups[condition_key].security_mapping:
+        # Update security mapping if not already set
+        trace_groups[condition_key].security_mapping = security_mapping
+    return trace_groups[condition_key]
+
+
+def add_trace_to_group(
+    trace_group: VariableTraceGroup,
+    trace: VariableTrace,
+    binary_path: Optional[str] = None,
+) -> None:
+    """Add a trace to the appropriate location in a trace group.
+
+    Args:
+        trace_group: The trace group to update
+        trace: The trace to add
+        binary_path: If set, trace is from cross-binary analysis
+    """
+    if binary_path:
+        # Cross-binary trace: add to continuation
+        continuation = None
+        for cont in trace_group.continuations:
+            if cont.source_path == binary_path and cont.type == ContinuationType.CROSS_BINARY:
+                continuation = cont
+                break
+
+        if continuation is None:
+            continuation = TraceContinuation(
+                type=ContinuationType.CROSS_BINARY,
+                source_path=binary_path,
+            )
+            trace_group.continuations.append(continuation)
+
+        continuation.traces.append(trace)
+
+        # Check if trace resolved to a value
+        if trace.trace_path:
+            last_step = trace.trace_path[-1]
+            if last_step.step_type == TraceStepType.TRACE_END:
+                if last_step.source_kind == SourceKind.CONSTANT and last_step.constant_value:
+                    continuation.resolved_value = last_step.constant_value
+                    continuation.resolved_source_kind = SourceKind.CONSTANT
+                elif trace.value:
+                    continuation.resolved_value = trace.value
+                    continuation.resolved_source_kind = last_step.source_kind
+    else:
+        # Main binary trace
+        trace_group.main_traces.append(trace)
+
+
+def find_security_mapping_for_trace(
+    state: AnalysisState,
+    function: str,
+    variable: str,
+) -> Optional[Dict[str, str]]:
+    """Find security mapping for a trace from rule conditions.
+
+    Args:
+        state: Current analysis state
+        function: Function name
+        variable: Variable name
+
+    Returns:
+        Security mapping if found, None otherwise
+    """
+    rules = state.get("rule_result", {})
+    for rule in rules.values():
+        for cond in rule.conditions:
+            if cond.function == function and cond.variable == variable:
+                return cond.security_mapping
+    return None
+
+
+# ============================================================================
 # Node: Dataflow Analysis
 # ============================================================================
 
@@ -396,6 +506,11 @@ async def dataflow_analysis_node(
     for key, value in state.get("variable_traces", {}).items():
         all_traces[key] = value.copy() if isinstance(value, list) else [value]
 
+    # Get existing trace groups (deep copy)
+    trace_groups: Dict[str, VariableTraceGroup] = {}
+    for key, group in state.get("trace_groups", {}).items():
+        trace_groups[key] = group.model_copy(deep=True)
+
     new_dataflow_tasks: List[DataflowTask] = []
     config_fetch_tasks: List[ConfigFetchTask] = []
 
@@ -427,10 +542,6 @@ async def dataflow_analysis_node(
 
         # Process traces
         for trace in result.traces:
-            # TODO: Not only for binary, we can unify the composite key for binary/script/config.
-            # we can use "{file_path}:{}"
-            # ??
-
             # Build composite key based on whether this is cross-binary analysis
             binary_path = task.binary_path  # Use attribute access for Pydantic model
             if binary_path:
@@ -444,6 +555,25 @@ async def dataflow_analysis_node(
             if composite_key not in all_traces:
                 all_traces[composite_key] = []
             all_traces[composite_key].append(trace)
+
+            # Also update trace_groups with hierarchical structure
+            # Find security mapping from task variables
+            original_var = next(
+                (v for v in task.variables if v.variable == trace.variable and v.function == trace.function),
+                None
+            )
+            security_mapping = original_var.security_mapping if original_var else None
+            if not security_mapping:
+                # Fallback: look up from state's rule conditions
+                security_mapping = find_security_mapping_for_trace(state, trace.function, trace.variable)
+
+            trace_group = get_or_create_trace_group(
+                trace_groups,
+                trace.function,
+                trace.variable,
+                security_mapping,
+            )
+            add_trace_to_group(trace_group, trace, binary_path)
 
             # Get source info from final step of trace_path
             last_step = trace.trace_path[-1] if trace.trace_path else None
@@ -483,13 +613,17 @@ async def dataflow_analysis_node(
                         security_mapping=security_mapping,
                     )]
 
+                    # Determine origin_condition: use existing if propagated, otherwise use current trace
+                    origin_condition = task.origin_condition or f"{trace.function}:{trace.variable}"
+
                     # Create a "needs_caller_discovery" task
                     caller_discovery_task = DataflowTask(
                         type=TaskType.NEEDS_CALLER_DISCOVERY,
                         target=function_name,
                         variables=new_variables,
                         binary_path=None,
-                        context=f"Find callers of {function_name} and trace parameter {parameter_name}"
+                        context=f"Find callers of {function_name} and trace parameter {parameter_name}",
+                        origin_condition=origin_condition,
                     )
                     new_dataflow_tasks.append(caller_discovery_task)
                     console.print(f"[dim]    → Cross-binary discovery needed for function '{function_name}', parameter '{parameter_name}'[/dim]")
@@ -542,7 +676,7 @@ async def dataflow_analysis_node(
         if task_state_update:
             log_agent_state(agent_name_with_progress, state, changes=task_state_update)
 
-    console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces[/green]")
+    console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces, {len(trace_groups)} groups[/green]")
 
     # Determine next phase
     if new_dataflow_tasks or config_fetch_tasks:
@@ -552,6 +686,7 @@ async def dataflow_analysis_node(
 
     state_update = {
         "variable_traces": all_traces,
+        "trace_groups": trace_groups,
         "pending_dataflow_tasks": new_dataflow_tasks,  # New tasks for caller discovery or cleared
         "pending_config_fetch_tasks": config_fetch_tasks,
         "current_phase": next_phase,
@@ -629,11 +764,14 @@ async def _process_caller_discovery(
             for binary_path in result.executables:
                 binary_to_functions[binary_path] = all_function_names
 
-        # Create function_to_variables mapping for efficient lookup
+        # Create function_to_variables and function_to_origin mappings for efficient lookup
         function_to_variables: Dict[str, List[VariableSpec]] = {}
+        function_to_origin: Dict[str, str] = {}  # function_name -> origin_condition
         for task in caller_discovery_tasks:
             function_name = task.target
             function_to_variables[function_name] = task.variables
+            if task.origin_condition:
+                function_to_origin[function_name] = task.origin_condition
 
         # Create cross-binary tasks with function-specific variables
         for binary_path in result.executables:
@@ -646,9 +784,17 @@ async def _process_caller_discovery(
 
             # Aggregate variables ONLY from functions this binary calls
             aggregated_variables: List[VariableSpec] = []
+            # Build origin_conditions mapping: "function:variable" -> origin_condition
+            origin_conditions: Dict[str, str] = {}
+
             for function_name in functions_called:
                 if function_name in function_to_variables:
-                    aggregated_variables.extend(function_to_variables[function_name])
+                    for var_spec in function_to_variables[function_name]:
+                        aggregated_variables.append(var_spec)
+                        # Map each variable to its origin condition
+                        if function_name in function_to_origin:
+                            var_key = f"{var_spec.function}:{var_spec.variable}"
+                            origin_conditions[var_key] = function_to_origin[function_name]
 
             if not aggregated_variables:
                 console.print(f"[dim]  Binary {binary_path} calls {functions_called} but no variables to trace[/dim]")
@@ -662,6 +808,7 @@ async def _process_caller_discovery(
                 target=binary_path,
                 variables=aggregated_variables,
                 binary_path=binary_path,
+                origin_conditions=origin_conditions if origin_conditions else None,
             )
             remaining_tasks.append(binary_task)
 
@@ -982,6 +1129,11 @@ async def binary_analysis_sequential(
     for key, value in state.get("variable_traces", {}).items():
         all_traces[key] = value.copy() if isinstance(value, list) else [value]
 
+    # Get existing trace groups (deep copy)
+    trace_groups: Dict[str, VariableTraceGroup] = {}
+    for key, group in state.get("trace_groups", {}).items():
+        trace_groups[key] = group.model_copy(deep=True)
+
     for task in cross_binary_tasks:
         binary_path = task.binary_path
         context = task.context or ""
@@ -1006,6 +1158,46 @@ async def binary_analysis_sequential(
                     all_traces[composite_key] = []
                 all_traces[composite_key].append(trace)
 
+                # Determine origin condition for trace group linkage
+                trace_key = f"{trace.function}:{trace.variable}"
+                origin_key = None
+
+                # Priority: origin_conditions mapping > origin_condition > fallback to trace key
+                if task.origin_conditions and trace_key in task.origin_conditions:
+                    origin_key = task.origin_conditions[trace_key]
+                elif task.origin_condition:
+                    origin_key = task.origin_condition
+
+                # Parse origin_key to get function and variable for trace group
+                if origin_key:
+                    try:
+                        origin_func, origin_var = parse_condition_key(origin_key)
+                    except ValueError:
+                        # Fallback to trace's function/variable
+                        origin_func, origin_var = trace.function, trace.variable
+                else:
+                    origin_func, origin_var = trace.function, trace.variable
+
+                # Find security mapping from the ORIGINAL condition
+                security_mapping = find_security_mapping_for_trace(state, origin_func, origin_var)
+                if not security_mapping:
+                    # Fallback: try to get from task variables
+                    original_var = next(
+                        (v for v in task.variables if v.variable == trace.variable and v.function == trace.function),
+                        None
+                    )
+                    security_mapping = original_var.security_mapping if original_var else None
+
+                # Get or create trace group under ORIGIN condition key
+                trace_group = get_or_create_trace_group(
+                    trace_groups,
+                    origin_func,
+                    origin_var,
+                    security_mapping,
+                )
+                # Add trace as continuation (binary_path is set for cross-binary)
+                add_trace_to_group(trace_group, trace, binary_path)
+
             console.print(f"[green]  ✓ {binary_path}: {len(result.traces)} traces[/green]")
 
         except Exception as e:
@@ -1016,6 +1208,7 @@ async def binary_analysis_sequential(
 
     state_update = {
         "variable_traces": all_traces,
+        "trace_groups": trace_groups,
         "pending_dataflow_tasks": [],  # Clear all tasks
         "current_phase": AnalysisPhase.SYNTHESIS,
     }
@@ -1134,9 +1327,9 @@ async def synthesis_node(
     """Generate final security analysis report.
 
     This node:
-    1. Takes all results from state (rules, variable_traces)
-    2. Resolves CONDITIONAL rules using variable traces
-    3. Separates main binary traces from cross-binary traces based on key format
+    1. Takes all results from state (rules, trace_groups)
+    2. Resolves CONDITIONAL rules using hierarchical trace groups
+    3. Computes overall resolution considering main traces and continuations
     4. Generates comprehensive security report
     5. Updates state with final_report
 
@@ -1149,48 +1342,10 @@ async def synthesis_node(
     console.print("[cyan]📝 Generating final report[/cyan]")
 
     rules = state.get("rule_result", {})
-    variable_traces = state.get("variable_traces", {})
+    trace_groups = state.get("trace_groups", {})
+    variable_traces = state.get("variable_traces", {})  # For backwards compatibility
     ssl_summary = state.get("ssl_summary", "")
     client_type = state.get("client_type", "Unknown")
-
-    # Separate main binary traces from cross-binary traces based on key format
-    # Main binary: "function:variable"
-    # Cross-binary: "{binary_path}:{function}:{variable}"
-    # Note: Each key now maps to a LIST of traces (multi-source support)
-    main_traces = {}
-    cross_binary_by_path = {}
-
-    for composite_key, traces_value in variable_traces.items():
-        # Ensure traces_value is a list (backwards compatibility)
-        traces_list = traces_value if isinstance(traces_value, list) else [traces_value]
-
-        parts = composite_key.split(":")
-        if len(parts) == 2:
-            # Main binary trace
-            main_traces[composite_key] = traces_list
-        elif len(parts) >= 3:
-            # Cross-binary trace: first part is binary path
-            binary_path = parts[0]
-            trace_key = ":".join(parts[1:])  # "function:variable"
-            if binary_path not in cross_binary_by_path:
-                cross_binary_by_path[binary_path] = {}
-            cross_binary_by_path[binary_path][trace_key] = traces_list
-
-    # Calculate statistics for summary
-    stats = calculate_rule_statistics(rules)
-    trace_count = sum(len(traces) for traces in variable_traces.values())
-    cross_binary_count = sum(
-        len(traces)
-        for binary_traces in cross_binary_by_path.values()
-        for traces in binary_traces.values()
-    )
-
-    # Add counts to stats dict for display
-    stats["trace_count"] = trace_count
-    stats["cross_binary_count"] = cross_binary_count
-
-    # Script findings for display
-    script_findings = state.get('script_findings', [])
 
     # Build mapping from (function, variable) to security_mapping for quick lookup
     condition_mappings: Dict[str, Dict[str, str]] = {}
@@ -1199,100 +1354,63 @@ async def synthesis_node(
             key = create_trace_key(cond.function, cond.variable)
             condition_mappings[key] = cond.security_mapping
 
-    # Update resolving_status for each trace based on condition matching
-    updated_main_traces: Dict[str, List[VariableTrace]] = {}
+    # Compute resolution for each trace group
     resolved_count = 0
     cannot_resolve_count = 0
+    pending_count = 0
 
-    for composite_key, traces_list in main_traces.items():
-        updated_traces = []
-        security_mapping = condition_mappings.get(composite_key)
+    updated_trace_groups: Dict[str, VariableTraceGroup] = {}
 
-        for trace in traces_list:
-            # Get source info from final step of trace_path
-            last_step = trace.trace_path[-1] if trace.trace_path else None
-            source_kind = last_step.source_kind if last_step and last_step.step_type == TraceStepType.TRACE_END else None
+    for condition_key, group in trace_groups.items():
+        # Deep copy the group for modification
+        updated_group = group.model_copy(deep=True)
 
-            # Determine resolution status based on value and mapping
-            if security_mapping and trace.value is not None:
-                if trace.value in security_mapping:
-                    # Successfully resolved - value maps to security outcome
-                    updated_trace = VariableTrace(
-                        function=trace.function,
-                        variable=trace.variable,
-                        value=trace.value,
-                        confidence=trace.confidence,
-                        trace_path=trace.trace_path,
-                        resolving_status=TraceResolvingStatus.RESOLVED,
-                        outcome=security_mapping[trace.value],
-                        resolution_reason=None,
-                    )
-                    resolved_count += 1
-                else:
-                    # Value not in expected mappings
-                    expected_keys = ", ".join(f"'{k}'" for k in security_mapping.keys())
-                    updated_trace = VariableTrace(
-                        function=trace.function,
-                        variable=trace.variable,
-                        value=trace.value,
-                        confidence=trace.confidence,
-                        trace_path=trace.trace_path,
-                        resolving_status=TraceResolvingStatus.CANNOT_RESOLVE,
-                        outcome=None,
-                        resolution_reason=f"Value '{trace.value}' not in expected mappings: [{expected_keys}]",
-                    )
-                    cannot_resolve_count += 1
-            elif trace.value is None:
-                # No concrete value determined
-                if source_kind == SourceKind.EXTERNAL_CALL:
-                    reason = "Value controlled by external caller"
-                    if last_step and last_step.external_function:
-                        reason += f" (via {last_step.external_function})"
-                    reason += " - cannot determine statically"
-                else:
-                    reason = f"No concrete value determined from {source_kind.value if source_kind else 'unknown'}"
+        # Get security mapping for this condition
+        security_mapping = condition_mappings.get(condition_key, group.security_mapping)
+        if security_mapping:
+            updated_group.security_mapping = security_mapping
 
-                updated_trace = VariableTrace(
-                    function=trace.function,
-                    variable=trace.variable,
-                    value=trace.value,
-                    confidence=trace.confidence,
-                    trace_path=trace.trace_path,
-                    resolving_status=TraceResolvingStatus.CANNOT_RESOLVE,
-                    outcome=None,
-                    resolution_reason=reason,
-                )
-                cannot_resolve_count += 1
-            else:
-                # No security mapping for this trace (shouldn't happen normally)
-                updated_trace = VariableTrace(
-                    function=trace.function,
-                    variable=trace.variable,
-                    value=trace.value,
-                    confidence=trace.confidence,
-                    trace_path=trace.trace_path,
-                    resolving_status=TraceResolvingStatus.CANNOT_RESOLVE,
-                    outcome=None,
-                    resolution_reason="No matching security condition found",
-                )
-                cannot_resolve_count += 1
+        # Compute resolution from main traces + continuations
+        updated_group.compute_resolution(security_mapping)
 
-            updated_traces.append(updated_trace)
+        updated_trace_groups[condition_key] = updated_group
 
-        updated_main_traces[composite_key] = updated_traces
+        # Count by status
+        if updated_group.overall_status == TraceResolvingStatus.RESOLVED:
+            resolved_count += 1
+        elif updated_group.overall_status == TraceResolvingStatus.CANNOT_RESOLVE:
+            cannot_resolve_count += 1
+        else:
+            pending_count += 1
+
+    # Calculate statistics for summary
+    stats = calculate_rule_statistics(rules)
+
+    # Count traces from groups
+    main_trace_count = sum(len(g.main_traces) for g in updated_trace_groups.values())
+    continuation_trace_count = sum(
+        sum(len(c.traces) for c in g.continuations)
+        for g in updated_trace_groups.values()
+    )
+
+    stats["trace_count"] = main_trace_count
+    stats["cross_binary_count"] = continuation_trace_count
+    stats["groups_resolved"] = resolved_count
+    stats["groups_cannot_resolve"] = cannot_resolve_count
+    stats["groups_pending"] = pending_count
+
+    # Script findings for display
+    script_findings = state.get('script_findings', [])
 
     # Log resolution summary
     if resolved_count > 0:
-        console.print(f"[green]✓ Traces resolved: {resolved_count}[/green]")
+        console.print(f"[green]✓ Trace groups resolved: {resolved_count}[/green]")
     if cannot_resolve_count > 0:
-        console.print(f"[yellow]⚠ Traces unresolved: {cannot_resolve_count}[/yellow]")
+        console.print(f"[yellow]⚠ Trace groups unresolved: {cannot_resolve_count}[/yellow]")
+    if pending_count > 0:
+        console.print(f"[dim]  Trace groups pending: {pending_count}[/dim]")
 
     console.print("[green]✓ Report data prepared[/green]")
-
-    # Merge updated traces back into variable_traces
-    # Note: This updates the state with resolution status on each trace
-    updated_variable_traces = dict(variable_traces)  # Copy original
-    updated_variable_traces.update(updated_main_traces)  # Update with resolved traces
 
     return {
         "report_data": {
@@ -1304,12 +1422,9 @@ async def synthesis_node(
                 "summary": ssl_summary
             },
             "rules": rules,
-            "traces": {
-                "main": updated_main_traces,
-                "cross_binary": cross_binary_by_path
-            },
+            "trace_groups": updated_trace_groups,
             "scripts": script_findings
         },
-        "variable_traces": updated_variable_traces,  # Update traces with resolution status
+        "trace_groups": updated_trace_groups,
         "current_phase": AnalysisPhase.COMPLETED,
     }

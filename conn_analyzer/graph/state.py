@@ -10,6 +10,7 @@ from typing import TypedDict, Optional, Dict, List, Set, Tuple, Any
 from conn_analyzer.graph.models import (
     RuleResult,
     VariableTrace,
+    VariableTraceGroup,
     ExternalValue,
     ConfigFetchTask,
     DataflowTask,
@@ -86,6 +87,31 @@ def parse_trace_key(key: str) -> Tuple[Optional[str], str, str]:
         return parts[0], parts[1], ":".join(parts[2:])
     else:
         raise ValueError(f"Invalid trace key format: {key}")
+
+
+def parse_condition_key(key: str) -> Tuple[str, str]:
+    """
+    Parse a simple condition key into (function, variable).
+
+    Args:
+        key: Condition key in format "function:variable"
+
+    Returns:
+        Tuple of (function, variable)
+
+    Examples:
+        >>> parse_condition_key("SSL_CTX_set_verify:mode")
+        ("SSL_CTX_set_verify", "mode")
+        >>> parse_condition_key("upscli_sslinit:a2")
+        ("upscli_sslinit", "a2")
+
+    Raises:
+        ValueError: If key is not in expected format
+    """
+    parts = key.split(":", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    raise ValueError(f"Invalid condition key format: {key}")
 
 
 # ============================================================================
@@ -186,6 +212,9 @@ class AnalysisState(TypedDict, total=False):
     """
     Results of variable tracing from all analyzed binaries.
 
+    DEPRECATED: Use trace_groups for new code. This field is kept for
+    backwards compatibility during migration.
+
     Key: composite key in format "{binary_path}:{function}:{variable}" for cross-binary traces,
          or "function:variable" for main binary traces
     Value: List of VariableTrace objects (multiple sources can contribute to same variable)
@@ -219,6 +248,51 @@ class AnalysisState(TypedDict, total=False):
             resolving_status=TraceResolvingStatus.RESOLVED,
             outcome="PASS - enables verification"
         )]
+    }
+    """
+
+    trace_groups: Dict[str, VariableTraceGroup]
+    """
+    All traces grouped by condition they resolve.
+
+    This is the primary storage for trace analysis results. It groups main binary
+    traces with all continuations (cross-binary, config, script) that contribute
+    to resolving each condition.
+
+    Key: "function:variable" (condition key)
+    Value: VariableTraceGroup containing main traces and all continuations
+
+    Example:
+    {
+        "upscli_connect:a4": VariableTraceGroup(
+            condition_key="upscli_connect:a4",
+            function="upscli_connect",
+            variable="a4",
+            main_traces=[VariableTrace(source_kind=EXTERNAL_CALL, ...)],
+            continuations=[
+                TraceContinuation(
+                    type=CROSS_BINARY,
+                    source_path="usr/bin/upsc",
+                    traces=[VariableTrace(source_kind=CONSTANT, value="1")],
+                    resolved_value="1"
+                ),
+                TraceContinuation(
+                    type=CROSS_BINARY,
+                    source_path="usr/sbin/upsmon",
+                    traces=[VariableTrace(source_kind=CONFIG_FILE, ...)],
+                    sub_continuations=[
+                        TraceContinuation(
+                            type=CONFIG_FILE,
+                            source_path="upsmon.conf",
+                            config_values={"CERTVERIFY": "1"}
+                        )
+                    ]
+                )
+            ],
+            security_mapping={"0": "FAIL", "1": "PASS"},
+            overall_status=RESOLVED,
+            resolution_summary="Resolved from multiple sources"
+        )
     }
     """
 
@@ -336,6 +410,7 @@ def create_initial_state(
         # Dataflow
         pending_dataflow_tasks=[],
         variable_traces={},
+        trace_groups={},
 
         # Config fetch
         pending_config_fetch_tasks=[],
