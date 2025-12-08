@@ -23,7 +23,7 @@ def _normalize_enum_values(data):
     if isinstance(data, dict):
         normalized = {}
         for key, value in data.items():
-            if key in ("status", "source") and isinstance(value, str):
+            if key in ("status", "step_type", "resolving_status", "source_kind") and isinstance(value, str):
                 # Normalize enum values to lowercase
                 normalized[key] = value.lower()
             else:
