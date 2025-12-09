@@ -86,7 +86,8 @@ def start_headless_ida_server(
         url = f"http://{host}:{port}/sse"
         console.print(f"[cyan]⏳[/cyan]  Waiting for server at {url}...")
 
-        for i in range(IDA_SERVER_STARTUP_TIMEOUT):
+        deadline = time.perf_counter() + IDA_SERVER_STARTUP_TIMEOUT
+        while time.perf_counter() < deadline:
             # Check if process crashed
             if process.poll() is not None:
                 # Process exited, read log file

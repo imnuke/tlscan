@@ -20,7 +20,7 @@ TOKEN_WARNING_THRESHOLD = 8000
 IDA_SERVER_HOST = "localhost"
 """Host for headless IDA server."""
 
-IDA_SERVER_STARTUP_TIMEOUT = 30
+IDA_SERVER_STARTUP_TIMEOUT = 300
 """Timeout in seconds for IDA server to start."""
 
 IDA_SERVER_READINESS_CHECK_INTERVAL = 0.5
