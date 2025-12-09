@@ -12,10 +12,12 @@
   - Protocol scheme: Checks for "https://" vs "http://"
   - Port-based: Different behavior on port 443 vs 80
   - Environment variable: SSL enabled via env var (e.g., USE_SSL=1)
+  - Mandatory STARTTLS: SSL required after negotiation, connection aborted if server doesn't support it
 - Detect plaintext fallbacks:
   - Code paths with `connect()` + `send()`/`recv()` without SSL wrapper
   - Conditional branches that skip SSL initialization
   - Error handling that falls back to plaintext
+  - Opportunistic STARTTLS: Sends "STARTTLS" command but continues in plaintext if server doesn't support it (vulnerable to downgrade attacks)
 
 **Detection Patterns**:
 - Functions: `SSL_connect`, `SSL_accept`, `SSL_new`, `SSL_CTX_new`, `SSL_write`, `SSL_read`
@@ -23,17 +25,20 @@
   - `if (use_ssl)` or `if (config.enable_tls)` before SSL calls
   - `if (strncmp(url, "https://"))` for protocol detection
   - Port checks: `if (port == 443)` determining SSL usage
+  - STARTTLS strings: "STARTTLS", "OK STARTTLS", "220 Ready to start TLS" followed by SSL_connect
 - Vulnerability indicators:
   - SSL functions exist but never called in dataflow
   - Unconditional `connect()` + `send()`/`recv()` without SSL
   - SSL initialization inside `if(0)` or disabled config branches
   - Error recovery that establishes plaintext connection
+  - Opportunistic STARTTLS without enforcement (allows plaintext fallback, vulnerable to downgrade attacks)
 
 **Analysis Steps**:
 1. Trace main connection function to verify SSL_connect() is actually reached
 2. Check if SSL context initialization is conditional (config/env/flag-dependent)
 3. Look for plaintext fallback paths (non-SSL socket operations)
 4. If conditional, trace to configuration source (file/env/hardcoded)
+5. For STARTTLS: Check if connection aborts on negotiation failure (mandatory=CONDITIONAL) or falls back to plaintext (opportunistic=FAIL)
 
 ## 2. Certificate Chain and Validity Checking
 **Priority**: MUST
