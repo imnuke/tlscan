@@ -70,7 +70,7 @@ def log_agent_state(
         changes: Dict of state updates (node's return value)
     """
     # Internal fields to skip
-    INTERNAL_FIELDS = {"current_phase", "depth", "security_rules"}
+    INTERNAL_FIELDS = {"current_phase", "security_rules"}
 
     # Filter out internal fields
     filtered_changes = {k: v for k, v in changes.items() if k not in INTERNAL_FIELDS}
@@ -147,7 +147,7 @@ def log_agent_state_diff(
         state_after: State snapshot after agent execution
     """
     # Internal fields to filter from display
-    INTERNAL_FIELDS = {"current_phase", "depth", "security_rules"}
+    INTERNAL_FIELDS = {"current_phase", "security_rules"}
 
     # Filter internal fields from both states
     before_filtered = {k: v for k, v in state_before.items() if k not in INTERNAL_FIELDS}

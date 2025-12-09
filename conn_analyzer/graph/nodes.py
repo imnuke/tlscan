@@ -935,7 +935,6 @@ async def _process_config_fetch(
                             function=original_trace.function,
                             variable=original_trace.variable,
                             value=result.config_values[task.variable],
-                            confidence=original_trace.confidence,
                             trace_path=original_trace.trace_path
                         )
                         traces_list[i] = updated_trace
