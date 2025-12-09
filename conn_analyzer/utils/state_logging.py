@@ -1,7 +1,8 @@
 """Utilities for logging agent state changes to console during analysis workflow."""
 
+import difflib
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -14,23 +15,28 @@ console = Console()
 
 
 def _serialize_and_truncate(obj: Any, max_str_len: int = 100) -> Any:
-    """Recursively serialize Pydantic models and truncate long strings.
+    """Recursively serialize Pydantic models, exclude None values, and truncate long strings.
 
     Args:
         obj: Object to serialize
         max_str_len: Maximum length for string values
 
     Returns:
-        Serialized object with truncated strings
+        Serialized object with null fields excluded and long strings truncated
     """
     if hasattr(obj, 'model_dump'):
-        # Pydantic v2 model
-        return _serialize_and_truncate(obj.model_dump(), max_str_len)
+        # Pydantic v2 model - exclude None values
+        return _serialize_and_truncate(obj.model_dump(exclude_none=True), max_str_len)
     elif hasattr(obj, 'dict'):
-        # Pydantic v1 model
-        return _serialize_and_truncate(obj.dict(), max_str_len)
+        # Pydantic v1 model - exclude None values
+        return _serialize_and_truncate(obj.dict(exclude_none=True), max_str_len)
     elif isinstance(obj, dict):
-        return {k: _serialize_and_truncate(v, max_str_len) for k, v in obj.items()}
+        # Filter out None values from dicts
+        return {
+            k: _serialize_and_truncate(v, max_str_len)
+            for k, v in obj.items()
+            if v is not None
+        }
     elif isinstance(obj, (list, tuple)):
         return [_serialize_and_truncate(item, max_str_len) for item in obj]
     elif isinstance(obj, set):
@@ -64,7 +70,7 @@ def log_agent_state(
         changes: Dict of state updates (node's return value)
     """
     # Internal fields to skip
-    INTERNAL_FIELDS = {"current_phase", "depth", "security_rules"}
+    INTERNAL_FIELDS = {"current_phase", "security_rules"}
 
     # Filter out internal fields
     filtered_changes = {k: v for k, v in changes.items() if k not in INTERNAL_FIELDS}
@@ -86,6 +92,109 @@ def log_agent_state(
     console.print()
     console.print(Panel(
         syntax,
+        title=f"[bold cyan]🔄 {agent_name} - State Changes[/bold cyan]",
+        border_style="cyan",
+        padding=(0, 1)
+    ))
+
+
+def capture_state_snapshot(
+    config_tasks: List,
+    dataflow_tasks: List,
+    trace_groups: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """Capture current state for diff comparison.
+
+    Creates a deep copy of the relevant state fields for before/after comparison.
+    Excludes variable_traces (redundant with trace_groups) and null fields.
+
+    Args:
+        config_tasks: Current pending_config_fetch_tasks list
+        dataflow_tasks: Current pending_dataflow_tasks list
+        trace_groups: Optional trace_groups dict
+
+    Returns:
+        Snapshot dict with serialized state (null fields excluded)
+    """
+    snapshot = {
+        "pending_config_fetch_tasks": [
+            _serialize_and_truncate(t) for t in config_tasks
+        ],
+        "pending_dataflow_tasks": [
+            _serialize_and_truncate(t) for t in dataflow_tasks
+        ],
+    }
+    if trace_groups:
+        snapshot["trace_groups"] = {
+            k: _serialize_and_truncate(v) for k, v in trace_groups.items()
+        }
+    return snapshot
+
+
+def log_agent_state_diff(
+    agent_name: str,
+    state_before: Dict[str, Any],
+    state_after: Dict[str, Any],
+) -> None:
+    """Log state changes as unified diff after an agent completes.
+
+    Computes and displays a unified diff between the before and after states,
+    showing exactly what was added, removed, or modified.
+
+    Args:
+        agent_name: Name of the agent that executed
+        state_before: State snapshot before agent execution
+        state_after: State snapshot after agent execution
+    """
+    # Internal fields to filter from display
+    INTERNAL_FIELDS = {"current_phase", "security_rules"}
+
+    # Filter internal fields from both states
+    before_filtered = {k: v for k, v in state_before.items() if k not in INTERNAL_FIELDS}
+    after_filtered = {k: v for k, v in state_after.items() if k not in INTERNAL_FIELDS}
+
+    # Serialize to JSON for diff comparison (already serialized by capture_state_snapshot)
+    before_json = json.dumps(before_filtered, indent=2, sort_keys=True, default=str)
+    after_json = json.dumps(after_filtered, indent=2, sort_keys=True, default=str)
+
+    # Skip if no changes
+    if before_json == after_json:
+        console.print(f"[dim]  ℹ {agent_name}: (no state changes)[/dim]")
+        return
+
+    # Compute unified diff
+    diff_lines = list(difflib.unified_diff(
+        before_json.splitlines(),
+        after_json.splitlines(),
+        fromfile="before",
+        tofile="after",
+        lineterm=""
+    ))
+
+    # Format with Rich markup colors
+    colored_lines = []
+    for line in diff_lines:
+        if line.startswith('+++') or line.startswith('---'):
+            # Header lines - dim
+            colored_lines.append(f"[dim]{line}[/dim]")
+        elif line.startswith('+'):
+            # Added lines - green
+            colored_lines.append(f"[green]{line}[/green]")
+        elif line.startswith('-'):
+            # Removed lines - red
+            colored_lines.append(f"[red]{line}[/red]")
+        elif line.startswith('@@'):
+            # Hunk headers - cyan
+            colored_lines.append(f"[cyan]{line}[/cyan]")
+        else:
+            # Context lines - dim
+            colored_lines.append(f"[dim]{line}[/dim]")
+
+    diff_text = "\n".join(colored_lines)
+
+    console.print()
+    console.print(Panel(
+        diff_text,
         title=f"[bold cyan]🔄 {agent_name} - State Changes[/bold cyan]",
         border_style="cyan",
         padding=(0, 1)

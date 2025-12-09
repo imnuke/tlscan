@@ -11,7 +11,6 @@ from conn_analyzer.graph.models import (
     RuleResult,
     VariableTrace,
     VariableTraceGroup,
-    ExternalValue,
     ConfigFetchTask,
     DataflowTask,
 )
@@ -149,10 +148,6 @@ class AnalysisState(TypedDict, total=False):
 
     current_phase: AnalysisPhase
     """Current phase of the analysis workflow."""
-
-    # NOTE: is this used?
-    depth: int
-    """Depth of cross-binary recursion (for preventing infinite loops)."""
 
     _next_node: str
     """Used by checkpoint router to determine next node when resuming from checkpoint."""
@@ -309,37 +304,8 @@ class AnalysisState(TypedDict, total=False):
     """
 
     # ========================================================================
-    # Firmware Context & External Values
+    # Firmware Context
     # ========================================================================
-
-    external_values: Dict[str, ExternalValue]
-    """
-    Values sourced from external firmware files (binaries/scripts/configs).
-
-    Unified structure for all external sources that follow the same pattern:
-    dataflow finds external source → firmware exploration → fetch value
-
-    Key: variable name (e.g., "ssl_verify_mode")
-    Value: ExternalValue with value, source_type, source_path, context
-
-    Example:
-    {
-        "ssl_verify_mode": ExternalValue(
-            value="1",
-            source_type=ExternalSourceType.CONFIG,
-            source_path="/etc/ssl.conf",
-            variable_name="ssl_verify_mode",
-            context="Found in main config file"
-        ),
-        "tls_min_version": ExternalValue(
-            value="1.2",
-            source_type=ExternalSourceType.SCRIPT,
-            source_path="/etc/init.d/ssl-setup.sh",
-            variable_name="tls_min_version",
-            context="Set in initialization script"
-        )
-    }
-    """
 
     firmware_details: Optional[str]
     """Detailed findings from firmware exploration (for logging/display)."""
@@ -399,7 +365,6 @@ def create_initial_state(
 
         # Workflow control
         current_phase=AnalysisPhase.INITIAL_SSL_ANALYSIS,
-        depth=0,
 
         # SSL results
         rule_result={},
@@ -415,8 +380,7 @@ def create_initial_state(
         # Config fetch
         pending_config_fetch_tasks=[],
 
-        # Firmware & External Values
-        external_values={},
+        # Firmware
         firmware_details=None,
         script_findings=None,
 

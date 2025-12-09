@@ -8,6 +8,7 @@ This module implements all graph nodes with:
 """
 
 import time
+from pathlib import Path
 from typing import Dict, Any, List, Sequence, Set, Optional
 from langchain_core.messages import HumanMessage
 
@@ -41,7 +42,11 @@ from conn_analyzer.graph.models import (
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
 from conn_analyzer.agents.core.execution import stream_and_log_agent
-from conn_analyzer.utils.state_logging import log_agent_state
+from conn_analyzer.utils.state_logging import (
+    log_agent_state,
+    log_agent_state_diff,
+    capture_state_snapshot,
+)
 
 from rich.console import Console
 
@@ -519,11 +524,12 @@ async def dataflow_analysis_node(
     for task_idx, task in enumerate(pending_tasks):
         console.print(f"[dim]  Processing {task.type.value} task: {task.target} ({len(task.variables)} variables)[/dim]")
 
-        # Capture state before processing this task (for per-task delta logging)
-        traces_before = set(all_traces.keys())
-        config_tasks_before = len(config_fetch_tasks)
-        dataflow_tasks_before = len(new_dataflow_tasks)
         agent_name_with_progress = f"Dataflow Agent ({task_idx + 1}/{total_tasks})"
+
+        # Capture state BEFORE processing this task
+        state_before = capture_state_snapshot(
+            config_fetch_tasks, new_dataflow_tasks, trace_groups
+        )
 
         # Execute dataflow analysis for this task using shared helper
         try:
@@ -657,24 +663,11 @@ async def dataflow_analysis_node(
                 new_dataflow_tasks.append(script_discovery_task)
                 console.print(f"[dim]    → Script discovery needed for CLI argument '{arg_name}'[/dim]")
 
-        # Log state changes for this individual task
-        traces_after = set(all_traces.keys())
-        new_traces = {k: all_traces[k] for k in traces_after - traces_before}
-        new_config_tasks_count = len(config_fetch_tasks) - config_tasks_before
-        new_dataflow_tasks_count = len(new_dataflow_tasks) - dataflow_tasks_before
-
-        # Build state update for this task only
-        task_state_update = {}
-        if new_traces:
-            task_state_update["variable_traces"] = new_traces
-        if new_dataflow_tasks_count > 0:
-            task_state_update["pending_dataflow_tasks"] = new_dataflow_tasks[dataflow_tasks_before:]
-        if new_config_tasks_count > 0:
-            task_state_update["pending_config_fetch_tasks"] = config_fetch_tasks[config_tasks_before:]
-
-        # Log individual task changes
-        if task_state_update:
-            log_agent_state(agent_name_with_progress, state, changes=task_state_update)
+        # Capture state AFTER processing and log diff
+        state_after = capture_state_snapshot(
+            config_fetch_tasks, new_dataflow_tasks, trace_groups
+        )
+        log_agent_state_diff(agent_name_with_progress, state_before, state_after)
 
     console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces, {len(trace_groups)} groups[/green]")
 
@@ -942,7 +935,6 @@ async def _process_config_fetch(
                             function=original_trace.function,
                             variable=original_trace.variable,
                             value=result.config_values[task.variable],
-                            confidence=original_trace.confidence,
                             trace_path=original_trace.trace_path
                         )
                         traces_list[i] = updated_trace
@@ -1018,12 +1010,26 @@ async def firmware_explore_node(
     # Priority 1: Caller Discovery (Cross-Binary Analysis)
     # ========================================================================
     if caller_discovery_tasks:
+        # Capture state BEFORE caller discovery
+        state_before = capture_state_snapshot(
+            [],  # config tasks not affected by caller discovery
+            accumulated_update["pending_dataflow_tasks"]
+        )
+
         try:
             remaining, details = await _process_caller_discovery(
                 caller_discovery_tasks, firmware_agent, pending_tasks
             )
             accumulated_update["pending_dataflow_tasks"] = remaining
             details_parts.append(details)
+
+            # Capture state AFTER caller discovery and log diff
+            state_after = capture_state_snapshot(
+                [],
+                accumulated_update["pending_dataflow_tasks"]
+            )
+            log_agent_state_diff("Firmware Agent - Caller Discovery", state_before, state_after)
+
         except Exception as e:
             errors.append(f"Caller discovery failed: {e}")
             console.print(f"[red]✗ Caller discovery error: {e}[/red]")
@@ -1032,6 +1038,12 @@ async def firmware_explore_node(
     # Priority 2: Script Discovery (CLI Arguments) - NO elif!
     # ========================================================================
     if script_discovery_tasks:
+        # Capture state BEFORE script discovery
+        state_before = capture_state_snapshot(
+            [],
+            accumulated_update["pending_dataflow_tasks"]
+        )
+
         try:
             remaining, script_findings, details = await _process_script_discovery(
                 script_discovery_tasks, firmware_agent,
@@ -1040,6 +1052,14 @@ async def firmware_explore_node(
             accumulated_update["pending_dataflow_tasks"] = remaining
             accumulated_update["script_findings"] = script_findings
             details_parts.append(details)
+
+            # Capture state AFTER script discovery and log diff
+            state_after = capture_state_snapshot(
+                [],
+                accumulated_update["pending_dataflow_tasks"]
+            )
+            log_agent_state_diff("Firmware Agent - Script Discovery", state_before, state_after)
+
         except Exception as e:
             errors.append(f"Script discovery failed: {e}")
             console.print(f"[red]✗ Script discovery error: {e}[/red]")
@@ -1048,6 +1068,12 @@ async def firmware_explore_node(
     # Priority 3: Config Fetch (Configuration Values) - Changed from elif to if!
     # ========================================================================
     if config_fetch_tasks:
+        # Capture state BEFORE config fetch
+        state_before = capture_state_snapshot(
+            config_fetch_tasks,  # Include config tasks that are being processed
+            accumulated_update["pending_dataflow_tasks"]
+        )
+
         try:
             updated_traces, details = await _process_config_fetch(
                 config_fetch_tasks, firmware_agent,
@@ -1056,6 +1082,14 @@ async def firmware_explore_node(
             accumulated_update["variable_traces"] = updated_traces
             accumulated_update["pending_config_fetch_tasks"] = []
             details_parts.append(details)
+
+            # Capture state AFTER config fetch and log diff
+            state_after = capture_state_snapshot(
+                [],  # Config tasks are now empty
+                accumulated_update["pending_dataflow_tasks"]
+            )
+            log_agent_state_diff("Firmware Agent - Config Fetch", state_before, state_after)
+
         except Exception as e:
             errors.append(f"Config fetch failed: {e}")
             console.print(f"[red]✗ Config fetch error: {e}[/red]")
@@ -1080,8 +1114,7 @@ async def firmware_explore_node(
     else:
         accumulated_update["current_phase"] = AnalysisPhase.SYNTHESIS
 
-    # Single return point - log state after firmware exploration
-    log_agent_state("Firmware Agent", state, changes=accumulated_update)
+    # Per-agent state changes already logged after each helper function
     return accumulated_update
 
 
@@ -1138,13 +1171,20 @@ async def binary_analysis_sequential(
     for key, group in state.get("trace_groups", {}).items():
         trace_groups[key] = group.model_copy(deep=True)
 
-    for task in cross_binary_tasks:
+    for task_idx, task in enumerate(cross_binary_tasks):
         binary_path = task.binary_path
+        binary_name = Path(binary_path).name
+        agent_name = f"Cross-binary ({task_idx + 1}/{len(cross_binary_tasks)}: {binary_name})"
         context = task.context or ""
 
         console.print(f"[dim]  Analyzing caller: {binary_path}[/dim]")
         if context:
             console.print(f"[dim]  Context: {context}[/dim]")
+
+        # Capture state BEFORE processing this task
+        state_before = capture_state_snapshot(
+            config_fetch_tasks, new_dataflow_tasks, trace_groups
+        )
 
         try:
             # Execute dataflow analysis using shared helper
@@ -1220,6 +1260,12 @@ async def binary_analysis_sequential(
 
             console.print(f"[green]  ✓ {binary_path}: {len(result.traces)} traces[/green]")
 
+            # Capture state AFTER processing and log diff
+            state_after = capture_state_snapshot(
+                config_fetch_tasks, new_dataflow_tasks, trace_groups
+            )
+            log_agent_state_diff(agent_name, state_before, state_after)
+
         except Exception as e:
             console.print(f"[red]  ✗ Error analyzing {binary_path}: {e}[/red]")
             # Continue with other binaries even if one fails
@@ -1240,8 +1286,7 @@ async def binary_analysis_sequential(
         "current_phase": next_phase,
     }
 
-    # Log state after all agent executions with changes
-    log_agent_state("Cross-binary Dataflow", state, changes=state_update)
+    # Per-task state changes already logged inside the loop
     return state_update
 
 

@@ -5,7 +5,7 @@ Using Pydantic ensures type safety and eliminates regex parsing.
 """
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Literal, Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any
 from enum import Enum
 
 
@@ -30,14 +30,6 @@ class SourceKind(str, Enum):
     COMMAND_LINE_ARG = "command_line_arg"
     EXTERNAL_CALL = "external_call"
     UNKNOWN = "unknown"
-
-
-class ExternalSourceType(str, Enum):
-    """Type of external source for firmware exploration."""
-
-    BINARY = "binary"
-    SCRIPT = "script"
-    CONFIG = "config"
 
 
 class TaskType(str, Enum):
@@ -402,11 +394,6 @@ class VariableTrace(BaseModel):
         description="Concrete value if determinable (e.g., '1', 'SSL_VERIFY_PEER', '/etc/ssl.conf')"
     )
 
-    confidence: Literal["high", "medium", "low"] = Field(
-        "medium",
-        description="Confidence level in the trace result"
-    )
-
     trace_path: List[TraceStep] = Field(
         description="Structured list of steps in the trace path. Final step contains source info."
     )
@@ -437,40 +424,6 @@ class DataflowAnalysisOutput(BaseModel):
 
     traces: List[VariableTrace] = Field(
         description="Traces for all requested variables"
-    )
-
-
-# ============================================================================
-# External Value Models (Unified for Firmware Exploration)
-# ============================================================================
-
-class ExternalValue(BaseModel):
-    """
-    A value sourced from external firmware files (binary/script/config).
-
-    This unifies all external value sources that follow the same pattern:
-    dataflow finds external source → firmware exploration → fetch value
-    """
-
-    value: str = Field(
-        description="The actual value found"
-    )
-
-    source_type: ExternalSourceType = Field(
-        description="Type of external source: binary/script/config"
-    )
-
-    source_path: str = Field(
-        description="Path to the source file in firmware (e.g., '/etc/ssl.conf', '/usr/bin/client')"
-    )
-
-    variable_name: str = Field(
-        description="Name of the variable this value is for (e.g., 'ssl_verify_mode')"
-    )
-
-    context: Optional[str] = Field(
-        None,
-        description="Additional context about how/where the value was found"
     )
 
 

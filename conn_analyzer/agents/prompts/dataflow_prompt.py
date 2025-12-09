@@ -10,7 +10,6 @@ Trace variable sources and output JSON matching this schema:
       "variable": "verify_mode",
       "function": "SSL_CTX_set_verify",
       "value": "1"|null,
-      "confidence": "high|medium|low",
       "trace_path": [
         {
           "step_number": 1,
@@ -167,7 +166,6 @@ DO NOT report "unknown" for multi-source variables - decompose them!
   "variable": "a2",
   "function": "upscli_sslinit",
   "value": null,
-  "confidence": "high",
   "trace_path": [
     {"step_number": 1, "step_type": "trace_start", "description": "Begin tracing 'a2' in upscli_sslinit", "function": "upscli_sslinit", "address": "0x6465"},
     {"step_number": 2, "step_type": "call_site", "description": "Called by upscli_tryconnect with parameter a4", "function": "upscli_tryconnect", "address": "0x6796"},
@@ -183,7 +181,6 @@ DO NOT report "unknown" for multi-source variables - decompose them!
   "variable": "a2",
   "function": "upscli_sslinit",
   "value": null,
-  "confidence": "high",
   "trace_path": [
     {"step_number": 1, "step_type": "trace_start", "description": "Begin tracing 'a2' in upscli_sslinit", "function": "upscli_sslinit", "address": "0x6465"},
     {"step_number": 2, "step_type": "call_site", "description": "upscli_connect calls upscli_tryconnect - a4 passed unchanged", "function": "upscli_connect", "address": "0x6ec7"},
@@ -200,7 +197,6 @@ DO NOT report "unknown" for multi-source variables - decompose them!
   "variable": "verify_mode",
   "function": "SSL_CTX_set_verify",
   "value": "1",
-  "confidence": "high",
   "trace_path": [
     {"step_number": 1, "step_type": "trace_start", "description": "Begin tracing 'verify_mode' in SSL_CTX_set_verify", "function": "SSL_CTX_set_verify", "address": "0x401234"},
     {"step_number": 2, "step_type": "call_site", "description": "Called by init_ssl() with constant 1", "function": "init_ssl", "address": "0x402000"},
@@ -214,8 +210,7 @@ DO NOT report "unknown" for multi-source variables - decompose them!
 1. Every trace_path MUST end with step_type="trace_end"
 2. trace_end step MUST have source_kind field
 3. Include relevant source-specific fields based on source_kind
-4. Be honest about confidence level
-5. Output ONLY valid JSON matching the schema
+4. Output ONLY valid JSON matching the schema
 
 Available tools: decompile_function, get_callers, get_xrefs_to, list_functions_filter, is_entry_point, read_file (for scripts/configs), and more.
 

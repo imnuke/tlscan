@@ -12,7 +12,6 @@ from conn_analyzer.graph.models import (
     TraceStepType,
     TraceStep,
     SourceKind,
-    ExternalSourceType,
     ContinuationType,
     RuleCondition,
     RuleResult,
@@ -21,7 +20,6 @@ from conn_analyzer.graph.models import (
     TraceContinuation,
     VariableTraceGroup,
     DataflowAnalysisOutput,
-    ExternalValue,
     FirmwareSearchResult,
 )
 
@@ -37,7 +35,6 @@ __all__ = [
     "TraceStepType",
     "TraceStep",
     "SourceKind",
-    "ExternalSourceType",
     "ContinuationType",
     "RuleCondition",
     "RuleResult",
@@ -46,6 +43,5 @@ __all__ = [
     "TraceContinuation",
     "VariableTraceGroup",
     "DataflowAnalysisOutput",
-    "ExternalValue",
     "FirmwareSearchResult",
 ]
