@@ -15,23 +15,28 @@ console = Console()
 
 
 def _serialize_and_truncate(obj: Any, max_str_len: int = 100) -> Any:
-    """Recursively serialize Pydantic models and truncate long strings.
+    """Recursively serialize Pydantic models, exclude None values, and truncate long strings.
 
     Args:
         obj: Object to serialize
         max_str_len: Maximum length for string values
 
     Returns:
-        Serialized object with truncated strings
+        Serialized object with null fields excluded and long strings truncated
     """
     if hasattr(obj, 'model_dump'):
-        # Pydantic v2 model
-        return _serialize_and_truncate(obj.model_dump(), max_str_len)
+        # Pydantic v2 model - exclude None values
+        return _serialize_and_truncate(obj.model_dump(exclude_none=True), max_str_len)
     elif hasattr(obj, 'dict'):
-        # Pydantic v1 model
-        return _serialize_and_truncate(obj.dict(), max_str_len)
+        # Pydantic v1 model - exclude None values
+        return _serialize_and_truncate(obj.dict(exclude_none=True), max_str_len)
     elif isinstance(obj, dict):
-        return {k: _serialize_and_truncate(v, max_str_len) for k, v in obj.items()}
+        # Filter out None values from dicts
+        return {
+            k: _serialize_and_truncate(v, max_str_len)
+            for k, v in obj.items()
+            if v is not None
+        }
     elif isinstance(obj, (list, tuple)):
         return [_serialize_and_truncate(item, max_str_len) for item in obj]
     elif isinstance(obj, set):
@@ -94,7 +99,6 @@ def log_agent_state(
 
 
 def capture_state_snapshot(
-    traces: Dict[str, List],
     config_tasks: List,
     dataflow_tasks: List,
     trace_groups: Optional[Dict] = None,
@@ -102,21 +106,17 @@ def capture_state_snapshot(
     """Capture current state for diff comparison.
 
     Creates a deep copy of the relevant state fields for before/after comparison.
+    Excludes variable_traces (redundant with trace_groups) and null fields.
 
     Args:
-        traces: Current variable_traces dict
         config_tasks: Current pending_config_fetch_tasks list
         dataflow_tasks: Current pending_dataflow_tasks list
         trace_groups: Optional trace_groups dict
 
     Returns:
-        Snapshot dict with serialized state
+        Snapshot dict with serialized state (null fields excluded)
     """
     snapshot = {
-        "variable_traces": {
-            k: [_serialize_and_truncate(t) for t in (v if isinstance(v, list) else [v])]
-            for k, v in traces.items()
-        },
         "pending_config_fetch_tasks": [
             _serialize_and_truncate(t) for t in config_tasks
         ],

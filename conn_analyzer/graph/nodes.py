@@ -528,7 +528,7 @@ async def dataflow_analysis_node(
 
         # Capture state BEFORE processing this task
         state_before = capture_state_snapshot(
-            all_traces, config_fetch_tasks, new_dataflow_tasks, trace_groups
+            config_fetch_tasks, new_dataflow_tasks, trace_groups
         )
 
         # Execute dataflow analysis for this task using shared helper
@@ -665,7 +665,7 @@ async def dataflow_analysis_node(
 
         # Capture state AFTER processing and log diff
         state_after = capture_state_snapshot(
-            all_traces, config_fetch_tasks, new_dataflow_tasks, trace_groups
+            config_fetch_tasks, new_dataflow_tasks, trace_groups
         )
         log_agent_state_diff(agent_name_with_progress, state_before, state_after)
 
@@ -1013,7 +1013,6 @@ async def firmware_explore_node(
     if caller_discovery_tasks:
         # Capture state BEFORE caller discovery
         state_before = capture_state_snapshot(
-            accumulated_update["variable_traces"],
             [],  # config tasks not affected by caller discovery
             accumulated_update["pending_dataflow_tasks"]
         )
@@ -1027,7 +1026,6 @@ async def firmware_explore_node(
 
             # Capture state AFTER caller discovery and log diff
             state_after = capture_state_snapshot(
-                accumulated_update["variable_traces"],
                 [],
                 accumulated_update["pending_dataflow_tasks"]
             )
@@ -1043,7 +1041,6 @@ async def firmware_explore_node(
     if script_discovery_tasks:
         # Capture state BEFORE script discovery
         state_before = capture_state_snapshot(
-            accumulated_update["variable_traces"],
             [],
             accumulated_update["pending_dataflow_tasks"]
         )
@@ -1059,7 +1056,6 @@ async def firmware_explore_node(
 
             # Capture state AFTER script discovery and log diff
             state_after = capture_state_snapshot(
-                accumulated_update["variable_traces"],
                 [],
                 accumulated_update["pending_dataflow_tasks"]
             )
@@ -1075,7 +1071,6 @@ async def firmware_explore_node(
     if config_fetch_tasks:
         # Capture state BEFORE config fetch
         state_before = capture_state_snapshot(
-            accumulated_update["variable_traces"],
             config_fetch_tasks,  # Include config tasks that are being processed
             accumulated_update["pending_dataflow_tasks"]
         )
@@ -1091,7 +1086,6 @@ async def firmware_explore_node(
 
             # Capture state AFTER config fetch and log diff
             state_after = capture_state_snapshot(
-                accumulated_update["variable_traces"],
                 [],  # Config tasks are now empty
                 accumulated_update["pending_dataflow_tasks"]
             )
@@ -1190,7 +1184,7 @@ async def binary_analysis_sequential(
 
         # Capture state BEFORE processing this task
         state_before = capture_state_snapshot(
-            all_traces, config_fetch_tasks, new_dataflow_tasks, trace_groups
+            config_fetch_tasks, new_dataflow_tasks, trace_groups
         )
 
         try:
@@ -1269,7 +1263,7 @@ async def binary_analysis_sequential(
 
             # Capture state AFTER processing and log diff
             state_after = capture_state_snapshot(
-                all_traces, config_fetch_tasks, new_dataflow_tasks, trace_groups
+                config_fetch_tasks, new_dataflow_tasks, trace_groups
             )
             log_agent_state_diff(agent_name, state_before, state_after)
 
