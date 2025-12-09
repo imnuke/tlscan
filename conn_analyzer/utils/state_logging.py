@@ -106,7 +106,6 @@ def capture_state_snapshot(
     """Capture current state for diff comparison.
 
     Creates a deep copy of the relevant state fields for before/after comparison.
-    Excludes variable_traces (redundant with trace_groups) and null fields.
 
     Args:
         config_tasks: Current pending_config_fetch_tasks list
