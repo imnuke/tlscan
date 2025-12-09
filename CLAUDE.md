@@ -241,6 +241,28 @@ result = await compiled_graph.ainvoke(
 await checkpoint_manager.close()  # Close aiosqlite connection
 ```
 
+## Commit Scopes
+
+Use these scopes for conventional commit messages:
+
+| Scope | Description | Examples |
+|-------|-------------|----------|
+| `graph` | Workflow, nodes, state, routing, models | `feat(graph): add synthesis node` |
+| `agents` | Agent factory, prompts, LLM interactions | `fix(agents): handle timeout in ssl agent` |
+| `state` | State management, AnalysisState fields | `refactor(state): simplify task tracking` |
+| `persistence` | Checkpointing, thread management | `feat(persistence): add fork support` |
+| `ida` | IDA Pro integration, MCP server, static analysis | `fix(ida): handle port conflicts` |
+| `firmware` | Firmware exploration, filesystem tools | `feat(firmware): add config file search` |
+| `cli` | Command-line interface, argument parsing | `feat(cli): add --list-threads flag` |
+| `rules` | Security rule definitions | `docs(rules): update openssl rule` |
+| `config` | Configuration loading, llm_config | `fix(config): validate api keys` |
+| `logging` | Logging, output formatting, reporting | `refactor(logging): improve state diffs` |
+
+**Guidelines**:
+- Use the most specific scope that applies
+- Omit scope for cross-cutting changes affecting multiple areas
+- When in doubt, use the directory name of the primary file changed
+
 ## Development Notes
 
 - Uses **v2 architecture** with modular design
