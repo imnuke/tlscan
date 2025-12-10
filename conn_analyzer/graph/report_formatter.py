@@ -19,6 +19,7 @@ from conn_analyzer.graph.models import (
     RuleCondition,
     VariableTrace,
     VariableTraceGroup,
+    ExternalTraceGroup,
     TraceContinuation,
     ContinuationType,
     TraceStep,
@@ -110,9 +111,10 @@ def format_and_display_report(console: Console, report_data: Dict[str, Any]) -> 
 
     rules = report_data["rules"]
     trace_groups = report_data.get("trace_groups", {})
+    external_traces = report_data.get("external_traces", {})
 
     for rule_id, rule in rules.items():
-        rule_panel = create_rule_panel(rule, trace_groups)
+        rule_panel = create_rule_panel(rule, trace_groups, external_traces)
         console.print(rule_panel)
         console.print()  # Spacing between rules
 
@@ -208,17 +210,22 @@ def display_context(console: Console, context: Dict[str, Any]) -> None:
 
 def create_rule_panel(
     rule: RuleResult,
-    trace_groups: Dict[str, VariableTraceGroup]
+    trace_groups: Dict[str, VariableTraceGroup],
+    external_traces: Dict[str, ExternalTraceGroup] = None
 ) -> Panel:
     """Create a Rich Panel for a single security rule using trace groups.
 
     Args:
         rule: RuleResult with status, evidence, and conditions
         trace_groups: Dictionary mapping condition keys to VariableTraceGroup
+        external_traces: Dictionary of shared cross-binary analysis results
 
     Returns:
         Rich Panel with formatted rule information
     """
+    if external_traces is None:
+        external_traces = {}
+
     renderables = []
 
     # Status
@@ -238,7 +245,7 @@ def create_rule_panel(
 
         for cond in rule.conditions:
             # Create nested panel for each condition
-            cond_panel = create_condition_panel(cond, trace_groups)
+            cond_panel = create_condition_panel(cond, trace_groups, external_traces)
             renderables.append(cond_panel)
 
     # Use Group to combine text and panels
@@ -259,17 +266,22 @@ def create_rule_panel(
 
 def create_condition_panel(
     condition: RuleCondition,
-    trace_groups: Dict[str, VariableTraceGroup]
+    trace_groups: Dict[str, VariableTraceGroup],
+    external_traces: Dict[str, ExternalTraceGroup] = None
 ) -> Panel:
     """Create a nested panel for a single condition using trace groups.
 
     Args:
         condition: RuleCondition with variable, function, and security mapping
         trace_groups: Dictionary of trace groups
+        external_traces: Dictionary of shared cross-binary analysis results
 
     Returns:
         Rich Panel with condition details and hierarchical traces
     """
+    if external_traces is None:
+        external_traces = {}
+
     lines = []
 
     # Condition header
@@ -313,11 +325,27 @@ def create_condition_panel(
                 if i < len(trace_group.main_traces):
                     lines.append("")
 
+        # Collect all continuations: direct + from external_refs
+        all_continuations = list(trace_group.continuations)
+
+        # Look up external_refs and add their continuations
+        for ext_ref in trace_group.external_refs:
+            if ext_ref in external_traces:
+                ext_group = external_traces[ext_ref]
+                for cont in ext_group.continuations:
+                    # Avoid duplicates (same source_path and type)
+                    is_duplicate = any(
+                        c.source_path == cont.source_path and c.type == cont.type
+                        for c in all_continuations
+                    )
+                    if not is_duplicate:
+                        all_continuations.append(cont)
+
         # Continuations (cross-binary, config, etc.)
-        if trace_group.continuations:
+        if all_continuations:
             lines.append("")
             lines.append("[bold]Cross-Analysis Results:[/bold]")
-            for continuation in trace_group.continuations:
+            for continuation in all_continuations:
                 cont_text = format_continuation(continuation, prefix="  ")
                 lines.append(cont_text)
 

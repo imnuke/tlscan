@@ -28,6 +28,7 @@ from conn_analyzer.graph.models import (
     FirmwareSearchResult,
     VariableTrace,
     VariableTraceGroup,
+    ExternalTraceGroup,
     TraceContinuation,
     ContinuationType,
     RuleResult,
@@ -732,14 +733,26 @@ async def _process_caller_discovery(
             for binary_path in result.executables:
                 binary_to_functions[binary_path] = all_function_names
 
-        # Create function_to_variables and function_to_origin mappings for efficient lookup
+        # Create function_to_variables and function_to_origins mappings for efficient lookup
+        # NOTE: A function may have MULTIPLE origin conditions (e.g., both "Certificate Verification"
+        # and "SSL/TLS Usage" rules may trace to upscli_tryconnect:a4)
         function_to_variables: Dict[str, List[VariableSpec]] = {}
-        function_to_origin: Dict[str, str] = {}  # function_name -> origin_condition
+        function_to_origins: Dict[str, List[str]] = {}  # function_name -> list of origin_conditions
         for task in caller_discovery_tasks:
             function_name = task.target
-            function_to_variables[function_name] = task.variables
+            # Merge variables (avoid duplicates)
+            if function_name not in function_to_variables:
+                function_to_variables[function_name] = []
+            for var in task.variables:
+                if not any(v.variable == var.variable and v.function == var.function
+                          for v in function_to_variables[function_name]):
+                    function_to_variables[function_name].append(var)
+            # Collect ALL origin conditions for this function
             if task.origin_condition:
-                function_to_origin[function_name] = task.origin_condition
+                if function_name not in function_to_origins:
+                    function_to_origins[function_name] = []
+                if task.origin_condition not in function_to_origins[function_name]:
+                    function_to_origins[function_name].append(task.origin_condition)
 
         # Create cross-binary tasks with function-specific variables
         for binary_path in result.executables:
@@ -752,17 +765,17 @@ async def _process_caller_discovery(
 
             # Aggregate variables ONLY from functions this binary calls
             aggregated_variables: List[VariableSpec] = []
-            # Build origin_conditions mapping: "function:variable" -> origin_condition
-            origin_conditions: Dict[str, str] = {}
+            # Build origin_conditions mapping: "function:variable" -> list of origin_conditions
+            origin_conditions: Dict[str, List[str]] = {}
 
             for function_name in functions_called:
                 if function_name in function_to_variables:
                     for var_spec in function_to_variables[function_name]:
                         aggregated_variables.append(var_spec)
-                        # Map each variable to its origin condition
-                        if function_name in function_to_origin:
+                        # Map each variable to ALL its origin conditions
+                        if function_name in function_to_origins:
                             var_key = f"{var_spec.function}:{var_spec.variable}"
-                            origin_conditions[var_key] = function_to_origin[function_name]
+                            origin_conditions[var_key] = function_to_origins[function_name]
 
             if not aggregated_variables:
                 console.print(f"[dim]  Binary {binary_path} calls {functions_called} but no variables to trace[/dim]")
@@ -1155,6 +1168,11 @@ async def binary_analysis_sequential(
     for key, group in state.get("trace_groups", {}).items():
         trace_groups[key] = group.model_copy(deep=True)
 
+    # Get existing external traces - deep copy
+    external_traces: Dict[str, ExternalTraceGroup] = {}
+    for key, group in state.get("external_traces", {}).items():
+        external_traces[key] = group.model_copy(deep=True)
+
     for task_idx, task in enumerate(cross_binary_tasks):
         binary_path = task.binary_path
         binary_name = Path(binary_path).name
@@ -1179,47 +1197,94 @@ async def binary_analysis_sequential(
                 firmware_tools=[],  # Cross-binary tasks are always BINARY type, no firmware tools needed
             )
 
-            # Process traces and add to trace_groups
+            # Process traces and store in external_traces (shared storage)
             for trace in result.traces:
-                # === BEGIN: Origin condition handling ===
-                # Determine origin condition for trace group linkage
+                # === BEGIN: External trace storage ===
+                # The key for external_traces is the function:variable being traced in THIS binary
                 trace_key = f"{trace.function}:{trace.variable}"
-                origin_key = None
 
-                # Priority: origin_conditions mapping > origin_condition > fallback to trace key
+                # Get or create ExternalTraceGroup for this external function
+                if trace_key not in external_traces:
+                    external_traces[trace_key] = ExternalTraceGroup(
+                        external_key=trace_key,
+                        function=trace.function,
+                        variable=trace.variable,
+                    )
+                ext_group = external_traces[trace_key]
+
+                # Add continuation for this binary
+                continuation = None
+                for cont in ext_group.continuations:
+                    if cont.source_path == binary_path and cont.type == ContinuationType.CROSS_BINARY:
+                        continuation = cont
+                        break
+                if continuation is None:
+                    continuation = TraceContinuation(
+                        type=ContinuationType.CROSS_BINARY,
+                        source_path=binary_path,
+                    )
+                    ext_group.continuations.append(continuation)
+                continuation.traces.append(trace)
+
+                # Check if trace resolved to a value
+                if trace.trace_path:
+                    last_step = trace.trace_path[-1]
+                    if last_step.step_type == TraceStepType.TRACE_END:
+                        if last_step.source_kind == SourceKind.CONSTANT and last_step.constant_value:
+                            continuation.resolved_value = last_step.constant_value
+                            continuation.resolved_source_kind = SourceKind.CONSTANT
+                        elif trace.value:
+                            continuation.resolved_value = trace.value
+                            continuation.resolved_source_kind = last_step.source_kind
+
+                # === BEGIN: Link to origin conditions ===
+                # Determine which origin conditions should reference this external trace
+                origin_keys: List[str] = []
                 if task.origin_conditions and trace_key in task.origin_conditions:
-                    origin_key = task.origin_conditions[trace_key]
+                    # origin_conditions is now Dict[str, List[str]]
+                    origins = task.origin_conditions[trace_key]
+                    if isinstance(origins, list):
+                        origin_keys = origins
+                    else:
+                        # Backward compatibility: handle old str format
+                        origin_keys = [origins]
                 elif task.origin_condition:
-                    origin_key = task.origin_condition
+                    origin_keys = [task.origin_condition]
+                else:
+                    origin_keys = [trace_key]
 
-                # Parse origin_key to get function and variable for trace group
-                if origin_key:
+                # Add origin conditions to external trace group (for reference)
+                for origin_key in origin_keys:
+                    if origin_key not in ext_group.origin_conditions:
+                        ext_group.origin_conditions.append(origin_key)
+
+                # Add external_ref to each origin trace group
+                for origin_key in origin_keys:
                     try:
                         origin_func, origin_var = parse_condition_key(origin_key)
                     except ValueError:
-                        origin_func, origin_var = trace.function, trace.variable
-                else:
-                    origin_func, origin_var = trace.function, trace.variable
+                        continue
 
-                # Find security mapping from the ORIGINAL condition
-                security_mapping = find_security_mapping_for_trace(state, origin_func, origin_var)
-                if not security_mapping:
-                    original_var = next(
-                        (v for v in task.variables if v.variable == trace.variable and v.function == trace.function),
-                        None
+                    # Find security mapping from the ORIGINAL condition
+                    security_mapping = find_security_mapping_for_trace(state, origin_func, origin_var)
+                    if not security_mapping:
+                        original_var = next(
+                            (v for v in task.variables if v.variable == trace.variable and v.function == trace.function),
+                            None
+                        )
+                        security_mapping = original_var.security_mapping if original_var else None
+
+                    # Get or create trace group under ORIGIN condition key
+                    trace_group = get_or_create_trace_group(
+                        trace_groups,
+                        origin_func,
+                        origin_var,
+                        security_mapping,
                     )
-                    security_mapping = original_var.security_mapping if original_var else None
-
-                # Get or create trace group under ORIGIN condition key
-                trace_group = get_or_create_trace_group(
-                    trace_groups,
-                    origin_func,
-                    origin_var,
-                    security_mapping,
-                )
-                # Add trace as continuation (binary_path is set for cross-binary)
-                add_trace_to_group(trace_group, trace, binary_path)
-                # === END: Origin condition handling ===
+                    # Add external reference (not the actual continuation)
+                    if trace_key not in trace_group.external_refs:
+                        trace_group.external_refs.append(trace_key)
+                # === END: Link to origin conditions ===
 
                 # === BEGIN: Follow-up task creation ===
                 # Create follow-up tasks from this trace (config fetch, caller discovery, etc.)
@@ -1259,6 +1324,7 @@ async def binary_analysis_sequential(
 
     state_update = {
         "trace_groups": trace_groups,
+        "external_traces": external_traces,
         "pending_dataflow_tasks": new_dataflow_tasks,
         "pending_config_fetch_tasks": config_fetch_tasks,
         "current_phase": next_phase,
@@ -1393,6 +1459,7 @@ async def synthesis_node(
 
     rules = state.get("rule_result", {})
     trace_groups = state.get("trace_groups", {})
+    external_traces = state.get("external_traces", {})
     ssl_summary = state.get("ssl_summary", "")
     client_type = state.get("client_type", "Unknown")
 
@@ -1419,7 +1486,21 @@ async def synthesis_node(
         if security_mapping:
             updated_group.security_mapping = security_mapping
 
-        # Compute resolution from main traces + continuations
+        # Add continuations from external_refs to compute resolution correctly
+        # This is a temporary copy for resolution computation only
+        for ext_ref in updated_group.external_refs:
+            if ext_ref in external_traces:
+                ext_group = external_traces[ext_ref]
+                for cont in ext_group.continuations:
+                    # Avoid duplicates
+                    is_duplicate = any(
+                        c.source_path == cont.source_path and c.type == cont.type
+                        for c in updated_group.continuations
+                    )
+                    if not is_duplicate:
+                        updated_group.continuations.append(cont.model_copy(deep=True))
+
+        # Compute resolution from main traces + continuations (including external_refs)
         updated_group.compute_resolution(security_mapping)
 
         updated_trace_groups[condition_key] = updated_group
@@ -1472,8 +1553,10 @@ async def synthesis_node(
             },
             "rules": rules,
             "trace_groups": updated_trace_groups,
+            "external_traces": external_traces,  # Shared cross-binary results
             "scripts": script_findings
         },
         "trace_groups": updated_trace_groups,
+        "external_traces": external_traces,
         "current_phase": AnalysisPhase.COMPLETED,
     }

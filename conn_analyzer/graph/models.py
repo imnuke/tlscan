@@ -162,13 +162,14 @@ class DataflowTask(BaseModel):
         )
     )
 
-    origin_conditions: Optional[Dict[str, str]] = Field(
+    origin_conditions: Optional[Dict[str, List[str]]] = Field(
         None,
         description=(
-            "Mapping from 'function:variable' to origin condition key, used when a task "
-            "is tracing variables from multiple original conditions (e.g., batched cross-binary "
-            "analysis). Keys are the traced function:variable, values are the origin condition keys. "
-            "Takes precedence over origin_condition when set."
+            "Mapping from 'function:variable' to list of origin condition keys. "
+            "Supports multiple conditions tracing to the same external function. "
+            "Keys are the traced function:variable, values are lists of origin condition keys. "
+            "Takes precedence over origin_condition when set. "
+            "Example: {'upscli_tryconnect:a4': ['upscli_sslinit:a2', 'upscli_tryconnect:a4']}"
         )
     )
 
@@ -577,6 +578,44 @@ class TraceContinuation(BaseModel):
     )
 
 
+class ExternalTraceGroup(BaseModel):
+    """Cross-binary analysis results for an external function parameter.
+
+    Stores cross-binary analysis results (from binaries calling a library function)
+    in a shared location. Multiple rule conditions that trace to the same external
+    function can reference this shared data, avoiding duplication.
+
+    Example: Both "Certificate Verification" (a2 in upscli_sslinit) and
+    "SSL/TLS Usage" (a4 in upscli_tryconnect) trace to upscli_tryconnect:a4.
+    Instead of duplicating the cross-binary analysis results, they both
+    reference this ExternalTraceGroup.
+    """
+
+    external_key: str = Field(
+        description="Key identifying the external function:parameter (e.g., 'upscli_tryconnect:a4')"
+    )
+
+    function: str = Field(
+        description="External function name being called"
+    )
+
+    variable: str = Field(
+        description="Parameter being traced in the external function"
+    )
+
+    # Cross-binary continuations (from binaries calling this function)
+    continuations: List[TraceContinuation] = Field(
+        default_factory=list,
+        description="Cross-binary analysis results from binaries calling this function"
+    )
+
+    # Which conditions (rule trace groups) reference this external trace
+    origin_conditions: List[str] = Field(
+        default_factory=list,
+        description="List of condition keys that trace to this external function (e.g., ['upscli_sslinit:a2', 'upscli_tryconnect:a4'])"
+    )
+
+
 class VariableTraceGroup(BaseModel):
     """All traces related to resolving one condition.
 
@@ -605,10 +644,16 @@ class VariableTraceGroup(BaseModel):
         description="Traces from the main binary being analyzed"
     )
 
-    # Continuations from external sources
+    # Continuations from external sources (direct, non-shared)
     continuations: List[TraceContinuation] = Field(
         default_factory=list,
-        description="Continuations from cross-binary, config, script sources"
+        description="Continuations from cross-binary, config, script sources (direct storage)"
+    )
+
+    # References to shared external trace groups
+    external_refs: List[str] = Field(
+        default_factory=list,
+        description="Keys to ExternalTraceGroup entries in state.external_traces (e.g., ['upscli_tryconnect:a4'])"
     )
 
     # Security mapping from the original condition
