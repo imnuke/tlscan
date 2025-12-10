@@ -973,6 +973,12 @@ async def firmware_explore_node(
     caller_discovery_tasks = [t for t in pending_tasks if t.type == TaskType.NEEDS_CALLER_DISCOVERY]
     script_discovery_tasks = [t for t in pending_tasks if t.type == TaskType.NEEDS_SCRIPT_DISCOVERY]
 
+    # Deep copy trace_groups at start to preserve through all branches
+    # IMPORTANT: Always include trace_groups in state update to prevent loss during state merge
+    trace_groups: Dict[str, VariableTraceGroup] = {}
+    for key, group in state.get("trace_groups", {}).items():
+        trace_groups[key] = group.model_copy(deep=True)
+
     # Initialize accumulated state update
     accumulated_update = {
         "pending_dataflow_tasks": [t for t in pending_tasks
@@ -981,6 +987,7 @@ async def firmware_explore_node(
         "pending_config_fetch_tasks": [],
         "firmware_details": "",
         "script_findings": state.get("script_findings"),
+        "trace_groups": trace_groups,  # Always include to preserve through state merge
     }
 
     errors = []
@@ -1048,21 +1055,17 @@ async def firmware_explore_node(
     # Priority 3: Config Fetch (Configuration Values)
     # ========================================================================
     if config_fetch_tasks:
-        # Get trace_groups from state (deep copy)
-        trace_groups: Dict[str, VariableTraceGroup] = {}
-        for key, group in state.get("trace_groups", {}).items():
-            trace_groups[key] = group.model_copy(deep=True)
-
+        # Use trace_groups from accumulated_update (already deep copied at start)
         # Capture state BEFORE config fetch
         state_before = capture_state_snapshot(
             config_fetch_tasks,
             accumulated_update["pending_dataflow_tasks"],
-            trace_groups
+            accumulated_update["trace_groups"]
         )
 
         try:
             updated_groups, details = await _process_config_fetch(
-                config_fetch_tasks, firmware_agent, trace_groups
+                config_fetch_tasks, firmware_agent, accumulated_update["trace_groups"]
             )
             accumulated_update["trace_groups"] = updated_groups
             accumulated_update["pending_config_fetch_tasks"] = []
