@@ -23,7 +23,8 @@ def checkpoint_router_node(state: AnalysisState, firmware_available: bool = Fals
     """Route to appropriate node when resuming from checkpoint.
 
     Examines state to determine which node should run next based on
-    what has been completed.
+    what has been completed. Task type checking is critical for correct
+    routing - discovery tasks must go to firmware_explore, not dataflow.
 
     Args:
         state: Current analysis state
@@ -36,28 +37,38 @@ def checkpoint_router_node(state: AnalysisState, firmware_available: bool = Fals
     if not state.get("rule_result"):
         return {"_next_node": "ssl_analysis"}
 
-    # If SSL complete but pending dataflow tasks → run dataflow
-    if state.get("pending_dataflow_tasks"):
-        return {"_next_node": "dataflow_analysis"}
-
-    # If dataflow complete but pending config/cross-binary → run firmware (if available)
-    if firmware_available and state.get("pending_config_fetch_tasks"):
-        return {"_next_node": "firmware_explore"}
-
-    # Check for cross-binary tasks that need firmware exploration
     pending_tasks = state.get("pending_dataflow_tasks", [])
+    config_tasks = state.get("pending_config_fetch_tasks", [])
+
+    # Check for discovery tasks that need firmware exploration
     has_caller_discovery = any(
         task.type == TaskType.NEEDS_CALLER_DISCOVERY for task in pending_tasks
     )
-    if firmware_available and has_caller_discovery:
+    has_script_discovery = any(
+        task.type == TaskType.NEEDS_SCRIPT_DISCOVERY for task in pending_tasks
+    )
+
+    # Priority 1: Discovery tasks → firmware_explore
+    if firmware_available and (has_caller_discovery or has_script_discovery):
         return {"_next_node": "firmware_explore"}
 
-    # If firmware complete but pending binary analysis → run binary analysis
+    # Priority 2: Config fetch tasks → firmware_explore
+    if firmware_available and config_tasks:
+        return {"_next_node": "firmware_explore"}
+
+    # Priority 3: Cross-binary tasks (binary_path set) → binary_analysis_sequential
     has_cross_binary = any(
         task.binary_path is not None for task in pending_tasks
     )
     if firmware_available and has_cross_binary:
         return {"_next_node": "binary_analysis_sequential"}
+
+    # Priority 4: BINARY type tasks → dataflow_analysis
+    has_binary_tasks = any(
+        task.type == TaskType.BINARY for task in pending_tasks
+    )
+    if has_binary_tasks:
+        return {"_next_node": "dataflow_analysis"}
 
     # Everything done → run synthesis
     return {"_next_node": "synthesis"}
