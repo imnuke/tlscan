@@ -18,7 +18,6 @@ from conn_analyzer.graph.state import (
     AnalysisState,
     AnalysisPhase,
     create_trace_key,
-    parse_trace_key,
     parse_condition_key,
 )
 from conn_analyzer.graph.models import (
@@ -180,14 +179,14 @@ async def ssl_analysis_node(
 
 def create_follow_up_tasks_from_trace(
     trace: VariableTrace,
-    composite_key: str,
+    binary_path: Optional[str],
     variables: List[VariableSpec]
 ) -> tuple[List[DataflowTask], List[ConfigFetchTask]]:
     """Extract config/script/cross-binary tasks from a single trace.
 
     Args:
         trace: The variable trace to process
-        composite_key: Composite key (e.g., "binary:function:variable")
+        binary_path: Path to the binary being analyzed (for cross-binary context)
         variables: Original variables list (VariableSpec objects) for security_mapping lookup
 
     Returns:
@@ -224,13 +223,6 @@ def create_follow_up_tasks_from_trace(
 
     # Check if this trace comes from command-line arguments
     elif source_kind == SourceKind.COMMAND_LINE_ARG:
-        # Get binary path from composite_key: "binary_path:function:variable"
-        key_parts = composite_key.split(":")
-        if len(key_parts) >= 3:
-            binary_path = ":".join(key_parts[:-2])
-        else:
-            binary_path = None
-
         arg_name = last_step.arg_name or "CLI argument"
 
         # Find the original variable's security_mapping
@@ -482,7 +474,7 @@ async def dataflow_analysis_node(
        - Creates dataflow agent
        - Traces all variables in the task
        - Processes structured output (DataflowAnalysisOutput)
-    3. Updates state with variable_traces (using binary-qualified keys for cross-binary)
+    3. Updates state with trace_groups (hierarchical storage by condition)
     4. Detects FUNCTION_PARAMETER_FROM_EXTERNAL_CALL traces and creates caller discovery tasks
     5. Creates firmware fetch tasks for CONFIG_FILE sources
 
@@ -493,7 +485,7 @@ async def dataflow_analysis_node(
         firmware_tools: Firmware file system tools
 
     Returns:
-        State update dict with variable_traces, pending_dataflow_tasks (caller discovery tasks)
+        State update dict with trace_groups, pending_dataflow_tasks (caller discovery tasks)
     """
     pending_tasks = state.get("pending_dataflow_tasks", [])
 
@@ -505,11 +497,6 @@ async def dataflow_analysis_node(
         return state_update
 
     console.print(f"[cyan]🔍 Running dataflow analysis: {len(pending_tasks)} tasks[/cyan]")
-
-    # Get existing traces (deep copy to avoid modifying state directly)
-    all_traces: Dict[str, List[VariableTrace]] = {}
-    for key, value in state.get("variable_traces", {}).items():
-        all_traces[key] = value.copy() if isinstance(value, list) else [value]
 
     # Get existing trace groups (deep copy)
     trace_groups: Dict[str, VariableTraceGroup] = {}
@@ -550,19 +537,8 @@ async def dataflow_analysis_node(
         for trace in result.traces:
             # Build composite key based on whether this is cross-binary analysis
             binary_path = task.binary_path  # Use attribute access for Pydantic model
-            if binary_path:
-                # Cross-binary trace: "{binary_path}:{function}:{variable}"
-                composite_key = create_trace_key(trace.function, trace.variable, binary_path)
-            else:
-                # Main binary trace: "function:variable"
-                composite_key = create_trace_key(trace.function, trace.variable)
 
-            # Store traces as list to support multiple sources per variable
-            if composite_key not in all_traces:
-                all_traces[composite_key] = []
-            all_traces[composite_key].append(trace)
-
-            # Also update trace_groups with hierarchical structure
+            # Update trace_groups with hierarchical structure
             # Find security mapping from task variables
             original_var = next(
                 (v for v in task.variables if v.variable == trace.variable and v.function == trace.function),
@@ -669,7 +645,7 @@ async def dataflow_analysis_node(
         )
         log_agent_state_diff(agent_name_with_progress, state_before, state_after)
 
-    console.print(f"[green]✓ Dataflow complete: {len(all_traces)} traces, {len(trace_groups)} groups[/green]")
+    console.print(f"[green]✓ Dataflow complete: {len(trace_groups)} trace groups[/green]")
 
     # Determine next phase
     if new_dataflow_tasks or config_fetch_tasks:
@@ -678,7 +654,6 @@ async def dataflow_analysis_node(
         next_phase = AnalysisPhase.SYNTHESIS
 
     state_update = {
-        "variable_traces": all_traces,
         "trace_groups": trace_groups,
         "pending_dataflow_tasks": new_dataflow_tasks,  # New tasks for caller discovery or cleared
         "pending_config_fetch_tasks": config_fetch_tasks,
@@ -860,17 +835,17 @@ async def _process_script_discovery(
 async def _process_config_fetch(
     config_fetch_tasks: List[ConfigFetchTask],
     firmware_agent,
-    current_traces: Dict[str, List[VariableTrace]],
-) -> tuple[Dict[str, List[VariableTrace]], str]:
-    """Process config fetch tasks and update variable traces with values.
+    trace_groups: Dict[str, VariableTraceGroup],
+) -> tuple[Dict[str, VariableTraceGroup], str]:
+    """Process config fetch tasks and update trace_groups with fetched values.
 
     Args:
         config_fetch_tasks: Tasks that need config value fetching
         firmware_agent: Firmware agent for searching
-        current_traces: Current variable traces to update
+        trace_groups: Current trace groups to update
 
     Returns:
-        Tuple of (updated_variable_traces, firmware_details)
+        Tuple of (updated_trace_groups, firmware_details)
     """
     console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
 
@@ -907,43 +882,50 @@ async def _process_config_fetch(
             f"This suggests the agent did unnecessary searches.[/yellow]"
         )
 
-    # Deep copy traces to avoid modifying input
-    all_traces: Dict[str, List[VariableTrace]] = {}
-    for key, value in current_traces.items():
-        all_traces[key] = value.copy() if isinstance(value, list) else [value]
-
     if result.found and result.config_values:
         console.print(f"[green]✓ Found {len(result.config_values)} config values[/green]")
 
-        # Update variable traces with fetched config values
+        # Update trace_groups with fetched config values
         for task in config_fetch_tasks:
-            composite_key = f"{task.function}:{task.variable}"
-            if composite_key in all_traces:
-                # Find the config trace in the list and update it
-                traces_list = all_traces[composite_key]
-                for i, original_trace in enumerate(traces_list):
-                    # Check if this trace is a CONFIG_FILE source using final step
-                    last_step = original_trace.trace_path[-1] if original_trace.trace_path else None
-                    is_config_trace = (
-                        last_step and
-                        last_step.step_type == TraceStepType.TRACE_END and
-                        last_step.source_kind == SourceKind.CONFIG_FILE
-                    )
-                    if is_config_trace and task.variable in result.config_values:
-                        # Create updated trace with fetched value
-                        updated_trace = VariableTrace(
-                            function=original_trace.function,
-                            variable=original_trace.variable,
-                            value=result.config_values[task.variable],
-                            trace_path=original_trace.trace_path
-                        )
-                        traces_list[i] = updated_trace
-                        console.print(f"[dim]    ✓ Updated {task.variable} = {updated_trace.value}[/dim]")
+            condition_key = f"{task.function}:{task.variable}"
 
-        return all_traces, result.details
+            # Find or create trace group for this condition
+            if condition_key not in trace_groups:
+                # Edge case: trace group doesn't exist, create it
+                trace_groups[condition_key] = VariableTraceGroup(
+                    condition_key=condition_key,
+                    function=task.function,
+                    variable=task.variable,
+                )
+
+            trace_group = trace_groups[condition_key]
+
+            # Extract config file path from config_reference
+            # Format: "filename.conf (key: KEYNAME)" or just "filename.conf"
+            config_path = task.config_reference or "unknown_config"
+            if " (key:" in config_path:
+                config_path = config_path.split(" (key:")[0].strip()
+
+            # Get the fetched value for this variable
+            fetched_value = result.config_values.get(task.variable)
+
+            # Create config continuation
+            config_continuation = TraceContinuation(
+                type=ContinuationType.CONFIG_FILE,
+                source_path=config_path,
+                config_values={task.variable: fetched_value} if fetched_value is not None else {},
+                resolved_value=fetched_value,
+                resolved_source_kind=SourceKind.CONFIG_FILE if fetched_value else None,
+            )
+
+            # Add to trace group's continuations
+            trace_group.continuations.append(config_continuation)
+            console.print(f"[dim]    ✓ {task.variable} = {fetched_value or '(not found)'}[/dim]")
+
+        return trace_groups, result.details
     else:
         console.print(f"[yellow]⚠ No config values found[/yellow]")
-        return all_traces, result.details
+        return trace_groups, result.details
 
 
 # ============================================================================
@@ -997,8 +979,6 @@ async def firmware_explore_node(
                                    if t.type not in [TaskType.NEEDS_CALLER_DISCOVERY,
                                                      TaskType.NEEDS_SCRIPT_DISCOVERY]],
         "pending_config_fetch_tasks": [],
-        "variable_traces": {k: v.copy() if isinstance(v, list) else [v]
-                           for k, v in state.get("variable_traces", {}).items()},
         "firmware_details": "",
         "script_findings": state.get("script_findings"),
     }
@@ -1065,28 +1045,34 @@ async def firmware_explore_node(
             console.print(f"[red]✗ Script discovery error: {e}[/red]")
 
     # ========================================================================
-    # Priority 3: Config Fetch (Configuration Values) - Changed from elif to if!
+    # Priority 3: Config Fetch (Configuration Values)
     # ========================================================================
     if config_fetch_tasks:
+        # Get trace_groups from state (deep copy)
+        trace_groups: Dict[str, VariableTraceGroup] = {}
+        for key, group in state.get("trace_groups", {}).items():
+            trace_groups[key] = group.model_copy(deep=True)
+
         # Capture state BEFORE config fetch
         state_before = capture_state_snapshot(
-            config_fetch_tasks,  # Include config tasks that are being processed
-            accumulated_update["pending_dataflow_tasks"]
+            config_fetch_tasks,
+            accumulated_update["pending_dataflow_tasks"],
+            trace_groups
         )
 
         try:
-            updated_traces, details = await _process_config_fetch(
-                config_fetch_tasks, firmware_agent,
-                accumulated_update["variable_traces"]
+            updated_groups, details = await _process_config_fetch(
+                config_fetch_tasks, firmware_agent, trace_groups
             )
-            accumulated_update["variable_traces"] = updated_traces
+            accumulated_update["trace_groups"] = updated_groups
             accumulated_update["pending_config_fetch_tasks"] = []
             details_parts.append(details)
 
             # Capture state AFTER config fetch and log diff
             state_after = capture_state_snapshot(
-                [],  # Config tasks are now empty
-                accumulated_update["pending_dataflow_tasks"]
+                [],
+                accumulated_update["pending_dataflow_tasks"],
+                updated_groups
             )
             log_agent_state_diff("Firmware Agent - Config Fetch", state_before, state_after)
 
@@ -1138,7 +1124,7 @@ async def binary_analysis_sequential(
         agent_factory: Agent factory
 
     Returns:
-        State update with variable_traces (unified with binary-qualified keys)
+        State update with trace_groups (hierarchical storage by condition)
     """
     pending_tasks = state.get("pending_dataflow_tasks", [])
 
@@ -1157,16 +1143,11 @@ async def binary_analysis_sequential(
 
     console.print(f"[cyan]🔄 Analyzing {len(cross_binary_tasks)} caller binaries sequentially[/cyan]")
 
-    # Get existing traces (deep copy lists)
-    all_traces: Dict[str, List[VariableTrace]] = {}
-    for key, value in state.get("variable_traces", {}).items():
-        all_traces[key] = value.copy() if isinstance(value, list) else [value]
-
-    # Accumulate follow-up tasks from cross-binary traces (from HEAD)
+    # Accumulate follow-up tasks from cross-binary traces
     config_fetch_tasks: List[ConfigFetchTask] = []
     new_dataflow_tasks: List[DataflowTask] = []
 
-    # Get existing trace groups - deep copy (from refactor)
+    # Get existing trace groups - deep copy
     trace_groups: Dict[str, VariableTraceGroup] = {}
     for key, group in state.get("trace_groups", {}).items():
         trace_groups[key] = group.model_copy(deep=True)
@@ -1195,14 +1176,9 @@ async def binary_analysis_sequential(
                 firmware_tools=[],  # Cross-binary tasks are always BINARY type, no firmware tools needed
             )
 
-            # Store traces using binary-qualified keys: "{binary_path}:{function}:{variable}"
+            # Process traces and add to trace_groups
             for trace in result.traces:
-                composite_key = create_trace_key(trace.function, trace.variable, binary_path)
-                if composite_key not in all_traces:
-                    all_traces[composite_key] = []
-                all_traces[composite_key].append(trace)
-
-                # === BEGIN: Origin condition handling (from refactor) ===
+                # === BEGIN: Origin condition handling ===
                 # Determine origin condition for trace group linkage
                 trace_key = f"{trace.function}:{trace.variable}"
                 origin_key = None
@@ -1242,11 +1218,11 @@ async def binary_analysis_sequential(
                 add_trace_to_group(trace_group, trace, binary_path)
                 # === END: Origin condition handling ===
 
-                # === BEGIN: Follow-up task creation (from HEAD) ===
+                # === BEGIN: Follow-up task creation ===
                 # Create follow-up tasks from this trace (config fetch, caller discovery, etc.)
                 df_tasks, cf_tasks = create_follow_up_tasks_from_trace(
                     trace=trace,
-                    composite_key=composite_key,
+                    binary_path=binary_path,
                     variables=[v.model_dump() for v in task.variables]
                 )
                 new_dataflow_tasks.extend(df_tasks)
@@ -1279,10 +1255,9 @@ async def binary_analysis_sequential(
         next_phase = AnalysisPhase.SYNTHESIS
 
     state_update = {
-        "variable_traces": all_traces,
-        "trace_groups": trace_groups,  # From refactor
-        "pending_dataflow_tasks": new_dataflow_tasks,  # From HEAD
-        "pending_config_fetch_tasks": config_fetch_tasks,  # From HEAD
+        "trace_groups": trace_groups,
+        "pending_dataflow_tasks": new_dataflow_tasks,
+        "pending_config_fetch_tasks": config_fetch_tasks,
         "current_phase": next_phase,
     }
 
@@ -1415,7 +1390,6 @@ async def synthesis_node(
 
     rules = state.get("rule_result", {})
     trace_groups = state.get("trace_groups", {})
-    variable_traces = state.get("variable_traces", {})  # For backwards compatibility
     ssl_summary = state.get("ssl_summary", "")
     client_type = state.get("client_type", "Unknown")
 

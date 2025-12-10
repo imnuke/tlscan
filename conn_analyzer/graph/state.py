@@ -60,34 +60,6 @@ def create_trace_key(function: str, variable: str, binary_path: Optional[str] = 
     return f"{function}:{variable}"
 
 
-def parse_trace_key(key: str) -> Tuple[Optional[str], str, str]:
-    """
-    Parse composite key into components.
-
-    Args:
-        key: Composite key from create_trace_key()
-
-    Returns:
-        Tuple of (binary_path, function, variable)
-        - binary_path is None for main binary traces
-        - binary_path is set for cross-binary traces
-
-    Examples:
-        >>> parse_trace_key("SSL_CTX_set_verify:mode")
-        (None, "SSL_CTX_set_verify", "mode")
-        >>> parse_trace_key("/usr/bin/app:init_ssl:mode")
-        ("/usr/bin/app", "init_ssl", "mode")
-    """
-    parts = key.split(":")
-    if len(parts) == 2:
-        return None, parts[0], parts[1]
-    elif len(parts) >= 3:
-        # Handle cases where binary_path or function might contain colons
-        return parts[0], parts[1], ":".join(parts[2:])
-    else:
-        raise ValueError(f"Invalid trace key format: {key}")
-
-
 def parse_condition_key(key: str) -> Tuple[str, str]:
     """
     Parse a simple condition key into (function, variable).
@@ -201,49 +173,6 @@ class AnalysisState(TypedDict, total=False):
 
     Populated by SSL analysis node when it finds conditional rules.
     Consumed by dataflow analysis node.
-    """
-
-    variable_traces: Dict[str, List[VariableTrace]]
-    """
-    Results of variable tracing from all analyzed binaries.
-
-    DEPRECATED: Use trace_groups for new code. This field is kept for
-    backwards compatibility during migration.
-
-    Key: composite key in format "{binary_path}:{function}:{variable}" for cross-binary traces,
-         or "function:variable" for main binary traces
-    Value: List of VariableTrace objects (multiple sources can contribute to same variable)
-
-    Using composite keys prevents conflicts when the same variable name appears
-    in different functions or binaries.
-
-    Each VariableTrace now contains:
-    - trace_path: List[TraceStep] - structured list of trace steps
-    - resolving_status: TraceResolvingStatus - PENDING/RESOLVED/CANNOT_RESOLVE
-    - outcome: Optional[str] - security outcome when resolved
-    - resolution_reason: Optional[str] - explanation when cannot_resolve
-
-    Example:
-    {
-        "SSL_CTX_set_verify:verify_mode": [VariableTrace(
-            variable="verify_mode",
-            function="SSL_CTX_set_verify",
-            value="1",
-            confidence="high",
-            trace_path=[
-                TraceStep(step_number=1, step_type="trace_start",
-                          description="Begin tracing verify_mode in SSL_CTX_set_verify",
-                          function="SSL_CTX_set_verify"),
-                TraceStep(step_number=2, step_type="trace_end",
-                          description="Found constant value 1",
-                          source_kind="constant",
-                          constant_value="1",
-                          constant_name="SSL_VERIFY_PEER")
-            ],
-            resolving_status=TraceResolvingStatus.RESOLVED,
-            outcome="PASS - enables verification"
-        )]
-    }
     """
 
     trace_groups: Dict[str, VariableTraceGroup]
@@ -374,7 +303,6 @@ def create_initial_state(
 
         # Dataflow
         pending_dataflow_tasks=[],
-        variable_traces={},
         trace_groups={},
 
         # Config fetch
