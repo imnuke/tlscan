@@ -94,15 +94,34 @@ def compute_trace_content_key(trace: VariableTrace) -> str:
     Compute a content-based key for deduplication.
 
     Traces with the same content key are considered duplicates.
+    The key includes a hash of trace_path to distinguish traces
+    with different analysis paths.
 
     Args:
         trace: VariableTrace to compute key for
 
     Returns:
-        Content key in format "trace_type:source_path:function:variable"
+        Content key in format "trace_type:source_path:function:variable:path_hash"
     """
+    import hashlib
+    import json
+
     source = trace.source_path or "main"
-    return f"{trace.trace_type.value}:{source}:{trace.function}:{trace.variable}"
+
+    # Hash the trace_path for deduplication
+    path_hash = "empty"
+    if trace.trace_path:
+        # Serialize trace_path to JSON and hash it
+        path_data = []
+        for step in trace.trace_path:
+            if hasattr(step, 'model_dump'):
+                path_data.append(step.model_dump(exclude_none=True))
+            else:
+                path_data.append(str(step))
+        path_json = json.dumps(path_data, sort_keys=True)
+        path_hash = hashlib.md5(path_json.encode()).hexdigest()[:8]
+
+    return f"{trace.trace_type.value}:{source}:{trace.function}:{trace.variable}:{path_hash}"
 
 
 def add_trace_to_graph(
