@@ -438,6 +438,13 @@ async def dataflow_analysis_node(
 
         agent_name_with_progress = f"Dataflow Agent ({task_idx + 1}/{total_tasks})"
 
+        # Capture state BEFORE processing task
+        state_before = capture_state_snapshot(
+            config_fetch_tasks,
+            new_dataflow_tasks,
+            traces,
+        )
+
         # Execute dataflow analysis for this task using shared helper
         try:
             result: DataflowAnalysisOutput = await execute_single_dataflow_task(
@@ -562,6 +569,14 @@ async def dataflow_analysis_node(
                 )
                 new_dataflow_tasks.append(script_discovery_task)
                 console.print(f"[dim]    → Script discovery needed for CLI argument '{arg_name}'[/dim]")
+
+        # Capture state AFTER processing task and log diff
+        state_after = capture_state_snapshot(
+            config_fetch_tasks,
+            new_dataflow_tasks,
+            traces,
+        )
+        log_agent_state_diff(agent_name_with_progress, state_before, state_after)
 
     console.print(f"[green]✓ Dataflow complete: {len(traces)} traces[/green]")
 
