@@ -10,8 +10,6 @@ from typing import TypedDict, Optional, Dict, List, Set, Tuple, Any
 from conn_analyzer.graph.models import (
     RuleResult,
     VariableTrace,
-    VariableTraceGroup,
-    ExternalTraceGroup,
     RuleTraceLink,
     ConfigFetchTask,
     DataflowTask,
@@ -319,80 +317,8 @@ class AnalysisState(TypedDict, total=False):
     Consumed by dataflow analysis node.
     """
 
-    trace_groups: Dict[str, VariableTraceGroup]
-    """
-    All traces grouped by condition they resolve.
-
-    This is the primary storage for trace analysis results. It groups main binary
-    traces with all continuations (cross-binary, config, script) that contribute
-    to resolving each condition.
-
-    Key: "function:variable" (condition key)
-    Value: VariableTraceGroup containing main traces and all continuations
-
-    Example:
-    {
-        "upscli_connect:a4": VariableTraceGroup(
-            condition_key="upscli_connect:a4",
-            function="upscli_connect",
-            variable="a4",
-            main_traces=[VariableTrace(source_kind=EXTERNAL_CALL, ...)],
-            continuations=[
-                TraceContinuation(
-                    type=CROSS_BINARY,
-                    source_path="usr/bin/upsc",
-                    traces=[VariableTrace(source_kind=CONSTANT, value="1")],
-                    resolved_value="1"
-                ),
-                TraceContinuation(
-                    type=CROSS_BINARY,
-                    source_path="usr/sbin/upsmon",
-                    traces=[VariableTrace(source_kind=CONFIG_FILE, ...)],
-                    sub_continuations=[
-                        TraceContinuation(
-                            type=CONFIG_FILE,
-                            source_path="upsmon.conf",
-                            config_values={"CERTVERIFY": "1"}
-                        )
-                    ]
-                )
-            ],
-            security_mapping={"0": "FAIL", "1": "PASS"},
-            overall_status=RESOLVED,
-            resolution_summary="Resolved from multiple sources"
-        )
-    }
-    """
-
-    external_traces: Dict[str, ExternalTraceGroup]
-    """
-    Shared storage for cross-binary analysis results.
-
-    When multiple rule conditions trace to the same external function (e.g.,
-    both "Certificate Verification" and "SSL/TLS Usage" trace to upscli_tryconnect:a4),
-    the cross-binary analysis results are stored here ONCE and referenced by
-    multiple trace_groups via their external_refs field.
-
-    Key: "function:variable" (external function being traced)
-    Value: ExternalTraceGroup with cross-binary continuations and origin conditions
-
-    Example:
-    {
-        "upscli_tryconnect:a4": ExternalTraceGroup(
-            external_key="upscli_tryconnect:a4",
-            function="upscli_tryconnect",
-            variable="a4",
-            continuations=[
-                TraceContinuation(type=CROSS_BINARY, source_path="usr/bin/upsc", ...),
-                TraceContinuation(type=CROSS_BINARY, source_path="usr/sbin/upsmon", ...)
-            ],
-            origin_conditions=["upscli_sslinit:a2", "upscli_tryconnect:a4"]
-        )
-    }
-    """
-
     # ========================================================================
-    # Unified Trace Graph (NEW - replaces trace_groups + external_traces)
+    # Unified Trace Graph
     # ========================================================================
 
     traces: Dict[str, VariableTrace]
@@ -527,7 +453,10 @@ def create_initial_state(
 
         # Dataflow
         pending_dataflow_tasks=[],
-        trace_groups={},
+
+        # Unified trace graph
+        traces={},
+        rule_trace_links={},
 
         # Config fetch
         pending_config_fetch_tasks=[],

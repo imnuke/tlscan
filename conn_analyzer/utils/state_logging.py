@@ -101,7 +101,7 @@ def log_agent_state(
 def capture_state_snapshot(
     config_tasks: List,
     dataflow_tasks: List,
-    trace_groups: Optional[Dict] = None,
+    traces: Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """Capture current state for diff comparison.
 
@@ -110,7 +110,7 @@ def capture_state_snapshot(
     Args:
         config_tasks: Current pending_config_fetch_tasks list
         dataflow_tasks: Current pending_dataflow_tasks list
-        trace_groups: Optional trace_groups dict
+        traces: Optional traces dict from unified trace graph
 
     Returns:
         Snapshot dict with serialized state (null fields excluded)
@@ -123,9 +123,9 @@ def capture_state_snapshot(
             _serialize_and_truncate(t) for t in dataflow_tasks
         ],
     }
-    if trace_groups:
-        snapshot["trace_groups"] = {
-            k: _serialize_and_truncate(v) for k, v in trace_groups.items()
+    if traces:
+        snapshot["traces"] = {
+            k: _serialize_and_truncate(v) for k, v in traces.items()
         }
     return snapshot
 
