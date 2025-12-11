@@ -257,3 +257,38 @@ def display_recovered_state(
         padding=(0, 1)
     ))
     output_console.print()
+
+
+def display_final_state(
+    state: Dict[str, Any],
+    output_console: Console = None
+) -> None:
+    """Display full analysis state for debugging before final report.
+
+    Args:
+        state: Final AnalysisState after analysis completes
+        output_console: Rich console for output (defaults to module console)
+    """
+    if output_console is None:
+        output_console = console
+
+    # Fields to exclude from display (internal/large)
+    EXCLUDE_FIELDS = {"security_rules"}
+
+    # Filter and serialize state
+    filtered_state = {k: v for k, v in state.items() if k not in EXCLUDE_FIELDS}
+    serialized_state = _serialize_and_truncate(filtered_state, max_str_len=200)
+
+    # Format as JSON
+    state_json = json.dumps(serialized_state, indent=2, default=str)
+
+    # Create syntax-highlighted display
+    state_syntax = Syntax(state_json, "json", theme="monokai", line_numbers=False)
+
+    output_console.print()
+    output_console.print(Panel(
+        state_syntax,
+        title="[bold cyan]🐛 Debug: Final Analysis State[/bold cyan]",
+        border_style="dim",
+        padding=(0, 1)
+    ))
