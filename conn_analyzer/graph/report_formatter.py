@@ -274,6 +274,56 @@ def format_trace_type_badge(trace_type: TraceType) -> str:
     return type_badges.get(trace_type, "•")
 
 
+def format_trace_step(step: TraceStep, prefix: str = "") -> str:
+    """Format a single trace step with Rich markup.
+
+    Args:
+        step: TraceStep to format
+        prefix: Indentation prefix
+
+    Returns:
+        Formatted step string
+    """
+    # Step type badges
+    type_badges = {
+        TraceStepType.TRACE_START: "🔷",
+        TraceStepType.CALL_SITE: "📍",
+        TraceStepType.PARAMETER_TRANSFORM: "🔄",
+        TraceStepType.VARIABLE_ASSIGNMENT: "📝",
+        TraceStepType.TRACE_END: "🏁",
+    }
+    badge = type_badges.get(step.step_type, "•")
+
+    # Build step description
+    parts = [f"{prefix}{badge} [dim]Step {step.step_number}:[/dim]"]
+
+    # Add function and address if available
+    if step.function:
+        func = escape_rich_markup(step.function)
+        if step.address:
+            parts.append(f"`{func}` @ {step.address}")
+        else:
+            parts.append(f"`{func}`")
+
+    # Add description
+    desc = escape_rich_markup(step.description)
+    parts.append(f"- {desc}")
+
+    # For TRACE_END, show source_kind details
+    if step.step_type == TraceStepType.TRACE_END and step.source_kind:
+        source_badge = format_source_kind_badge(step.source_kind.value)
+        parts.append(f"[{source_badge}]")
+
+        if step.constant_value:
+            parts.append(f"= `{step.constant_value}`")
+        elif step.external_function:
+            ext_func = escape_rich_markup(step.external_function)
+            param = escape_rich_markup(step.parameter_name or "?")
+            parts.append(f"→ `{ext_func}:{param}`")
+
+    return " ".join(parts)
+
+
 def format_trace_from_graph(
     trace: VariableTrace,
     traces: Dict[str, VariableTrace],
@@ -326,6 +376,13 @@ def format_trace_from_graph(
         emoji = "✅" if "pass" in trace.outcome.lower() else "❌"
         outcome = escape_rich_markup(trace.outcome)
         lines.append(f"{prefix}   Outcome: {emoji} {outcome}")
+
+    # Display trace_path steps
+    if trace.trace_path:
+        lines.append(f"{prefix}   [bold]Trace Path:[/bold]")
+        for step in trace.trace_path:
+            step_text = format_trace_step(step, prefix=prefix + "     ")
+            lines.append(step_text)
 
     # Recursively format children
     if trace.child_trace_ids:
