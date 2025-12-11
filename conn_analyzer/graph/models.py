@@ -66,12 +66,29 @@ class ContinuationType(str, Enum):
     When a trace ends with an external source (EXTERNAL_CALL, CONFIG_FILE, etc.),
     analysis continues by fetching data from that source. This enum identifies
     the type of continuation.
+
+    DEPRECATED: Use TraceType instead for unified trace graph architecture.
     """
 
     CROSS_BINARY = "cross_binary"
     CONFIG_FILE = "config_file"
     SCRIPT = "script"
     ENVIRONMENT = "environment"
+
+
+class TraceType(str, Enum):
+    """Type of trace based on its source context.
+
+    In the unified trace graph, all traces are equal - they just have different
+    types indicating where they came from. This replaces the old distinction
+    between main_traces and continuations.
+    """
+
+    MAIN_BINARY = "main_binary"      # Trace from the main binary being analyzed
+    CROSS_BINARY = "cross_binary"    # Trace from a caller binary (cross-binary analysis)
+    CONFIG_FILE = "config_file"      # Value extracted from a config file
+    SCRIPT = "script"                # Value from script analysis
+    ENVIRONMENT = "environment"      # Value from environment variable
 
 
 # ============================================================================
@@ -377,11 +394,33 @@ class VariableTrace(BaseModel):
     """
     Result of tracing a single variable through dataflow analysis.
 
+    In the unified trace graph architecture, all traces are nodes in a directed
+    graph. Traces link to each other via parent_trace_id and child_trace_ids,
+    forming chains from rule conditions to resolved values.
+
     Contains information about where the variable's value comes from
     and what that value is (if determinable). Source information is
     stored in the final step of trace_path (step_type == TRACE_END).
     """
 
+    # === Identity (for trace graph) ===
+    trace_id: Optional[str] = Field(
+        None,
+        description="Unique identifier for this trace in the graph (UUID). None for legacy traces."
+    )
+
+    # === Type & Source (unified - replaces TraceContinuation wrapper) ===
+    trace_type: TraceType = Field(
+        default=TraceType.MAIN_BINARY,
+        description="Type of trace: main_binary, cross_binary, config_file, script, environment"
+    )
+
+    source_path: Optional[str] = Field(
+        None,
+        description="Path to source: binary path, config file path, script path. None for main binary traces."
+    )
+
+    # === Traced Variable ===
     function: str = Field(
         description="Function where variable is used"
     )
@@ -396,10 +435,22 @@ class VariableTrace(BaseModel):
     )
 
     trace_path: List[TraceStep] = Field(
+        default_factory=list,
         description="Structured list of steps in the trace path. Final step contains source info."
     )
 
-    # Resolution fields (set by synthesis_node, not by agent)
+    # === Graph Links ===
+    parent_trace_id: Optional[str] = Field(
+        None,
+        description="ID of parent trace that led to this one (None for root traces)"
+    )
+
+    child_trace_ids: List[str] = Field(
+        default_factory=list,
+        description="IDs of child traces (continuations from this trace)"
+    )
+
+    # === Resolution fields (set by synthesis_node, not by agent) ===
     resolving_status: TraceResolvingStatus = Field(
         default=TraceResolvingStatus.PENDING,
         description="Resolution status: pending/resolved/cannot_resolve"
@@ -425,6 +476,55 @@ class DataflowAnalysisOutput(BaseModel):
 
     traces: List[VariableTrace] = Field(
         description="Traces for all requested variables"
+    )
+
+
+class RuleTraceLink(BaseModel):
+    """
+    Link between a rule condition and its root traces in the trace graph.
+
+    In the unified trace graph architecture, rules connect to traces via
+    RuleTraceLink. Multiple conditions can share the same root traces
+    (natural deduplication).
+
+    Example:
+        rule_trace_links = {
+            "upscli_sslinit:a2": RuleTraceLink(
+                condition_key="upscli_sslinit:a2",
+                root_trace_ids=["trace-001"],
+                security_mapping={"0": "FAIL", "1": "PASS"}
+            )
+        }
+    """
+
+    condition_key: str = Field(
+        description="Condition key 'function:variable' identifying this rule condition"
+    )
+
+    root_trace_ids: List[str] = Field(
+        default_factory=list,
+        description="IDs of root traces for this condition (entry points into trace graph)"
+    )
+
+    security_mapping: Optional[Dict[str, str]] = Field(
+        None,
+        description="Mapping of values to security outcomes (e.g., {'0': 'FAIL', '1': 'PASS'})"
+    )
+
+    # === Computed Resolution (set by synthesis_node) ===
+    overall_status: TraceResolvingStatus = Field(
+        default=TraceResolvingStatus.PENDING,
+        description="Overall resolution status computed from all traces in the graph"
+    )
+
+    resolution_summary: str = Field(
+        default="",
+        description="Human-readable summary of the resolution"
+    )
+
+    resolution_outcomes: List[str] = Field(
+        default_factory=list,
+        description="Individual outcomes from each resolution path"
     )
 
 

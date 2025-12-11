@@ -19,6 +19,8 @@ from conn_analyzer.graph.state import (
     AnalysisPhase,
     create_trace_key,
     parse_condition_key,
+    add_trace_to_graph,
+    resolve_trace_tree,
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
@@ -29,8 +31,10 @@ from conn_analyzer.graph.models import (
     VariableTrace,
     VariableTraceGroup,
     ExternalTraceGroup,
+    RuleTraceLink,
     TraceContinuation,
     ContinuationType,
+    TraceType,
     RuleResult,
     ConfigFetchTask,
     DataflowTask,
@@ -499,10 +503,14 @@ async def dataflow_analysis_node(
 
     console.print(f"[cyan]🔍 Running dataflow analysis: {len(pending_tasks)} tasks[/cyan]")
 
-    # Get existing trace groups (deep copy)
+    # Get existing trace groups (deep copy) - OLD format
     trace_groups: Dict[str, VariableTraceGroup] = {}
     for key, group in state.get("trace_groups", {}).items():
         trace_groups[key] = group.model_copy(deep=True)
+
+    # NEW unified trace graph
+    traces: Dict[str, VariableTrace] = dict(state.get("traces", {}))
+    rule_trace_links: Dict[str, RuleTraceLink] = dict(state.get("rule_trace_links", {}))
 
     new_dataflow_tasks: List[DataflowTask] = []
     config_fetch_tasks: List[ConfigFetchTask] = []
@@ -539,7 +547,7 @@ async def dataflow_analysis_node(
             # Build composite key based on whether this is cross-binary analysis
             binary_path = task.binary_path  # Use attribute access for Pydantic model
 
-            # Update trace_groups with hierarchical structure
+            # Update trace_groups with hierarchical structure - OLD format
             # Find security mapping from task variables
             original_var = next(
                 (v for v in task.variables if v.variable == trace.variable and v.function == trace.function),
@@ -557,6 +565,25 @@ async def dataflow_analysis_node(
                 security_mapping,
             )
             add_trace_to_group(trace_group, trace, binary_path)
+
+            # === NEW: Add to unified trace graph ===
+            # Set trace type and source path for main binary traces
+            trace.trace_type = TraceType.MAIN_BINARY
+            trace.source_path = binary_path
+
+            # Add to trace graph
+            condition_key = f"{trace.function}:{trace.variable}"
+            trace_id = add_trace_to_graph(traces, trace, parent_trace_id=None)
+
+            # Create or update rule_trace_link
+            if condition_key not in rule_trace_links:
+                rule_trace_links[condition_key] = RuleTraceLink(
+                    condition_key=condition_key,
+                    root_trace_ids=[trace_id],
+                    security_mapping=security_mapping,
+                )
+            elif trace_id not in rule_trace_links[condition_key].root_trace_ids:
+                rule_trace_links[condition_key].root_trace_ids.append(trace_id)
 
             # Get source info from final step of trace_path
             last_step = trace.trace_path[-1] if trace.trace_path else None
@@ -646,7 +673,7 @@ async def dataflow_analysis_node(
         )
         log_agent_state_diff(agent_name_with_progress, state_before, state_after)
 
-    console.print(f"[green]✓ Dataflow complete: {len(trace_groups)} trace groups[/green]")
+    console.print(f"[green]✓ Dataflow complete: {len(trace_groups)} trace groups, {len(traces)} traces[/green]")
 
     # Determine next phase
     if new_dataflow_tasks or config_fetch_tasks:
@@ -655,7 +682,9 @@ async def dataflow_analysis_node(
         next_phase = AnalysisPhase.SYNTHESIS
 
     state_update = {
-        "trace_groups": trace_groups,
+        "trace_groups": trace_groups,  # OLD format
+        "traces": traces,  # NEW unified trace graph
+        "rule_trace_links": rule_trace_links,  # NEW unified trace graph
         "pending_dataflow_tasks": new_dataflow_tasks,  # New tasks for caller discovery or cleared
         "pending_config_fetch_tasks": config_fetch_tasks,
         "current_phase": next_phase,
@@ -849,17 +878,26 @@ async def _process_config_fetch(
     config_fetch_tasks: List[ConfigFetchTask],
     firmware_agent,
     trace_groups: Dict[str, VariableTraceGroup],
-) -> tuple[Dict[str, VariableTraceGroup], str]:
+    traces: Optional[Dict[str, VariableTrace]] = None,
+    rule_trace_links: Optional[Dict[str, RuleTraceLink]] = None,
+) -> tuple[Dict[str, VariableTraceGroup], Dict[str, VariableTrace], Dict[str, RuleTraceLink], str]:
     """Process config fetch tasks and update trace_groups with fetched values.
 
     Args:
         config_fetch_tasks: Tasks that need config value fetching
         firmware_agent: Firmware agent for searching
-        trace_groups: Current trace groups to update
+        trace_groups: Current trace groups to update (OLD format)
+        traces: Unified trace graph (NEW format)
+        rule_trace_links: Rule to trace links (NEW format)
 
     Returns:
-        Tuple of (updated_trace_groups, firmware_details)
+        Tuple of (updated_trace_groups, updated_traces, updated_rule_trace_links, firmware_details)
     """
+    # Initialize new format if not provided
+    if traces is None:
+        traces = {}
+    if rule_trace_links is None:
+        rule_trace_links = {}
     console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
 
     # Build structured request with explicit constraints
@@ -922,7 +960,7 @@ async def _process_config_fetch(
             # Get the fetched value for this variable
             fetched_value = result.config_values.get(task.variable)
 
-            # Create config continuation
+            # Create config continuation (OLD format)
             config_continuation = TraceContinuation(
                 type=ContinuationType.CONFIG_FILE,
                 source_path=config_path,
@@ -931,14 +969,53 @@ async def _process_config_fetch(
                 resolved_source_kind=SourceKind.CONFIG_FILE if fetched_value else None,
             )
 
-            # Add to trace group's continuations
+            # Add to trace group's continuations (OLD format)
             trace_group.continuations.append(config_continuation)
+
+            # === NEW: Add config trace to unified trace graph ===
+            config_trace = VariableTrace(
+                trace_type=TraceType.CONFIG_FILE,
+                source_path=config_path,
+                function=task.function,
+                variable=task.variable,
+                value=fetched_value,
+                resolving_status=TraceResolvingStatus.RESOLVED if fetched_value else TraceResolvingStatus.CANNOT_RESOLVE,
+            )
+
+            # Find parent trace ID from the condition
+            parent_trace_id = None
+            if condition_key in rule_trace_links:
+                link = rule_trace_links[condition_key]
+                # Find traces that need this config continuation
+                for root_id in link.root_trace_ids:
+                    root_trace = traces.get(root_id)
+                    if root_trace and root_trace.trace_path:
+                        last_step = root_trace.trace_path[-1]
+                        if (last_step.step_type == TraceStepType.TRACE_END and
+                            last_step.source_kind == SourceKind.CONFIG_FILE):
+                            parent_trace_id = root_id
+                            break
+
+            # Add to trace graph
+            trace_id = add_trace_to_graph(traces, config_trace, parent_trace_id=parent_trace_id)
+
+            # If no parent found, add as root trace
+            if not parent_trace_id:
+                if condition_key not in rule_trace_links:
+                    rule_trace_links[condition_key] = RuleTraceLink(
+                        condition_key=condition_key,
+                        root_trace_ids=[trace_id],
+                    )
+                elif trace_id not in rule_trace_links[condition_key].root_trace_ids:
+                    rule_trace_links[condition_key].root_trace_ids.append(trace_id)
+            # === END: Add config trace to unified trace graph ===
+
             console.print(f"[dim]    ✓ {task.variable} = {fetched_value or '(not found)'}[/dim]")
 
-        return trace_groups, result.details
+        return trace_groups, traces, rule_trace_links, result.details
     else:
         console.print(f"[yellow]⚠ No config values found[/yellow]")
-        return trace_groups, result.details
+        return trace_groups, traces, rule_trace_links, result.details
 
 
 # ============================================================================
@@ -986,11 +1063,15 @@ async def firmware_explore_node(
     caller_discovery_tasks = [t for t in pending_tasks if t.type == TaskType.NEEDS_CALLER_DISCOVERY]
     script_discovery_tasks = [t for t in pending_tasks if t.type == TaskType.NEEDS_SCRIPT_DISCOVERY]
 
-    # Deep copy trace_groups at start to preserve through all branches
+    # Deep copy trace_groups at start to preserve through all branches (OLD format)
     # IMPORTANT: Always include trace_groups in state update to prevent loss during state merge
     trace_groups: Dict[str, VariableTraceGroup] = {}
     for key, group in state.get("trace_groups", {}).items():
         trace_groups[key] = group.model_copy(deep=True)
+
+    # NEW unified trace graph
+    traces: Dict[str, VariableTrace] = dict(state.get("traces", {}))
+    rule_trace_links: Dict[str, RuleTraceLink] = dict(state.get("rule_trace_links", {}))
 
     # Initialize accumulated state update
     accumulated_update = {
@@ -1000,7 +1081,9 @@ async def firmware_explore_node(
         "pending_config_fetch_tasks": [],
         "firmware_details": "",
         "script_findings": state.get("script_findings"),
-        "trace_groups": trace_groups,  # Always include to preserve through state merge
+        "trace_groups": trace_groups,  # OLD format - always include to preserve through state merge
+        "traces": traces,  # NEW unified trace graph
+        "rule_trace_links": rule_trace_links,  # NEW unified trace graph
     }
 
     errors = []
@@ -1077,10 +1160,16 @@ async def firmware_explore_node(
         )
 
         try:
-            updated_groups, details = await _process_config_fetch(
-                config_fetch_tasks, firmware_agent, accumulated_update["trace_groups"]
+            updated_groups, updated_traces, updated_links, details = await _process_config_fetch(
+                config_fetch_tasks,
+                firmware_agent,
+                accumulated_update["trace_groups"],
+                accumulated_update["traces"],
+                accumulated_update["rule_trace_links"],
             )
             accumulated_update["trace_groups"] = updated_groups
+            accumulated_update["traces"] = updated_traces
+            accumulated_update["rule_trace_links"] = updated_links
             accumulated_update["pending_config_fetch_tasks"] = []
             details_parts.append(details)
 
@@ -1163,15 +1252,19 @@ async def binary_analysis_sequential(
     config_fetch_tasks: List[ConfigFetchTask] = []
     new_dataflow_tasks: List[DataflowTask] = []
 
-    # Get existing trace groups - deep copy
+    # Get existing trace groups - deep copy (OLD format)
     trace_groups: Dict[str, VariableTraceGroup] = {}
     for key, group in state.get("trace_groups", {}).items():
         trace_groups[key] = group.model_copy(deep=True)
 
-    # Get existing external traces - deep copy
+    # Get existing external traces - deep copy (OLD format)
     external_traces: Dict[str, ExternalTraceGroup] = {}
     for key, group in state.get("external_traces", {}).items():
         external_traces[key] = group.model_copy(deep=True)
+
+    # NEW unified trace graph
+    traces: Dict[str, VariableTrace] = dict(state.get("traces", {}))
+    rule_trace_links: Dict[str, RuleTraceLink] = dict(state.get("rule_trace_links", {}))
 
     for task_idx, task in enumerate(cross_binary_tasks):
         binary_path = task.binary_path
@@ -1286,6 +1379,48 @@ async def binary_analysis_sequential(
                         trace_group.external_refs.append(trace_key)
                 # === END: Link to origin conditions ===
 
+                # === NEW: Add to unified trace graph ===
+                # Set trace type and source path for cross-binary traces
+                trace.trace_type = TraceType.CROSS_BINARY
+                trace.source_path = binary_path
+
+                # Find parent trace ID from origin condition
+                # For cross-binary traces, the parent is the trace that led to this caller
+                parent_trace_id = None
+                for origin_key in origin_keys:
+                    if origin_key in rule_trace_links:
+                        link = rule_trace_links[origin_key]
+                        # Find traces that need this cross-binary continuation
+                        for root_id in link.root_trace_ids:
+                            root_trace = traces.get(root_id)
+                            if root_trace:
+                                # Check if root trace ends with EXTERNAL_CALL to this function
+                                if root_trace.trace_path:
+                                    last_step = root_trace.trace_path[-1]
+                                    if (last_step.step_type == TraceStepType.TRACE_END and
+                                        last_step.source_kind == SourceKind.EXTERNAL_CALL and
+                                        last_step.external_function == trace.function):
+                                        parent_trace_id = root_id
+                                        break
+                        if parent_trace_id:
+                            break
+
+                # Add to trace graph
+                trace_id = add_trace_to_graph(traces, trace, parent_trace_id=parent_trace_id)
+
+                # If no parent found, this is a new root trace - add to rule_trace_links
+                if not parent_trace_id:
+                    for origin_key in origin_keys:
+                        if origin_key not in rule_trace_links:
+                            rule_trace_links[origin_key] = RuleTraceLink(
+                                condition_key=origin_key,
+                                root_trace_ids=[trace_id],
+                                security_mapping=security_mapping,
+                            )
+                        elif trace_id not in rule_trace_links[origin_key].root_trace_ids:
+                            rule_trace_links[origin_key].root_trace_ids.append(trace_id)
+                # === END: Add to unified trace graph ===
+
                 # === BEGIN: Follow-up task creation ===
                 # Create follow-up tasks from this trace (config fetch, caller discovery, etc.)
                 df_tasks, cf_tasks = create_follow_up_tasks_from_trace(
@@ -1314,7 +1449,7 @@ async def binary_analysis_sequential(
             console.print(f"[red]  ✗ Error analyzing {binary_path}: {e}[/red]")
             # Continue with other binaries even if one fails
 
-    console.print(f"[green]✓ Cross-binary analysis complete: {len(cross_binary_tasks)} binaries analyzed[/green]")
+    console.print(f"[green]✓ Cross-binary analysis complete: {len(cross_binary_tasks)} binaries, {len(traces)} traces[/green]")
 
     # Determine next phase based on tasks created (from HEAD)
     if new_dataflow_tasks or config_fetch_tasks:
@@ -1323,8 +1458,10 @@ async def binary_analysis_sequential(
         next_phase = AnalysisPhase.SYNTHESIS
 
     state_update = {
-        "trace_groups": trace_groups,
-        "external_traces": external_traces,
+        "trace_groups": trace_groups,  # OLD format
+        "external_traces": external_traces,  # OLD format
+        "traces": traces,  # NEW unified trace graph
+        "rule_trace_links": rule_trace_links,  # NEW unified trace graph
         "pending_dataflow_tasks": new_dataflow_tasks,
         "pending_config_fetch_tasks": config_fetch_tasks,
         "current_phase": next_phase,
@@ -1463,6 +1600,10 @@ async def synthesis_node(
     ssl_summary = state.get("ssl_summary", "")
     client_type = state.get("client_type", "Unknown")
 
+    # NEW unified trace graph
+    traces = state.get("traces", {})
+    rule_trace_links = state.get("rule_trace_links", {})
+
     # Build mapping from (function, variable) to security_mapping for quick lookup
     condition_mappings: Dict[str, Dict[str, str]] = {}
     for rule in rules.values():
@@ -1529,6 +1670,52 @@ async def synthesis_node(
     stats["groups_cannot_resolve"] = cannot_resolve_count
     stats["groups_pending"] = pending_count
 
+    # === NEW: Compute resolution for unified trace graph ===
+    updated_rule_trace_links: Dict[str, RuleTraceLink] = {}
+    new_resolved_count = 0
+    new_cannot_resolve_count = 0
+    new_pending_count = 0
+
+    for condition_key, link in rule_trace_links.items():
+        # Get security mapping for this condition
+        security_mapping = condition_mappings.get(condition_key, link.security_mapping)
+
+        # Compute outcomes by traversing trace graph
+        all_outcomes = []
+        for root_id in link.root_trace_ids:
+            outcomes = resolve_trace_tree(traces, root_id, security_mapping)
+            all_outcomes.extend(outcomes)
+
+        # Determine overall status
+        if all_outcomes:
+            overall_status = TraceResolvingStatus.RESOLVED
+            new_resolved_count += 1
+        elif any(t.resolving_status == TraceResolvingStatus.CANNOT_RESOLVE
+                 for t in traces.values() if t.trace_id in link.root_trace_ids):
+            overall_status = TraceResolvingStatus.CANNOT_RESOLVE
+            new_cannot_resolve_count += 1
+        else:
+            overall_status = TraceResolvingStatus.PENDING
+            new_pending_count += 1
+
+        # Update link with resolution info
+        updated_link = RuleTraceLink(
+            condition_key=condition_key,
+            root_trace_ids=link.root_trace_ids,
+            security_mapping=security_mapping,
+            overall_status=overall_status,
+            resolution_summary="; ".join(all_outcomes) if all_outcomes else "No resolution",
+            resolution_outcomes=all_outcomes,
+        )
+        updated_rule_trace_links[condition_key] = updated_link
+
+    # Update stats with new format counts
+    stats["new_trace_count"] = len(traces)
+    stats["new_links_resolved"] = new_resolved_count
+    stats["new_links_cannot_resolve"] = new_cannot_resolve_count
+    stats["new_links_pending"] = new_pending_count
+    # === END: Compute resolution for unified trace graph ===
+
     # Script findings for display
     script_findings = state.get('script_findings', [])
 
@@ -1539,6 +1726,10 @@ async def synthesis_node(
         console.print(f"[yellow]⚠ Trace groups unresolved: {cannot_resolve_count}[/yellow]")
     if pending_count > 0:
         console.print(f"[dim]  Trace groups pending: {pending_count}[/dim]")
+
+    # Log new format stats
+    if traces:
+        console.print(f"[dim]  (New format: {len(traces)} traces, {new_resolved_count} links resolved)[/dim]")
 
     console.print("[green]✓ Report data prepared[/green]")
 
@@ -1553,10 +1744,14 @@ async def synthesis_node(
             },
             "rules": rules,
             "trace_groups": updated_trace_groups,
-            "external_traces": external_traces,  # Shared cross-binary results
+            "external_traces": external_traces,  # Shared cross-binary results (OLD format)
+            "traces": traces,  # NEW unified trace graph
+            "rule_trace_links": updated_rule_trace_links,  # NEW unified trace graph
             "scripts": script_findings
         },
         "trace_groups": updated_trace_groups,
         "external_traces": external_traces,
+        "traces": traces,
+        "rule_trace_links": updated_rule_trace_links,
         "current_phase": AnalysisPhase.COMPLETED,
     }

@@ -20,8 +20,10 @@ from conn_analyzer.graph.models import (
     VariableTrace,
     VariableTraceGroup,
     ExternalTraceGroup,
+    RuleTraceLink,
     TraceContinuation,
     ContinuationType,
+    TraceType,
     TraceStep,
     TraceStepType,
     SourceKind,
@@ -112,9 +114,15 @@ def format_and_display_report(console: Console, report_data: Dict[str, Any]) -> 
     rules = report_data["rules"]
     trace_groups = report_data.get("trace_groups", {})
     external_traces = report_data.get("external_traces", {})
+    # NEW unified trace graph
+    traces = report_data.get("traces", {})
+    rule_trace_links = report_data.get("rule_trace_links", {})
 
     for rule_id, rule in rules.items():
-        rule_panel = create_rule_panel(rule, trace_groups, external_traces)
+        rule_panel = create_rule_panel(
+            rule, trace_groups, external_traces,
+            traces=traces, rule_trace_links=rule_trace_links
+        )
         console.print(rule_panel)
         console.print()  # Spacing between rules
 
@@ -211,20 +219,28 @@ def display_context(console: Console, context: Dict[str, Any]) -> None:
 def create_rule_panel(
     rule: RuleResult,
     trace_groups: Dict[str, VariableTraceGroup],
-    external_traces: Dict[str, ExternalTraceGroup] = None
+    external_traces: Dict[str, ExternalTraceGroup] = None,
+    traces: Dict[str, VariableTrace] = None,
+    rule_trace_links: Dict[str, RuleTraceLink] = None,
 ) -> Panel:
     """Create a Rich Panel for a single security rule using trace groups.
 
     Args:
         rule: RuleResult with status, evidence, and conditions
-        trace_groups: Dictionary mapping condition keys to VariableTraceGroup
-        external_traces: Dictionary of shared cross-binary analysis results
+        trace_groups: Dictionary mapping condition keys to VariableTraceGroup (OLD format)
+        external_traces: Dictionary of shared cross-binary analysis results (OLD format)
+        traces: Dict of all traces by ID (NEW unified format)
+        rule_trace_links: Dict of rule-to-trace links (NEW unified format)
 
     Returns:
         Rich Panel with formatted rule information
     """
     if external_traces is None:
         external_traces = {}
+    if traces is None:
+        traces = {}
+    if rule_trace_links is None:
+        rule_trace_links = {}
 
     renderables = []
 
@@ -244,8 +260,13 @@ def create_rule_panel(
         renderables.append(Text(""))  # Empty line
 
         for cond in rule.conditions:
-            # Create nested panel for each condition
-            cond_panel = create_condition_panel(cond, trace_groups, external_traces)
+            # Prefer new unified format if available
+            condition_key = f"{cond.function}:{cond.variable}"
+            if traces and rule_trace_links and condition_key in rule_trace_links:
+                cond_panel = create_condition_panel_from_graph(cond, traces, rule_trace_links)
+            else:
+                # Fall back to old format
+                cond_panel = create_condition_panel(cond, trace_groups, external_traces)
             renderables.append(cond_panel)
 
     # Use Group to combine text and panels
@@ -493,6 +514,157 @@ def format_continuation(continuation: TraceContinuation, prefix: str = "") -> st
             lines.append(sub_text)
 
     return "\n".join(lines)
+
+
+# ============================================================================
+# Unified Trace Graph Formatting (NEW)
+# ============================================================================
+
+def format_trace_type_badge(trace_type: TraceType) -> str:
+    """Format trace type with emoji badge."""
+    type_badges = {
+        TraceType.MAIN_BINARY: "🔍",
+        TraceType.CROSS_BINARY: "📁",
+        TraceType.CONFIG_FILE: "📄",
+        TraceType.SCRIPT: "📜",
+        TraceType.ENVIRONMENT: "🌐",
+    }
+    return type_badges.get(trace_type, "•")
+
+
+def format_trace_from_graph(
+    trace: VariableTrace,
+    traces: Dict[str, VariableTrace],
+    prefix: str = "",
+    visited: set = None,
+) -> str:
+    """Format a single trace and its children from the unified trace graph.
+
+    Args:
+        trace: VariableTrace to format
+        traces: All traces dict (for following child links)
+        prefix: Indentation prefix
+        visited: Set of visited trace IDs to prevent cycles
+
+    Returns:
+        Formatted trace string with Rich markup
+    """
+    if visited is None:
+        visited = set()
+
+    # Prevent infinite loops
+    if trace.trace_id in visited:
+        return f"{prefix}[dim](cycle detected)[/dim]"
+    visited.add(trace.trace_id)
+
+    lines = []
+
+    # Trace type badge and source
+    type_badge = format_trace_type_badge(trace.trace_type)
+    type_name = trace.trace_type.value.replace("_", " ").title()
+    source_path = escape_rich_markup(trace.source_path or "main binary")
+
+    lines.append(f"{prefix}{type_badge} [bold]{type_name}:[/bold] `{source_path}`")
+
+    # Function and variable
+    func = escape_rich_markup(trace.function)
+    var = escape_rich_markup(trace.variable)
+    lines.append(f"{prefix}   Function: `{func}`, Variable: `{var}`")
+
+    # Value if resolved
+    if trace.value:
+        val = escape_rich_markup(trace.value)
+        lines.append(f"{prefix}   [green]Value:[/green] `{val}`")
+
+    # Resolution status
+    res_badge = format_trace_resolution_badge(trace.resolving_status)
+    lines.append(f"{prefix}   Status: {res_badge}")
+
+    if trace.outcome:
+        emoji = "✅" if "pass" in trace.outcome.lower() else "❌"
+        outcome = escape_rich_markup(trace.outcome)
+        lines.append(f"{prefix}   Outcome: {emoji} {outcome}")
+
+    # Recursively format children
+    if trace.child_trace_ids:
+        for child_id in trace.child_trace_ids:
+            child_trace = traces.get(child_id)
+            if child_trace:
+                lines.append("")
+                child_text = format_trace_from_graph(
+                    child_trace, traces, prefix=prefix + "  ", visited=visited
+                )
+                lines.append(child_text)
+
+    return "\n".join(lines)
+
+
+def create_condition_panel_from_graph(
+    condition: RuleCondition,
+    traces: Dict[str, VariableTrace],
+    rule_trace_links: Dict[str, RuleTraceLink],
+) -> Panel:
+    """Create a condition panel using the unified trace graph.
+
+    Args:
+        condition: RuleCondition with variable, function, and security mapping
+        traces: Dict of all traces by ID
+        rule_trace_links: Dict of rule-to-trace links
+
+    Returns:
+        Rich Panel with condition details and trace tree
+    """
+    lines = []
+
+    # Condition header
+    var = escape_rich_markup(condition.variable)
+    func = escape_rich_markup(condition.function)
+    lines.append(f"[bold]Variable:[/bold] `{var}` in `{func}`")
+    lines.append("")
+
+    # Look up rule trace link
+    condition_key = f"{condition.function}:{condition.variable}"
+    link = rule_trace_links.get(condition_key)
+
+    if not link or not link.root_trace_ids:
+        lines.append("[yellow]⚠️ No trace data available for this variable[/yellow]")
+    else:
+        # Overall resolution status
+        overall_badge = format_trace_resolution_badge(link.overall_status)
+        lines.append(f"[bold]Overall Status:[/bold] {overall_badge}")
+
+        if link.resolution_summary:
+            summary = escape_rich_markup(link.resolution_summary)
+            lines.append(f"[bold]Summary:[/bold] {summary}")
+
+        # Resolution outcomes
+        if link.resolution_outcomes:
+            lines.append("")
+            lines.append("[bold]Resolution Outcomes:[/bold]")
+            for outcome in link.resolution_outcomes:
+                escaped_outcome = escape_rich_markup(outcome)
+                emoji = "✅" if "pass" in outcome.lower() else "❌" if "fail" in outcome.lower() else "•"
+                lines.append(f"  {emoji} {escaped_outcome}")
+
+        lines.append("")
+
+        # Format trace tree from root traces
+        lines.append("[bold]Trace Graph:[/bold]")
+        for root_id in link.root_trace_ids:
+            root_trace = traces.get(root_id)
+            if root_trace:
+                trace_text = format_trace_from_graph(root_trace, traces, prefix="  ")
+                lines.append(trace_text)
+                lines.append("")
+
+    content = "\n".join(lines)
+
+    return Panel(
+        content,
+        border_style="dim",
+        padding=(1, 2),
+        expand=True
+    )
 
 
 # ============================================================================
