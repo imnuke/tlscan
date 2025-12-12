@@ -563,7 +563,7 @@ async def dataflow_analysis_node(
                 # Create a "needs_script_discovery" task to find startup scripts/binaries
                 script_discovery_task = DataflowTask(
                     type=TaskType.NEEDS_SCRIPT_DISCOVERY,
-                    target=binary_path,
+                    target=binary_path or state.get("main_binary_path"),
                     variables=cli_variables,
                     binary_path=None,
                     context=f"Find scripts/binaries that invoke this binary and extract CLI argument: {arg_name}"
