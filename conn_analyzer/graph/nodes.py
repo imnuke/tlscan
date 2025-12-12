@@ -21,6 +21,7 @@ from conn_analyzer.graph.state import (
     parse_condition_key,
     add_trace_to_graph,
     resolve_trace_tree,
+    update_trace_statuses,
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
@@ -1382,6 +1383,9 @@ async def synthesis_node(
         for root_id in link.root_trace_ids:
             outcomes = resolve_trace_tree(traces, root_id, security_mapping)
             all_outcomes.extend(outcomes)
+
+            # Update individual trace statuses in the tree
+            update_trace_statuses(traces, root_id, security_mapping)
 
         # Determine overall status
         if all_outcomes:

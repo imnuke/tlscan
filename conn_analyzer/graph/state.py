@@ -13,6 +13,7 @@ from conn_analyzer.graph.models import (
     RuleTraceLink,
     ConfigFetchTask,
     DataflowTask,
+    TraceResolvingStatus,
 )
 
 
@@ -244,6 +245,59 @@ def resolve_trace_tree(
         outcomes.extend(child_outcomes)
 
     return outcomes
+
+
+def update_trace_statuses(
+    traces: Dict[str, VariableTrace],
+    trace_id: str,
+    security_mapping: Optional[Dict[str, str]],
+) -> None:
+    """
+    Recursively update trace resolving_status fields based on resolution.
+
+    Traverses the trace graph and sets:
+    - RESOLVED: If trace has value that maps to an outcome
+    - CANNOT_RESOLVE: If trace is a leaf node with no resolved value
+    - PENDING: For intermediate traces with unresolved children
+
+    Also sets the outcome field for resolved traces.
+
+    Args:
+        traces: Dict of all traces (modified in place)
+        trace_id: Root trace ID to start from
+        security_mapping: Mapping of values to outcomes
+    """
+    trace = traces.get(trace_id)
+    if not trace:
+        return
+
+    # Check if this trace has a resolved value
+    is_resolved = False
+    if trace.value and security_mapping:
+        if trace.value in security_mapping:
+            is_resolved = True
+            trace.resolving_status = TraceResolvingStatus.RESOLVED
+            trace.outcome = security_mapping[trace.value]
+
+    # Recurse to children first (so we can check their status)
+    for child_id in trace.child_trace_ids:
+        update_trace_statuses(traces, child_id, security_mapping)
+
+    # If not resolved via value, determine status based on tree structure
+    if not is_resolved:
+        if trace.child_trace_ids:
+            # Has children - check if any child resolved
+            any_child_resolved = any(
+                traces.get(cid) and traces[cid].resolving_status == TraceResolvingStatus.RESOLVED
+                for cid in trace.child_trace_ids
+            )
+            if any_child_resolved:
+                trace.resolving_status = TraceResolvingStatus.RESOLVED
+            # else: remains PENDING (intermediate with no resolved children)
+        else:
+            # Leaf node with no value - cannot resolve
+            trace.resolving_status = TraceResolvingStatus.CANNOT_RESOLVE
+            trace.resolution_reason = "Leaf trace with no resolved value"
 
 
 # ============================================================================
