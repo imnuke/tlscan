@@ -58,8 +58,8 @@ def parse_args():
         "-r", "--rules",
         type=str,
         default="openssl",
-        choices=["openssl", "curl", "libcurl", "gnutls", "mbedtls", "php_curl", "wget"],
-        help="SSL/TLS library rules to use (default: openssl)"
+        choices=["openssl", "curl", "libcurl", "gnutls", "mbedtls", "php_curl", "wget", "socket"],
+        help="SSL/TLS library rules to use (default: openssl). Use 'socket' to detect plaintext communication"
     )
     parser.add_argument(
         "--save-checkpoints",
