@@ -1,5 +1,35 @@
 # libcurl SSL/TLS Security Rules
 
+## Binary Analysis Reference
+
+**IMPORTANT**: When analyzing compiled binaries, `curl_easy_setopt()` calls show numeric option codes instead of symbolic names. Use this reference to identify security-critical options:
+
+### Security-Critical Options (MUST check)
+| Option Name | Numeric Value | Secure Value | Vulnerability |
+|-------------|---------------|--------------|---------------|
+| CURLOPT_SSL_VERIFYPEER | 64 | 1 (default) | 0 = disables cert verification |
+| CURLOPT_SSL_VERIFYHOST | 81 | 2 (default) | 0 or 1 = disables/weakens hostname check |
+| CURLOPT_SSLVERSION | 32 | 6+ (TLS 1.2+) | <6 = allows insecure protocols |
+
+### Other SSL-Related Options
+| Option Name | Numeric Value | Description |
+|-------------|---------------|-------------|
+| CURLOPT_CAINFO | 10065 | CA certificate file path |
+| CURLOPT_CAPATH | 10097 | CA certificate directory |
+| CURLOPT_SSL_OPTIONS | 216 | SSL behavior flags |
+| CURLOPT_SSL_CIPHER_LIST | 10083 | Allowed cipher suites |
+| CURLOPT_PINNEDPUBLICKEY | 10230 | Certificate pinning |
+
+### Common Non-SSL Options (for disambiguation)
+| Option Name | Numeric Value | Description |
+|-------------|---------------|-------------|
+| CURLOPT_VERBOSE | 41 | Debug output |
+| CURLOPT_URL | 10002 | Target URL |
+| CURLOPT_POST | 47 | Enable POST |
+| CURLOPT_POSTFIELDS | 10015 | POST data |
+
+**Example**: `curl_easy_setopt(handle, 64, 0)` means CURLOPT_SSL_VERIFYPEER is set to 0 (VULNERABLE - certificate verification disabled).
+
 ## 1. SSL/TLS Usage Detection
 **Priority**: MUST
 **Description**: Verify that HTTPS/SSL is actually being used, not just available. Detect conditional usage or plaintext fallbacks.
@@ -29,27 +59,27 @@
 **Description**: Verify the server's certificate chain against trusted CA certificates
 
 **Implementation**:
-- Set `CURLOPT_SSL_VERIFYPEER` to `1L` (enabled by default)
-- Provide CA bundle: `CURLOPT_CAINFO` (file) or `CURLOPT_CAPATH` (directory)
+- Set `CURLOPT_SSL_VERIFYPEER` (option code 64) to `1L` (enabled by default)
+- Provide CA bundle: `CURLOPT_CAINFO` (10065) or `CURLOPT_CAPATH` (10097)
 - Vulnerability: Setting `CURLOPT_SSL_VERIFYPEER` to `0L` disables all certificate verification
 
 **Detection Patterns**:
 - Functions: `curl_easy_setopt()`
-- Options: `CURLOPT_SSL_VERIFYPEER`, `CURLOPT_CAINFO`, `CURLOPT_CAPATH`
-- Vulnerability: `curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L)`
+- Options: `CURLOPT_SSL_VERIFYPEER` (64), `CURLOPT_CAINFO` (10065), `CURLOPT_CAPATH` (10097)
+- Vulnerability: `curl_easy_setopt(curl, 64, 0)` - disables certificate verification
 
 ## 3. Hostname Verification
 **Priority**: MUST
 **Description**: Verify that the certificate matches the hostname being connected to
 
 **Implementation**:
-- Set `CURLOPT_SSL_VERIFYHOST` to `2L` (full hostname check, default)
+- Set `CURLOPT_SSL_VERIFYHOST` (option code 81) to `2L` (full hostname check, default)
 - Value `1L` is deprecated and should not be used
 - Value `0L` disables hostname verification (insecure)
 
 **Detection Patterns**:
-- Options: `CURLOPT_SSL_VERIFYHOST`
-- Vulnerability: `curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L)` or `1L`
+- Options: `CURLOPT_SSL_VERIFYHOST` (81)
+- Vulnerability: `curl_easy_setopt(curl, 81, 0)` or `curl_easy_setopt(curl, 81, 1)` - disables/weakens hostname verification
 
 ## 4. Certificate Revocation Status
 **Priority**: RECOMMENDED
@@ -69,14 +99,14 @@
 **Description**: Enforce TLS 1.2 or higher, disable older insecure protocols
 
 **Implementation**:
-- Use `CURLOPT_SSLVERSION` with `CURL_SSLVERSION_TLSv1_2` or `CURL_SSLVERSION_TLSv1_3`
+- Use `CURLOPT_SSLVERSION` (option code 32) with `CURL_SSLVERSION_TLSv1_2` (6) or `CURL_SSLVERSION_TLSv1_3` (7)
 - Or use range: `CURL_SSLVERSION_TLSv1_2 | CURL_SSLVERSION_MAX_TLSv1_3`
 - Default allows TLS 1.0+, which is insecure
 
 **Detection Patterns**:
-- Options: `CURLOPT_SSLVERSION`
-- Constants: `CURL_SSLVERSION_TLSv1_2`, `CURL_SSLVERSION_TLSv1_3`, `CURL_SSLVERSION_MAX_*`
-- Vulnerability: Not setting minimum TLS version or allowing SSLv2/SSLv3/TLS1.0/TLS1.1
+- Options: `CURLOPT_SSLVERSION` (32)
+- Values: 0=default, 1=TLSv1, 2=SSLv2, 3=SSLv3, 4=TLSv1.0, 5=TLSv1.1, 6=TLSv1.2, 7=TLSv1.3
+- Vulnerability: `curl_easy_setopt(curl, 32, <6)` - allows insecure protocols (SSLv2/SSLv3/TLS1.0/TLS1.1)
 
 ## 6. Cipher Suite Selection
 **Priority**: RECOMMENDED
