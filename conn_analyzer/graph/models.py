@@ -60,18 +60,19 @@ class TraceResolvingStatus(str, Enum):
     CANNOT_RESOLVE = "cannot_resolve"
 
 
-class ContinuationType(str, Enum):
-    """Type of continuation in trace resolution.
+class TraceType(str, Enum):
+    """Type of trace based on its source context.
 
-    When a trace ends with an external source (EXTERNAL_CALL, CONFIG_FILE, etc.),
-    analysis continues by fetching data from that source. This enum identifies
-    the type of continuation.
+    In the unified trace graph, all traces are equal - they just have different
+    types indicating where they came from. This replaces the old distinction
+    between main_traces and continuations.
     """
 
-    CROSS_BINARY = "cross_binary"
-    CONFIG_FILE = "config_file"
-    SCRIPT = "script"
-    ENVIRONMENT = "environment"
+    MAIN_BINARY = "main_binary"      # Trace from the main binary being analyzed
+    CROSS_BINARY = "cross_binary"    # Trace from a caller binary (cross-binary analysis)
+    CONFIG_FILE = "config_file"      # Value extracted from a config file
+    SCRIPT = "script"                # Value from script analysis
+    ENVIRONMENT = "environment"      # Value from environment variable
 
 
 # ============================================================================
@@ -162,13 +163,14 @@ class DataflowTask(BaseModel):
         )
     )
 
-    origin_conditions: Optional[Dict[str, str]] = Field(
+    origin_conditions: Optional[Dict[str, List[str]]] = Field(
         None,
         description=(
-            "Mapping from 'function:variable' to origin condition key, used when a task "
-            "is tracing variables from multiple original conditions (e.g., batched cross-binary "
-            "analysis). Keys are the traced function:variable, values are the origin condition keys. "
-            "Takes precedence over origin_condition when set."
+            "Mapping from 'function:variable' to list of origin condition keys. "
+            "Supports multiple conditions tracing to the same external function. "
+            "Keys are the traced function:variable, values are lists of origin condition keys. "
+            "Takes precedence over origin_condition when set. "
+            "Example: {'upscli_tryconnect:a4': ['upscli_sslinit:a2', 'upscli_tryconnect:a4']}"
         )
     )
 
@@ -376,11 +378,33 @@ class VariableTrace(BaseModel):
     """
     Result of tracing a single variable through dataflow analysis.
 
+    In the unified trace graph architecture, all traces are nodes in a directed
+    graph. Traces link to each other via parent_trace_id and child_trace_ids,
+    forming chains from rule conditions to resolved values.
+
     Contains information about where the variable's value comes from
     and what that value is (if determinable). Source information is
     stored in the final step of trace_path (step_type == TRACE_END).
     """
 
+    # === Identity (for trace graph) ===
+    trace_id: Optional[str] = Field(
+        None,
+        description="Unique identifier for this trace in the graph (UUID). None for legacy traces."
+    )
+
+    # === Type & Source ===
+    trace_type: TraceType = Field(
+        default=TraceType.MAIN_BINARY,
+        description="Type of trace: main_binary, cross_binary, config_file, script, environment"
+    )
+
+    source_path: Optional[str] = Field(
+        None,
+        description="Path to source: binary path, config file path, script path. None for main binary traces."
+    )
+
+    # === Traced Variable ===
     function: str = Field(
         description="Function where variable is used"
     )
@@ -395,10 +419,22 @@ class VariableTrace(BaseModel):
     )
 
     trace_path: List[TraceStep] = Field(
+        default_factory=list,
         description="Structured list of steps in the trace path. Final step contains source info."
     )
 
-    # Resolution fields (set by synthesis_node, not by agent)
+    # === Graph Links ===
+    parent_trace_id: Optional[str] = Field(
+        None,
+        description="ID of parent trace that led to this one (None for root traces)"
+    )
+
+    child_trace_ids: List[str] = Field(
+        default_factory=list,
+        description="IDs of child traces (continuations from this trace)"
+    )
+
+    # === Resolution fields (set by synthesis_node, not by agent) ===
     resolving_status: TraceResolvingStatus = Field(
         default=TraceResolvingStatus.PENDING,
         description="Resolution status: pending/resolved/cannot_resolve"
@@ -424,6 +460,55 @@ class DataflowAnalysisOutput(BaseModel):
 
     traces: List[VariableTrace] = Field(
         description="Traces for all requested variables"
+    )
+
+
+class RuleTraceLink(BaseModel):
+    """
+    Link between a rule condition and its root traces in the trace graph.
+
+    In the unified trace graph architecture, rules connect to traces via
+    RuleTraceLink. Multiple conditions can share the same root traces
+    (natural deduplication).
+
+    Example:
+        rule_trace_links = {
+            "upscli_sslinit:a2": RuleTraceLink(
+                condition_key="upscli_sslinit:a2",
+                root_trace_ids=["trace-001"],
+                security_mapping={"0": "FAIL", "1": "PASS"}
+            )
+        }
+    """
+
+    condition_key: str = Field(
+        description="Condition key 'function:variable' identifying this rule condition"
+    )
+
+    root_trace_ids: List[str] = Field(
+        default_factory=list,
+        description="IDs of root traces for this condition (entry points into trace graph)"
+    )
+
+    security_mapping: Optional[Dict[str, str]] = Field(
+        None,
+        description="Mapping of values to security outcomes (e.g., {'0': 'FAIL', '1': 'PASS'})"
+    )
+
+    # === Computed Resolution (set by synthesis_node) ===
+    overall_status: TraceResolvingStatus = Field(
+        default=TraceResolvingStatus.PENDING,
+        description="Overall resolution status computed from all traces in the graph"
+    )
+
+    resolution_summary: str = Field(
+        default="",
+        description="Human-readable summary of the resolution"
+    )
+
+    resolution_outcomes: List[str] = Field(
+        default_factory=list,
+        description="Individual outcomes from each resolution path"
     )
 
 
@@ -524,220 +609,3 @@ class FirmwareSearchResult(BaseModel):
             "If null/missing, falls back to assigning all variables to all binaries."
         )
     )
-
-
-# ============================================================================
-# Hierarchical Trace Models
-# ============================================================================
-
-class TraceContinuation(BaseModel):
-    """A continuation of trace analysis from another source.
-
-    Represents analysis that continues from an EXTERNAL_CALL, CONFIG_FILE,
-    or other source kind that requires fetching data from outside the current binary.
-
-    Supports multi-level chains via sub_continuations (e.g., binary → binary → config).
-    """
-
-    type: ContinuationType = Field(
-        description="Type of continuation: cross_binary, config_file, script, environment"
-    )
-
-    source_path: str = Field(
-        description="Path to the source: binary path, config file path, script path, etc."
-    )
-
-    # The traces from this continuation source
-    traces: List["VariableTrace"] = Field(
-        default_factory=list,
-        description="Traces obtained from analyzing this continuation source"
-    )
-
-    # For multi-level chains (e.g., binary → binary → config)
-    sub_continuations: List["TraceContinuation"] = Field(
-        default_factory=list,
-        description="Nested continuations for multi-level resolution chains"
-    )
-
-    # Resolved value from this continuation (if found)
-    resolved_value: Optional[str] = Field(
-        None,
-        description="The final resolved value from this continuation (if found)"
-    )
-
-    resolved_source_kind: Optional[SourceKind] = Field(
-        None,
-        description="What source_kind provided the resolved value (e.g., CONSTANT, CONFIG_FILE)"
-    )
-
-    # For config files: the actual fetched values
-    config_values: Dict[str, str] = Field(
-        default_factory=dict,
-        description="For CONFIG_FILE continuations: key-value pairs fetched from the config"
-    )
-
-
-class VariableTraceGroup(BaseModel):
-    """All traces related to resolving one condition.
-
-    Groups the main binary trace(s) with all continuations (cross-binary,
-    config, script) that contribute to resolving this condition.
-
-    This provides a hierarchical view of the complete resolution chain,
-    from the initial trace in the main binary through all external sources.
-    """
-
-    condition_key: str = Field(
-        description="Composite key 'function:variable' identifying this condition"
-    )
-
-    function: str = Field(
-        description="Function where the variable is used"
-    )
-
-    variable: str = Field(
-        description="Variable or parameter being traced"
-    )
-
-    # Main binary traces (may have multiple if variable has multiple sources)
-    main_traces: List["VariableTrace"] = Field(
-        default_factory=list,
-        description="Traces from the main binary being analyzed"
-    )
-
-    # Continuations from external sources
-    continuations: List[TraceContinuation] = Field(
-        default_factory=list,
-        description="Continuations from cross-binary, config, script sources"
-    )
-
-    # Security mapping from the original condition
-    security_mapping: Optional[Dict[str, str]] = Field(
-        None,
-        description="Mapping of values to security outcomes (e.g., {'0': 'FAIL', '1': 'PASS'})"
-    )
-
-    # Overall resolution (computed from all traces)
-    overall_status: TraceResolvingStatus = Field(
-        default=TraceResolvingStatus.PENDING,
-        description="Overall resolution status computed from all traces and continuations"
-    )
-
-    resolution_summary: str = Field(
-        default="",
-        description="Human-readable summary of the resolution"
-    )
-
-    # Individual resolution outcomes
-    resolution_outcomes: List[str] = Field(
-        default_factory=list,
-        description="List of individual resolution outcomes from each source"
-    )
-
-    def compute_resolution(self, security_mapping: Optional[Dict[str, str]] = None) -> None:
-        """Compute overall resolution from all traces and continuations.
-
-        Updates overall_status, resolution_summary, and resolution_outcomes
-        based on the values found in main_traces and continuations.
-
-        Args:
-            security_mapping: Optional override for security_mapping
-        """
-        mapping = security_mapping or self.security_mapping
-        outcomes = []
-
-        # Check main traces with resolved values
-        for trace in self.main_traces:
-            if trace.value is not None and mapping:
-                if trace.value in mapping:
-                    outcomes.append(mapping[trace.value])
-
-        # Check continuations recursively
-        for continuation in self.continuations:
-            outcome = self._resolve_continuation(continuation, mapping)
-            if outcome:
-                outcomes.append(f"{continuation.source_path}: {outcome}")
-
-        # Update resolution status
-        if outcomes:
-            self.overall_status = TraceResolvingStatus.RESOLVED
-            self.resolution_outcomes = outcomes
-            self.resolution_summary = "; ".join(outcomes)
-        elif self._has_pending_continuations():
-            self.overall_status = TraceResolvingStatus.PENDING
-            self.resolution_summary = "Awaiting continuation results"
-        else:
-            self.overall_status = TraceResolvingStatus.CANNOT_RESOLVE
-            self.resolution_summary = "No resolution path found"
-
-    def _resolve_continuation(
-        self,
-        continuation: TraceContinuation,
-        mapping: Optional[Dict[str, str]]
-    ) -> Optional[str]:
-        """Resolve a single continuation and its sub-continuations."""
-        # Check if continuation has a resolved value
-        if continuation.resolved_value is not None and mapping:
-            if continuation.resolved_value in mapping:
-                return mapping[continuation.resolved_value]
-            return f"value={continuation.resolved_value}"
-
-        # Check traces in continuation
-        for trace in continuation.traces:
-            if trace.value is not None and mapping:
-                if trace.value in mapping:
-                    return mapping[trace.value]
-                return f"value={trace.value}"
-
-        # Check config values
-        for key, value in continuation.config_values.items():
-            if mapping and value in mapping:
-                return f"{key}: {mapping[value]}"
-
-        # Check sub-continuations recursively
-        for sub in continuation.sub_continuations:
-            result = self._resolve_continuation(sub, mapping)
-            if result:
-                return result
-
-        return None
-
-    def _has_pending_continuations(self) -> bool:
-        """Check if any traces require continuations that haven't been processed."""
-        for trace in self.main_traces:
-            if trace.trace_path:
-                last_step = trace.trace_path[-1]
-                if last_step.step_type == TraceStepType.TRACE_END:
-                    if last_step.source_kind in (
-                        SourceKind.EXTERNAL_CALL,
-                        SourceKind.CONFIG_FILE,
-                        SourceKind.COMMAND_LINE_ARG
-                    ):
-                        # Check if we have a continuation for this
-                        if not self._has_continuation_for_trace(trace, last_step):
-                            return True
-        return False
-
-    def _has_continuation_for_trace(
-        self,
-        trace: "VariableTrace",
-        last_step: "TraceStep"
-    ) -> bool:
-        """Check if a continuation exists for the given trace's external source."""
-        if last_step.source_kind == SourceKind.EXTERNAL_CALL:
-            # Look for cross-binary continuations
-            for cont in self.continuations:
-                if cont.type == ContinuationType.CROSS_BINARY:
-                    return True
-        elif last_step.source_kind == SourceKind.CONFIG_FILE:
-            # Look for config continuations
-            for cont in self.continuations:
-                if cont.type == ContinuationType.CONFIG_FILE:
-                    if cont.config_values:
-                        return True
-        return False
-
-
-# Update forward references for recursive models
-TraceContinuation.model_rebuild()
-VariableTraceGroup.model_rebuild()

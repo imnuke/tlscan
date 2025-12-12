@@ -18,9 +18,8 @@ from conn_analyzer.graph.models import (
     TraceResolvingStatus,
     RuleCondition,
     VariableTrace,
-    VariableTraceGroup,
-    TraceContinuation,
-    ContinuationType,
+    RuleTraceLink,
+    TraceType,
     TraceStep,
     TraceStepType,
     SourceKind,
@@ -109,10 +108,11 @@ def format_and_display_report(console: Console, report_data: Dict[str, Any]) -> 
     console.print()
 
     rules = report_data["rules"]
-    trace_groups = report_data.get("trace_groups", {})
+    traces = report_data.get("traces", {})
+    rule_trace_links = report_data.get("rule_trace_links", {})
 
     for rule_id, rule in rules.items():
-        rule_panel = create_rule_panel(rule, trace_groups)
+        rule_panel = create_rule_panel(rule, traces, rule_trace_links)
         console.print(rule_panel)
         console.print()  # Spacing between rules
 
@@ -203,18 +203,20 @@ def display_context(console: Console, context: Dict[str, Any]) -> None:
 
 
 # ============================================================================
-# Rule Panel Creation (using trace groups)
+# Rule Panel Creation
 # ============================================================================
 
 def create_rule_panel(
     rule: RuleResult,
-    trace_groups: Dict[str, VariableTraceGroup]
+    traces: Dict[str, VariableTrace],
+    rule_trace_links: Dict[str, RuleTraceLink],
 ) -> Panel:
-    """Create a Rich Panel for a single security rule using trace groups.
+    """Create a Rich Panel for a single security rule using unified trace graph.
 
     Args:
         rule: RuleResult with status, evidence, and conditions
-        trace_groups: Dictionary mapping condition keys to VariableTraceGroup
+        traces: Dict of all traces by ID
+        rule_trace_links: Dict of rule-to-trace links
 
     Returns:
         Rich Panel with formatted rule information
@@ -237,8 +239,7 @@ def create_rule_panel(
         renderables.append(Text(""))  # Empty line
 
         for cond in rule.conditions:
-            # Create nested panel for each condition
-            cond_panel = create_condition_panel(cond, trace_groups)
+            cond_panel = create_condition_panel_from_graph(cond, traces, rule_trace_links)
             renderables.append(cond_panel)
 
     # Use Group to combine text and panels
@@ -257,18 +258,160 @@ def create_rule_panel(
     )
 
 
-def create_condition_panel(
+# ============================================================================
+# Unified Trace Graph Formatting
+# ============================================================================
+
+def format_trace_type_badge(trace_type: TraceType) -> str:
+    """Format trace type with emoji badge."""
+    type_badges = {
+        TraceType.MAIN_BINARY: "🔍",
+        TraceType.CROSS_BINARY: "📁",
+        TraceType.CONFIG_FILE: "📄",
+        TraceType.SCRIPT: "📜",
+        TraceType.ENVIRONMENT: "🌐",
+    }
+    return type_badges.get(trace_type, "•")
+
+
+def format_trace_step(step: TraceStep, prefix: str = "") -> str:
+    """Format a single trace step with Rich markup.
+
+    Args:
+        step: TraceStep to format
+        prefix: Indentation prefix
+
+    Returns:
+        Formatted step string
+    """
+    # Step type badges
+    type_badges = {
+        TraceStepType.TRACE_START: "🔷",
+        TraceStepType.CALL_SITE: "📍",
+        TraceStepType.PARAMETER_TRANSFORM: "🔄",
+        TraceStepType.VARIABLE_ASSIGNMENT: "📝",
+        TraceStepType.TRACE_END: "🏁",
+    }
+    badge = type_badges.get(step.step_type, "•")
+
+    # Build step description
+    parts = [f"{prefix}{badge} [dim]Step {step.step_number}:[/dim]"]
+
+    # Add function and address if available
+    if step.function:
+        func = escape_rich_markup(step.function)
+        if step.address:
+            parts.append(f"`{func}` @ {step.address}")
+        else:
+            parts.append(f"`{func}`")
+
+    # Add description
+    desc = escape_rich_markup(step.description)
+    parts.append(f"- {desc}")
+
+    # For TRACE_END, show source_kind details
+    if step.step_type == TraceStepType.TRACE_END and step.source_kind:
+        source_badge = format_source_kind_badge(step.source_kind.value)
+        parts.append(f"[{source_badge}]")
+
+        if step.constant_value:
+            parts.append(f"= `{step.constant_value}`")
+        elif step.external_function:
+            ext_func = escape_rich_markup(step.external_function)
+            param = escape_rich_markup(step.parameter_name or "?")
+            parts.append(f"→ `{ext_func}:{param}`")
+
+    return " ".join(parts)
+
+
+def format_trace_from_graph(
+    trace: VariableTrace,
+    traces: Dict[str, VariableTrace],
+    prefix: str = "",
+    visited: set = None,
+) -> str:
+    """Format a single trace and its children from the unified trace graph.
+
+    Args:
+        trace: VariableTrace to format
+        traces: All traces dict (for following child links)
+        prefix: Indentation prefix
+        visited: Set of visited trace IDs to prevent cycles
+
+    Returns:
+        Formatted trace string with Rich markup
+    """
+    if visited is None:
+        visited = set()
+
+    # Prevent infinite loops
+    if trace.trace_id in visited:
+        return f"{prefix}[dim](cycle detected)[/dim]"
+    visited.add(trace.trace_id)
+
+    lines = []
+
+    # Trace type badge and source
+    type_badge = format_trace_type_badge(trace.trace_type)
+    type_name = trace.trace_type.value.replace("_", " ").title()
+    source_path = escape_rich_markup(trace.source_path or "main binary")
+
+    lines.append(f"{prefix}{type_badge} [bold]{type_name}:[/bold] `{source_path}`")
+
+    # Function and variable
+    func = escape_rich_markup(trace.function)
+    var = escape_rich_markup(trace.variable)
+    lines.append(f"{prefix}   Function: `{func}`, Variable: `{var}`")
+
+    # Value if resolved
+    if trace.value:
+        val = escape_rich_markup(trace.value)
+        lines.append(f"{prefix}   [green]Value:[/green] `{val}`")
+
+    # Resolution status
+    res_badge = format_trace_resolution_badge(trace.resolving_status)
+    lines.append(f"{prefix}   Status: {res_badge}")
+
+    if trace.outcome:
+        emoji = "✅" if "pass" in trace.outcome.lower() else "❌"
+        outcome = escape_rich_markup(trace.outcome)
+        lines.append(f"{prefix}   Outcome: {emoji} {outcome}")
+
+    # Display trace_path steps
+    if trace.trace_path:
+        lines.append(f"{prefix}   [bold]Trace Path:[/bold]")
+        for step in trace.trace_path:
+            step_text = format_trace_step(step, prefix=prefix + "     ")
+            lines.append(step_text)
+
+    # Recursively format children
+    if trace.child_trace_ids:
+        for child_id in trace.child_trace_ids:
+            child_trace = traces.get(child_id)
+            if child_trace:
+                lines.append("")
+                child_text = format_trace_from_graph(
+                    child_trace, traces, prefix=prefix + "  ", visited=visited
+                )
+                lines.append(child_text)
+
+    return "\n".join(lines)
+
+
+def create_condition_panel_from_graph(
     condition: RuleCondition,
-    trace_groups: Dict[str, VariableTraceGroup]
+    traces: Dict[str, VariableTrace],
+    rule_trace_links: Dict[str, RuleTraceLink],
 ) -> Panel:
-    """Create a nested panel for a single condition using trace groups.
+    """Create a condition panel using the unified trace graph.
 
     Args:
         condition: RuleCondition with variable, function, and security mapping
-        trace_groups: Dictionary of trace groups
+        traces: Dict of all traces by ID
+        rule_trace_links: Dict of rule-to-trace links
 
     Returns:
-        Rich Panel with condition details and hierarchical traces
+        Rich Panel with condition details and trace tree
     """
     lines = []
 
@@ -278,48 +421,40 @@ def create_condition_panel(
     lines.append(f"[bold]Variable:[/bold] `{var}` in `{func}`")
     lines.append("")
 
-    # Look up trace group
+    # Look up rule trace link
     condition_key = f"{condition.function}:{condition.variable}"
-    trace_group = trace_groups.get(condition_key)
+    link = rule_trace_links.get(condition_key)
 
-    if not trace_group:
-        lines.append("[yellow]⚠️ No trace group available for this variable[/yellow]")
+    if not link or not link.root_trace_ids:
+        lines.append("[yellow]⚠️ No trace data available for this variable[/yellow]")
     else:
         # Overall resolution status
-        overall_badge = format_trace_resolution_badge(trace_group.overall_status)
+        overall_badge = format_trace_resolution_badge(link.overall_status)
         lines.append(f"[bold]Overall Status:[/bold] {overall_badge}")
 
-        if trace_group.resolution_summary:
-            summary = escape_rich_markup(trace_group.resolution_summary)
+        if link.resolution_summary:
+            summary = escape_rich_markup(link.resolution_summary)
             lines.append(f"[bold]Summary:[/bold] {summary}")
 
         # Resolution outcomes
-        if trace_group.resolution_outcomes:
+        if link.resolution_outcomes:
             lines.append("")
             lines.append("[bold]Resolution Outcomes:[/bold]")
-            for outcome in trace_group.resolution_outcomes:
+            for outcome in link.resolution_outcomes:
                 escaped_outcome = escape_rich_markup(outcome)
                 emoji = "✅" if "pass" in outcome.lower() else "❌" if "fail" in outcome.lower() else "•"
                 lines.append(f"  {emoji} {escaped_outcome}")
 
         lines.append("")
 
-        # Main binary traces
-        if trace_group.main_traces:
-            lines.append("[bold]Main Binary Traces:[/bold]")
-            for i, trace in enumerate(trace_group.main_traces, 1):
-                trace_text = format_trace_brief(trace, prefix="  ")
+        # Format trace tree from root traces
+        lines.append("[bold]Trace Graph:[/bold]")
+        for root_id in link.root_trace_ids:
+            root_trace = traces.get(root_id)
+            if root_trace:
+                trace_text = format_trace_from_graph(root_trace, traces, prefix="  ")
                 lines.append(trace_text)
-                if i < len(trace_group.main_traces):
-                    lines.append("")
-
-        # Continuations (cross-binary, config, etc.)
-        if trace_group.continuations:
-            lines.append("")
-            lines.append("[bold]Cross-Analysis Results:[/bold]")
-            for continuation in trace_group.continuations:
-                cont_text = format_continuation(continuation, prefix="  ")
-                lines.append(cont_text)
+                lines.append("")
 
     content = "\n".join(lines)
 
@@ -329,142 +464,6 @@ def create_condition_panel(
         padding=(1, 2),
         expand=True
     )
-
-
-def format_trace_brief(trace: VariableTrace, prefix: str = "") -> str:
-    """Format a variable trace briefly.
-
-    Args:
-        trace: VariableTrace with trace path
-        prefix: Indentation prefix
-
-    Returns:
-        Formatted trace string with Rich markup
-    """
-    lines = []
-
-    # Get source info from final step
-    last_step = trace.trace_path[-1] if trace.trace_path else None
-    source_kind = None
-    if last_step and last_step.step_type == TraceStepType.TRACE_END:
-        source_kind = last_step.source_kind
-
-    source_kind_str = source_kind.value if source_kind else "unknown"
-    badge = format_source_kind_badge(source_kind_str)
-
-    # Source and value
-    source_name = escape_rich_markup(source_kind_str)
-    lines.append(f"{prefix}{badge} [bold]Source:[/bold] {source_name}")
-
-    # Show key details based on source kind
-    if last_step and source_kind:
-        if source_kind == SourceKind.CONSTANT:
-            val = escape_rich_markup(str(last_step.constant_value or "unknown"))
-            if last_step.constant_name:
-                name = escape_rich_markup(last_step.constant_name)
-                lines.append(f"{prefix}   Value: `{name}` = `{val}`")
-            else:
-                lines.append(f"{prefix}   Value: `{val}`")
-
-        elif source_kind == SourceKind.CONFIG_FILE:
-            cfg = escape_rich_markup(last_step.config_file or "unknown")
-            lines.append(f"{prefix}   Config: `{cfg}`")
-            if last_step.config_key:
-                key = escape_rich_markup(last_step.config_key)
-                lines.append(f"{prefix}   Key: `{key}`")
-
-        elif source_kind == SourceKind.EXTERNAL_CALL:
-            func = escape_rich_markup(last_step.external_function or "unknown")
-            param = escape_rich_markup(last_step.parameter_name or "unknown")
-            lines.append(f"{prefix}   External: `{func}` parameter `{param}`")
-
-        elif source_kind == SourceKind.COMMAND_LINE_ARG:
-            if last_step.arg_name:
-                arg = escape_rich_markup(last_step.arg_name)
-                lines.append(f"{prefix}   Argument: `{arg}`")
-
-    # Resolution status for this trace
-    if trace.resolving_status:
-        res_badge = format_trace_resolution_badge(trace.resolving_status)
-        lines.append(f"{prefix}   Resolution: {res_badge}")
-
-        if trace.outcome:
-            emoji = "✅" if "pass" in trace.outcome.lower() else "❌"
-            lines.append(f"{prefix}   Outcome: {emoji} {trace.outcome}")
-        elif trace.resolution_reason:
-            reason = escape_rich_markup(trace.resolution_reason)
-            lines.append(f"{prefix}   Reason: {reason}")
-
-    return "\n".join(lines)
-
-
-def format_continuation(continuation: TraceContinuation, prefix: str = "") -> str:
-    """Format a trace continuation (cross-binary, config, etc.).
-
-    Args:
-        continuation: TraceContinuation with traces and resolution
-        prefix: Indentation prefix
-
-    Returns:
-        Formatted continuation string with Rich markup
-    """
-    lines = []
-
-    # Continuation type badge
-    type_badges = {
-        ContinuationType.CROSS_BINARY: "📁",
-        ContinuationType.CONFIG_FILE: "📄",
-        ContinuationType.SCRIPT: "📜",
-        ContinuationType.ENVIRONMENT: "🌐",
-    }
-    type_badge = type_badges.get(continuation.type, "•")
-    type_name = continuation.type.value.replace("_", " ").title()
-
-    source_path = escape_rich_markup(continuation.source_path)
-    lines.append(f"{prefix}{type_badge} [bold]{type_name}:[/bold] `{source_path}`")
-
-    # Resolved value
-    if continuation.resolved_value:
-        val = escape_rich_markup(continuation.resolved_value)
-        source_kind_str = continuation.resolved_source_kind.value if continuation.resolved_source_kind else "unknown"
-        source_badge = format_source_kind_badge(source_kind_str)
-        lines.append(f"{prefix}   {source_badge} [green]Resolved:[/green] `{val}`")
-
-    # Config values
-    if continuation.config_values:
-        for key, value in continuation.config_values.items():
-            k = escape_rich_markup(key)
-            v = escape_rich_markup(value)
-            lines.append(f"{prefix}   📄 Config value: `{k}` = `{v}`")
-
-    # Traces within this continuation
-    if continuation.traces:
-        for trace in continuation.traces:
-            last_step = trace.trace_path[-1] if trace.trace_path else None
-            source_kind = None
-            if last_step and last_step.step_type == TraceStepType.TRACE_END:
-                source_kind = last_step.source_kind
-
-            source_kind_str = source_kind.value if source_kind else "unknown"
-            badge = format_source_kind_badge(source_kind_str)
-
-            # Brief trace info
-            if source_kind == SourceKind.CONSTANT and last_step:
-                val = escape_rich_markup(str(last_step.constant_value or "?"))
-                lines.append(f"{prefix}   {badge} Constant: `{val}`")
-            elif source_kind == SourceKind.CONFIG_FILE and last_step:
-                cfg = escape_rich_markup(last_step.config_file or "?")
-                lines.append(f"{prefix}   {badge} From config: `{cfg}`")
-            else:
-                lines.append(f"{prefix}   {badge} Source: {source_kind_str}")
-
-    # Sub-continuations (for multi-level chains)
-    if continuation.sub_continuations:
-        for sub_cont in continuation.sub_continuations:
-            sub_text = format_continuation(sub_cont, prefix=prefix + "  ")
-            lines.append(sub_text)
-
-    return "\n".join(lines)
 
 
 # ============================================================================

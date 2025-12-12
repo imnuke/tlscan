@@ -38,6 +38,7 @@ from conn_analyzer.agents.factory import AgentFactory
 from conn_analyzer.graph.state import create_initial_state
 from conn_analyzer.graph.workflow import create_analysis_graph, run_analysis
 from conn_analyzer.graph.report_formatter import format_and_display_report
+from conn_analyzer.utils.state_logging import display_final_state
 
 from conn_analyzer.static_analysis import firmware_tools
 
@@ -357,6 +358,9 @@ async def main(
             border_style="green"
         ))
         console.print()
+
+        # Debug: Display full state before report
+        display_final_state(final_state, output_console=console)
 
         # Display report using Rich widgets
         report_data = final_state.get("report_data")
