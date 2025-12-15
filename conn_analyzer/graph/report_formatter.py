@@ -24,6 +24,7 @@ from conn_analyzer.graph.models import (
     TraceStepType,
     SourceKind,
 )
+from conn_analyzer.utils.formatting import format_duration
 
 
 # ============================================================================
@@ -92,8 +93,12 @@ def format_and_display_report(console: Console, report_data: Dict[str, Any]) -> 
         console: Rich Console instance for output
         report_data: Structured report data from synthesis_node
     """
-    # 1. Display summary statistics
-    display_summary(console, report_data["summary_stats"])
+    # 1. Display summary statistics (including agent performance if available)
+    display_summary(
+        console,
+        report_data["summary_stats"],
+        statistics=report_data.get("statistics")
+    )
     console.print()
 
     # 2. Display analysis context
@@ -127,8 +132,8 @@ def format_and_display_report(console: Console, report_data: Dict[str, Any]) -> 
 # Summary Section
 # ============================================================================
 
-def display_summary(console: Console, stats: Dict[str, int]) -> None:
-    """Display summary statistics table."""
+def display_summary(console: Console, stats: Dict[str, int], statistics: Dict[str, Any] = None) -> None:
+    """Display summary statistics table including agent performance metrics."""
     table = Table(
         show_header=True,
         header_style="bold cyan",
@@ -148,9 +153,95 @@ def display_summary(console: Console, stats: Dict[str, int]) -> None:
     table.add_row("Variables Traced", str(stats.get("trace_count", 0)))
     table.add_row("Cross-Binary Traces", str(stats.get("cross_binary_count", 0)))
 
+    # Add dependency counts section if statistics available
+    if statistics:
+        table.add_section()
+        config_deps = statistics.get("config_dependency_count", 0)
+        script_deps = statistics.get("script_dependency_count", 0)
+        cross_binary_deps = statistics.get("cross_binary_dependency_count", 0)
+
+        table.add_row("Config Dependencies", str(config_deps))
+        table.add_row("Script Dependencies", str(script_deps))
+        table.add_row("Cross-Binary Dependencies", str(cross_binary_deps))
+
     console.print(Panel(
         table,
         title="[bold]📊 Analysis Summary[/bold]",
+        border_style="cyan",
+        padding=(1, 2)
+    ))
+
+    # Display Agent Performance table if statistics available
+    if statistics:
+        _display_agent_performance(console, statistics)
+
+
+def _display_agent_performance(console: Console, statistics: Dict[str, Any]) -> None:
+    """Display agent performance metrics table."""
+    # Create multi-column table for agent performance
+    perf_table = Table(
+        show_header=True,
+        header_style="bold cyan",
+        box=box.SIMPLE_HEAVY,
+        padding=(0, 1),
+        title="🤖 Agent Performance",
+        title_style="bold cyan",
+    )
+
+    perf_table.add_column("Agent", style="cyan", no_wrap=True)
+    perf_table.add_column("Tokens", justify="right")
+    perf_table.add_column("Tool Calls", justify="right")
+    perf_table.add_column("Tool Tokens", justify="right")
+    perf_table.add_column("Time", justify="right")
+
+    # Agent definitions: (key, display_name, emoji)
+    agents = [
+        ("ssl_agent", "SSL Agent", "🔐"),
+        ("dataflow_agent", "Dataflow Agent", "🔍"),
+        ("firmware_agent", "Firmware Agent", "📂"),
+    ]
+
+    total_tokens = 0
+    total_tool_calls = 0
+    total_tool_tokens = 0
+    total_time = 0.0
+
+    for agent_key, agent_name, emoji in agents:
+        agent_stats = statistics.get(agent_key, {})
+        tokens = agent_stats.get("total_tokens", 0)
+        tool_calls = agent_stats.get("tool_call_count", 0)
+        tool_tokens = agent_stats.get("tool_result_tokens", 0)
+        time_sec = agent_stats.get("total_time_seconds", 0.0)
+
+        # Skip agents with no activity
+        if tokens == 0 and tool_calls == 0 and time_sec == 0:
+            continue
+
+        total_tokens += tokens
+        total_tool_calls += tool_calls
+        total_tool_tokens += tool_tokens
+        total_time += time_sec
+
+        perf_table.add_row(
+            f"{emoji} {agent_name}",
+            f"{tokens:,}",
+            str(tool_calls),
+            f"{tool_tokens:,}",
+            format_duration(time_sec),
+        )
+
+    # Add separator and total row
+    perf_table.add_section()
+    perf_table.add_row(
+        "[bold]Total[/bold]",
+        f"[bold]{total_tokens:,}[/bold]",
+        f"[bold]{total_tool_calls}[/bold]",
+        f"[bold]{total_tool_tokens:,}[/bold]",
+        f"[bold]{format_duration(total_time)}[/bold]",
+    )
+
+    console.print(Panel(
+        perf_table,
         border_style="cyan",
         padding=(1, 2)
     ))
