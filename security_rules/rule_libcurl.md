@@ -30,6 +30,31 @@
 
 **Example**: `curl_easy_setopt(handle, 64, 0)` means CURLOPT_SSL_VERIFYPEER is set to 0 (VULNERABLE - certificate verification disabled).
 
+## Result Determination Guide
+
+### When to use each result:
+
+| Scenario | Result | Example |
+|----------|--------|---------|
+| Option explicitly set to secure value | PASS | `curl_easy_setopt(curl, 81, 2)` |
+| Option NOT set, default is secure | PASS | CURLOPT_SSL_VERIFYHOST not called (default=2) |
+| Option explicitly set to insecure value | FAIL | `curl_easy_setopt(curl, 64, 0)` |
+| Option NOT set, default is insecure | FAIL | CURLOPT_SSLVERSION not set (default allows TLS 1.0) |
+| Option set to runtime variable | CONDITIONAL | `curl_easy_setopt(curl, 64, config_value)` |
+| Cannot find relevant code | UNDETERMINED | No curl_easy_setopt calls found |
+
+### CRITICAL: CONDITIONAL Usage Rules
+- CONDITIONAL requires a non-empty `conditions` array with traceable variables
+- Use CONDITIONAL ONLY when a security option's value comes from a runtime variable
+- Do NOT use CONDITIONAL to express cross-rule dependencies
+- If another rule's failure affects this rule's effectiveness, document in evidence
+
+### Cross-Rule Dependencies
+When one rule's failure affects another (e.g., VERIFYPEER=0 makes VERIFYHOST less meaningful):
+- Evaluate each rule INDEPENDENTLY based on its own criteria
+- Document the relationship in the `evidence` field
+- Example: "CURLOPT_SSL_VERIFYHOST uses secure default (2). Note: effectiveness depends on CURLOPT_SSL_VERIFYPEER being enabled."
+
 ## 1. SSL/TLS Usage Detection
 **Priority**: MUST
 **Description**: Verify that HTTPS/SSL is actually being used, not just available. Detect conditional usage or plaintext fallbacks.

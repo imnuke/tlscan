@@ -37,6 +37,17 @@ CRITICAL for conditions:
 - The dataflow agent will search for these exact variable names in the pseudocode
 - Example: If code shows "if (v20 != 0)", use variable="v20", NOT "verify_flag"
 
+RESULT TYPE RULES:
+- PASS: Option set to secure value, OR option not set and default is secure
+- FAIL: Option set to insecure value, OR option not set and default is insecure
+- CONDITIONAL: Option value is a RUNTIME VARIABLE that needs tracing
+  - MUST have non-empty conditions array with actual variable names
+  - Do NOT use for cross-rule dependencies or "effectively disabled" scenarios
+- UNDETERMINED: Cannot locate relevant code
+
+IMPORTANT: Evaluate each rule INDEPENDENTLY. If one rule's failure affects another's
+effectiveness, note it in evidence, do NOT use CONDITIONAL for this relationship.
+
 {'=' * 60}
 SECURITY RULES TO CHECK:
 {'=' * 60}
