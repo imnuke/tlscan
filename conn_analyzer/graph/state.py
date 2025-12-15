@@ -301,6 +301,93 @@ def update_trace_statuses(
 
 
 # ============================================================================
+# Statistics Schema
+# ============================================================================
+
+class AgentStatistics(TypedDict, total=False):
+    """Statistics for a single agent type."""
+
+    total_tokens: int
+    """Total tokens consumed (thinking + tool results)."""
+
+    thinking_tokens: int
+    """Tokens in AI thinking/content messages."""
+
+    tool_result_tokens: int
+    """Tokens in tool result messages."""
+
+    tool_call_count: int
+    """Number of tool calls made."""
+
+    total_time_seconds: float
+    """Total execution time in seconds."""
+
+    invocation_count: int
+    """How many times this agent was invoked."""
+
+
+class AnalysisStatistics(TypedDict, total=False):
+    """Comprehensive analysis statistics."""
+
+    # Per-agent type statistics
+    ssl_agent: AgentStatistics
+    """Statistics for SSL analysis agent."""
+
+    dataflow_agent: AgentStatistics
+    """Statistics for dataflow analysis agent."""
+
+    firmware_agent: AgentStatistics
+    """Statistics for firmware exploration agent."""
+
+    # Dependency counts
+    config_dependency_count: int
+    """Number of config file dependencies discovered."""
+
+    script_dependency_count: int
+    """Number of script dependencies discovered."""
+
+    cross_binary_dependency_count: int
+    """Number of cross-binary dependencies discovered."""
+
+    # Overall totals (computed from per-agent stats)
+    total_tokens: int
+    """Total tokens consumed across all agents."""
+
+    total_time_seconds: float
+    """Total execution time across all agents."""
+
+    total_tool_calls: int
+    """Total tool calls across all agents."""
+
+
+def create_empty_agent_statistics() -> AgentStatistics:
+    """Create an empty AgentStatistics dict with all fields initialized to zero."""
+    return AgentStatistics(
+        total_tokens=0,
+        thinking_tokens=0,
+        tool_result_tokens=0,
+        tool_call_count=0,
+        total_time_seconds=0.0,
+        invocation_count=0,
+    )
+
+
+def create_empty_statistics() -> AnalysisStatistics:
+    """Create an empty AnalysisStatistics dict with all fields initialized."""
+    return AnalysisStatistics(
+        ssl_agent=create_empty_agent_statistics(),
+        dataflow_agent=create_empty_agent_statistics(),
+        firmware_agent=create_empty_agent_statistics(),
+        config_dependency_count=0,
+        script_dependency_count=0,
+        cross_binary_dependency_count=0,
+        total_tokens=0,
+        total_time_seconds=0.0,
+        total_tool_calls=0,
+    )
+
+
+# ============================================================================
 # Main State Schema
 # ============================================================================
 
@@ -490,6 +577,18 @@ class AnalysisState(TypedDict, total=False):
     Non-critical errors are logged here instead of failing the entire analysis.
     """
 
+    # ========================================================================
+    # Statistics Tracking
+    # ========================================================================
+
+    statistics: AnalysisStatistics
+    """
+    Comprehensive analysis statistics for reporting.
+
+    Tracks tokens, tool calls, timing, and dependency counts per agent type.
+    Updated by each node and displayed in final summary.
+    """
+
 
 # ============================================================================
 # State Factory
@@ -543,5 +642,8 @@ def create_initial_state(
         report_data=None,
 
         # Errors
-        errors=[]
+        errors=[],
+
+        # Statistics
+        statistics=create_empty_statistics(),
     )

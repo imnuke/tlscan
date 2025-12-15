@@ -17,11 +17,15 @@ from langgraph.types import Send
 from conn_analyzer.graph.state import (
     AnalysisState,
     AnalysisPhase,
+    AgentStatistics,
+    AnalysisStatistics,
     create_trace_key,
     parse_condition_key,
     add_trace_to_graph,
     resolve_trace_tree,
     update_trace_statuses,
+    create_empty_agent_statistics,
+    create_empty_statistics,
 )
 from conn_analyzer.graph.models import (
     RuleResultStatus,
@@ -42,7 +46,12 @@ from conn_analyzer.graph.models import (
 )
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
 from conn_analyzer.agents.factory import AgentFactory
-from conn_analyzer.agents.core.execution import stream_and_log_agent
+from conn_analyzer.agents.core.execution import (
+    stream_and_log_agent,
+    AgentMetrics,
+    create_empty_metrics,
+    add_metrics,
+)
 from conn_analyzer.utils.state_logging import (
     log_agent_state,
     log_agent_state_diff,
@@ -52,6 +61,49 @@ from conn_analyzer.utils.state_logging import (
 from rich.console import Console
 
 console = Console()
+
+
+# ============================================================================
+# Statistics Helpers
+# ============================================================================
+
+def update_agent_statistics(
+    state: AnalysisState,
+    agent_type: str,
+    metrics: AgentMetrics,
+) -> AnalysisStatistics:
+    """Update statistics for a specific agent type with new metrics.
+
+    Args:
+        state: Current analysis state
+        agent_type: One of 'ssl_agent', 'dataflow_agent', 'firmware_agent'
+        metrics: AgentMetrics from the agent execution
+
+    Returns:
+        Updated AnalysisStatistics dict
+    """
+    # Get existing statistics or create empty
+    stats = dict(state.get("statistics", create_empty_statistics()))
+
+    # Get existing agent stats or create empty
+    agent_stats = dict(stats.get(agent_type, create_empty_agent_statistics()))
+
+    # Update agent statistics
+    agent_stats["total_tokens"] = agent_stats.get("total_tokens", 0) + metrics["thinking_tokens"] + metrics["tool_result_tokens"]
+    agent_stats["thinking_tokens"] = agent_stats.get("thinking_tokens", 0) + metrics["thinking_tokens"]
+    agent_stats["tool_result_tokens"] = agent_stats.get("tool_result_tokens", 0) + metrics["tool_result_tokens"]
+    agent_stats["tool_call_count"] = agent_stats.get("tool_call_count", 0) + metrics["tool_call_count"]
+    agent_stats["total_time_seconds"] = agent_stats.get("total_time_seconds", 0.0) + metrics["elapsed_seconds"]
+    agent_stats["invocation_count"] = agent_stats.get("invocation_count", 0) + 1
+
+    stats[agent_type] = agent_stats
+
+    # Update totals
+    stats["total_tokens"] = stats.get("total_tokens", 0) + metrics["thinking_tokens"] + metrics["tool_result_tokens"]
+    stats["total_tool_calls"] = stats.get("total_tool_calls", 0) + metrics["tool_call_count"]
+    stats["total_time_seconds"] = stats.get("total_time_seconds", 0.0) + metrics["elapsed_seconds"]
+
+    return stats
 
 
 # ============================================================================
@@ -103,13 +155,16 @@ async def ssl_analysis_node(
     # Execute SSL agent
     messages = [HumanMessage(content=f"Analyze SSL/TLS security for binary: {binary_path}")]
 
-    result: SSLAnalysisOutput = await stream_and_log_agent(
+    result, metrics = await stream_and_log_agent(
         agent=ssl_agent,
         messages=messages,
         agent_name="SSL Agent",
         agent_emoji="🔐",
         output_model=SSLAnalysisOutput
     )
+
+    # Update statistics with SSL agent metrics
+    updated_statistics = update_agent_statistics(state, "ssl_agent", metrics)
 
     # Check if SSL/TLS analysis is applicable
     if not result.applicable:
@@ -119,6 +174,7 @@ async def ssl_analysis_node(
             "ssl_summary": result.reason or "No SSL/TLS client code detected",
             "current_phase": AnalysisPhase.COMPLETED,
             "final_report": result.summary,
+            "statistics": updated_statistics,
         }
         # Log state after agent execution with changes
         log_agent_state("SSL Agent", state, changes=state_update)
@@ -168,6 +224,7 @@ async def ssl_analysis_node(
         "applicable": True,
         "pending_dataflow_tasks": pending_dataflow_tasks,
         "current_phase": AnalysisPhase.DATAFLOW_ANALYSIS if pending_dataflow_tasks else AnalysisPhase.SYNTHESIS,
+        "statistics": updated_statistics,
     }
 
     # Log state after agent execution with changes
@@ -285,7 +342,7 @@ async def execute_single_dataflow_task(
     static_engine: StaticAnalysisEngine,
     agent_factory: AgentFactory,
     firmware_tools: List[any],
-) -> DataflowAnalysisOutput:
+) -> tuple[DataflowAnalysisOutput, AgentMetrics]:
     """Execute dataflow analysis for a single task.
 
     Extracts common logic shared by dataflow_analysis_node and
@@ -298,7 +355,7 @@ async def execute_single_dataflow_task(
         firmware_tools: Firmware tools for script analysis
 
     Returns:
-        DataflowAnalysisOutput with traced variables
+        Tuple of (DataflowAnalysisOutput, AgentMetrics)
 
     Raises:
         Exception: If agent execution fails
@@ -344,7 +401,7 @@ async def execute_single_dataflow_task(
     messages = [HumanMessage(content=request)]
 
     # Execute dataflow agent
-    result: DataflowAnalysisOutput = await stream_and_log_agent(
+    result, metrics = await stream_and_log_agent(
         agent=agent,
         messages=messages,
         agent_name=f"Dataflow ({target.split('/')[-1] if '/' in target else target})",
@@ -352,7 +409,7 @@ async def execute_single_dataflow_task(
         output_model=DataflowAnalysisOutput
     )
 
-    return result
+    return (result, metrics)
 
 
 # ============================================================================
@@ -432,6 +489,9 @@ async def dataflow_analysis_node(
     new_dataflow_tasks: List[DataflowTask] = []
     config_fetch_tasks: List[ConfigFetchTask] = []
 
+    # Accumulate metrics across all tasks
+    accumulated_metrics = create_empty_metrics()
+
     total_tasks = len(pending_tasks)
 
     for task_idx, task in enumerate(pending_tasks):
@@ -448,12 +508,14 @@ async def dataflow_analysis_node(
 
         # Execute dataflow analysis for this task using shared helper
         try:
-            result: DataflowAnalysisOutput = await execute_single_dataflow_task(
+            result, metrics = await execute_single_dataflow_task(
                 task=task,
                 static_engine=static_engine,
                 agent_factory=agent_factory,
                 firmware_tools=firmware_tools,
             )
+            # Accumulate metrics
+            accumulated_metrics = add_metrics(accumulated_metrics, metrics)
         except Exception as e:
             console.print(f"[red]✗ Error processing task: {e}[/red]")
             continue
@@ -587,12 +649,16 @@ async def dataflow_analysis_node(
     else:
         next_phase = AnalysisPhase.SYNTHESIS
 
+    # Update statistics with accumulated dataflow agent metrics
+    updated_statistics = update_agent_statistics(state, "dataflow_agent", accumulated_metrics)
+
     state_update = {
         "traces": traces,
         "rule_trace_links": rule_trace_links,
         "pending_dataflow_tasks": new_dataflow_tasks,
         "pending_config_fetch_tasks": config_fetch_tasks,
         "current_phase": next_phase,
+        "statistics": updated_statistics,
     }
 
     return state_update
@@ -606,7 +672,7 @@ async def _process_caller_discovery(
     caller_discovery_tasks: List[DataflowTask],
     firmware_agent,
     pending_tasks: List[DataflowTask],
-) -> tuple[List[DataflowTask], str]:
+) -> tuple[List[DataflowTask], str, AgentMetrics]:
     """Process caller discovery tasks and return new cross-binary tasks.
 
     Args:
@@ -615,7 +681,7 @@ async def _process_caller_discovery(
         pending_tasks: All pending tasks
 
     Returns:
-        Tuple of (remaining_tasks_with_cross_binary_tasks, firmware_details)
+        Tuple of (remaining_tasks_with_cross_binary_tasks, firmware_details, metrics)
     """
     # Extract all unique function names from all discovery tasks (deduplicate)
     function_names = list(dict.fromkeys(task.target for task in caller_discovery_tasks))
@@ -634,7 +700,7 @@ async def _process_caller_discovery(
         )
     messages = [HumanMessage(content=request)]
 
-    result: FirmwareSearchResult = await stream_and_log_agent(
+    result, metrics = await stream_and_log_agent(
         agent=firmware_agent,
         messages=messages,
         agent_name="Firmware Agent",
@@ -726,17 +792,17 @@ async def _process_caller_discovery(
             )
             remaining_tasks.append(binary_task)
 
-        return remaining_tasks, result.details
+        return remaining_tasks, result.details, metrics
     else:
         console.print(f"[yellow]⚠ No caller binaries found for function(s): {', '.join(function_names)}[/yellow]")
-        return remaining_tasks, result.details
+        return remaining_tasks, result.details, metrics
 
 
 async def _process_script_discovery(
     script_discovery_tasks: List[DataflowTask],
     firmware_agent,
     pending_tasks: List[DataflowTask],
-) -> tuple[List[DataflowTask], Optional[List[str]], str]:
+) -> tuple[List[DataflowTask], Optional[List[str]], str, AgentMetrics]:
     """Process script discovery tasks to find startup scripts.
 
     Args:
@@ -745,7 +811,7 @@ async def _process_script_discovery(
         pending_tasks: All pending tasks
 
     Returns:
-        Tuple of (remaining_tasks, script_findings, firmware_details)
+        Tuple of (remaining_tasks, script_findings, firmware_details, metrics)
     """
     # Process first task
     task = script_discovery_tasks[0]
@@ -758,7 +824,7 @@ async def _process_script_discovery(
     request = f"Find all startup scripts and binaries in firmware that invoke the binary: {binary_target}\n\n{context}"
     messages = [HumanMessage(content=request)]
 
-    result: FirmwareSearchResult = await stream_and_log_agent(
+    result, metrics = await stream_and_log_agent(
         agent=firmware_agent,
         messages=messages,
         agent_name="Firmware Agent",
@@ -772,10 +838,10 @@ async def _process_script_discovery(
     if result.found and result.executables:
         console.print(f"[green]✓ Found {len(result.executables)} startup scripts/binaries[/green]")
         # For now, just report the findings (future: could parse scripts to extract CLI args)
-        return remaining_tasks, result.executables, result.details
+        return remaining_tasks, result.executables, result.details, metrics
     else:
         console.print(f"[yellow]⚠ No startup scripts found for {binary_target}[/yellow]")
-        return remaining_tasks, None, result.details
+        return remaining_tasks, None, result.details, metrics
 
 
 async def _process_config_fetch(
@@ -783,7 +849,7 @@ async def _process_config_fetch(
     firmware_agent,
     traces: Dict[str, VariableTrace],
     rule_trace_links: Dict[str, RuleTraceLink],
-) -> tuple[Dict[str, VariableTrace], Dict[str, RuleTraceLink], str]:
+) -> tuple[Dict[str, VariableTrace], Dict[str, RuleTraceLink], str, AgentMetrics]:
     """Process config fetch tasks and update unified trace graph.
 
     Args:
@@ -793,7 +859,7 @@ async def _process_config_fetch(
         rule_trace_links: Rule to trace links
 
     Returns:
-        Tuple of (updated_traces, updated_rule_trace_links, firmware_details)
+        Tuple of (updated_traces, updated_rule_trace_links, firmware_details, metrics)
     """
     console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
 
@@ -815,7 +881,7 @@ async def _process_config_fetch(
     )
     messages = [HumanMessage(content=request)]
 
-    result: FirmwareSearchResult = await stream_and_log_agent(
+    result, metrics = await stream_and_log_agent(
         agent=firmware_agent,
         messages=messages,
         agent_name="Firmware Agent",
@@ -883,10 +949,10 @@ async def _process_config_fetch(
 
             console.print(f"[dim]    ✓ {task.variable} = {fetched_value or '(not found)'}[/dim]")
 
-        return traces, rule_trace_links, result.details
+        return traces, rule_trace_links, result.details, metrics
     else:
         console.print(f"[yellow]⚠ No config values found[/yellow]")
-        return traces, rule_trace_links, result.details
+        return traces, rule_trace_links, result.details, metrics
 
 
 # ============================================================================
@@ -953,6 +1019,14 @@ async def firmware_explore_node(
     errors = []
     details_parts = []
 
+    # Accumulate metrics across all firmware agent calls
+    accumulated_metrics = create_empty_metrics()
+
+    # Track dependency counts
+    caller_discovery_count = len(caller_discovery_tasks)
+    script_discovery_count = len(script_discovery_tasks)
+    config_fetch_count = len(config_fetch_tasks)
+
     # ========================================================================
     # Priority 1: Caller Discovery (Cross-Binary Analysis)
     # ========================================================================
@@ -964,11 +1038,12 @@ async def firmware_explore_node(
         )
 
         try:
-            remaining, details = await _process_caller_discovery(
+            remaining, details, metrics = await _process_caller_discovery(
                 caller_discovery_tasks, firmware_agent, pending_tasks
             )
             accumulated_update["pending_dataflow_tasks"] = remaining
             details_parts.append(details)
+            accumulated_metrics = add_metrics(accumulated_metrics, metrics)
 
             # Capture state AFTER caller discovery and log diff
             state_after = capture_state_snapshot(
@@ -992,13 +1067,14 @@ async def firmware_explore_node(
         )
 
         try:
-            remaining, script_findings, details = await _process_script_discovery(
+            remaining, script_findings, details, metrics = await _process_script_discovery(
                 script_discovery_tasks, firmware_agent,
                 accumulated_update["pending_dataflow_tasks"]
             )
             accumulated_update["pending_dataflow_tasks"] = remaining
             accumulated_update["script_findings"] = script_findings
             details_parts.append(details)
+            accumulated_metrics = add_metrics(accumulated_metrics, metrics)
 
             # Capture state AFTER script discovery and log diff
             state_after = capture_state_snapshot(
@@ -1016,7 +1092,7 @@ async def firmware_explore_node(
     # ========================================================================
     if config_fetch_tasks:
         try:
-            updated_traces, updated_links, details = await _process_config_fetch(
+            updated_traces, updated_links, details, metrics = await _process_config_fetch(
                 config_fetch_tasks,
                 firmware_agent,
                 accumulated_update["traces"],
@@ -1026,6 +1102,7 @@ async def firmware_explore_node(
             accumulated_update["rule_trace_links"] = updated_links
             accumulated_update["pending_config_fetch_tasks"] = []
             details_parts.append(details)
+            accumulated_metrics = add_metrics(accumulated_metrics, metrics)
 
         except Exception as e:
             errors.append(f"Config fetch failed: {e}")
@@ -1050,6 +1127,16 @@ async def firmware_explore_node(
             accumulated_update["current_phase"] = AnalysisPhase.FIRMWARE_EXPLORATION
     else:
         accumulated_update["current_phase"] = AnalysisPhase.SYNTHESIS
+
+    # Update statistics with accumulated firmware agent metrics
+    updated_statistics = update_agent_statistics(state, "firmware_agent", accumulated_metrics)
+
+    # Update dependency counts
+    updated_statistics["cross_binary_dependency_count"] = updated_statistics.get("cross_binary_dependency_count", 0) + caller_discovery_count
+    updated_statistics["script_dependency_count"] = updated_statistics.get("script_dependency_count", 0) + script_discovery_count
+    updated_statistics["config_dependency_count"] = updated_statistics.get("config_dependency_count", 0) + config_fetch_count
+
+    accumulated_update["statistics"] = updated_statistics
 
     # Per-agent state changes already logged after each helper function
     return accumulated_update
@@ -1097,6 +1184,9 @@ async def binary_analysis_sequential(
     config_fetch_tasks: List[ConfigFetchTask] = []
     new_dataflow_tasks: List[DataflowTask] = []
 
+    # Accumulate metrics across all cross-binary tasks (these are dataflow agent calls)
+    accumulated_metrics = create_empty_metrics()
+
     # Unified trace graph
     traces: Dict[str, VariableTrace] = dict(state.get("traces", {}))
     rule_trace_links: Dict[str, RuleTraceLink] = dict(state.get("rule_trace_links", {}))
@@ -1113,12 +1203,14 @@ async def binary_analysis_sequential(
 
         try:
             # Execute dataflow analysis using shared helper
-            result: DataflowAnalysisOutput = await execute_single_dataflow_task(
+            result, metrics = await execute_single_dataflow_task(
                 task=task,
                 static_engine=static_engine,
                 agent_factory=agent_factory,
                 firmware_tools=[],  # Cross-binary tasks are always BINARY type, no firmware tools needed
             )
+            # Accumulate metrics
+            accumulated_metrics = add_metrics(accumulated_metrics, metrics)
 
             # Process traces
             for trace in result.traces:
@@ -1219,12 +1311,19 @@ async def binary_analysis_sequential(
     else:
         next_phase = AnalysisPhase.SYNTHESIS
 
+    # Update statistics with accumulated dataflow agent metrics (cross-binary uses dataflow agent)
+    updated_statistics = update_agent_statistics(state, "dataflow_agent", accumulated_metrics)
+
+    # Update cross-binary dependency count
+    updated_statistics["cross_binary_dependency_count"] = updated_statistics.get("cross_binary_dependency_count", 0) + len(cross_binary_tasks)
+
     state_update = {
         "traces": traces,
         "rule_trace_links": rule_trace_links,
         "pending_dataflow_tasks": new_dataflow_tasks,
         "pending_config_fetch_tasks": config_fetch_tasks,
         "current_phase": next_phase,
+        "statistics": updated_statistics,
     }
 
     return state_update
@@ -1440,9 +1539,13 @@ async def synthesis_node(
     console.print(f"[dim]  Traces: {len(traces)} ({main_binary_count} main, {cross_binary_count} cross-binary, {config_count} config)[/dim]")
     console.print("[green]✓ Report data prepared[/green]")
 
+    # Get accumulated statistics
+    statistics = state.get("statistics", create_empty_statistics())
+
     return {
         "report_data": {
             "summary_stats": stats,
+            "statistics": statistics,  # Add statistics for Agent Performance display
             "context": {
                 "binary_path": state.get("binary_path"),
                 "client_type": client_type,

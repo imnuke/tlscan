@@ -6,6 +6,7 @@ Provides streaming execution and logging for agents.
 
 import time
 import json
+from typing import TypedDict, Tuple, Any
 from rich.console import Console
 from rich.panel import Panel
 
@@ -16,6 +17,46 @@ import conn_analyzer.agents.core.middleware as middleware_module
 
 # Initialize console
 console = Console()
+
+
+# ============================================================================
+# Metrics Types
+# ============================================================================
+
+class AgentMetrics(TypedDict):
+    """Metrics from a single agent invocation."""
+
+    thinking_tokens: int
+    """Tokens in AI thinking/content messages."""
+
+    tool_result_tokens: int
+    """Tokens in tool result messages."""
+
+    tool_call_count: int
+    """Number of tool calls made."""
+
+    elapsed_seconds: float
+    """Total execution time in seconds."""
+
+
+def create_empty_metrics() -> AgentMetrics:
+    """Create an empty AgentMetrics dict with all fields initialized to zero."""
+    return AgentMetrics(
+        thinking_tokens=0,
+        tool_result_tokens=0,
+        tool_call_count=0,
+        elapsed_seconds=0.0,
+    )
+
+
+def add_metrics(base: AgentMetrics, addition: AgentMetrics) -> AgentMetrics:
+    """Add two AgentMetrics together."""
+    return AgentMetrics(
+        thinking_tokens=base["thinking_tokens"] + addition["thinking_tokens"],
+        tool_result_tokens=base["tool_result_tokens"] + addition["tool_result_tokens"],
+        tool_call_count=base["tool_call_count"] + addition["tool_call_count"],
+        elapsed_seconds=base["elapsed_seconds"] + addition["elapsed_seconds"],
+    )
 
 
 def _normalize_enum_values(data):
@@ -36,7 +77,7 @@ def _normalize_enum_values(data):
         return data
 
 
-async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None, output_model=None):
+async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None, output_model=None) -> Tuple[Any, AgentMetrics]:
     """
     Stream an agent's execution and log all intermediate steps.
 
@@ -49,7 +90,9 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
         output_model: Optional Pydantic model class to parse the output into
 
     Returns:
-        The final AI message content (string) or parsed Pydantic model if output_model is provided
+        Tuple of (output, metrics) where:
+        - output: The final AI message content (string) or parsed Pydantic model if output_model is provided
+        - metrics: AgentMetrics with token counts, tool calls, and timing
     """
     # Print agent header
     console.print()
@@ -60,6 +103,9 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
     console.print()
 
     start_time = time.perf_counter()
+
+    # Initialize metrics tracking
+    metrics = create_empty_metrics()
 
     # Prune message history if it's getting long to save context
     # if len(messages) > 10:
@@ -94,6 +140,7 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                     # Print AI message content if present
                     if hasattr(last_message, "content") and last_message.content and last_message.content.strip():
                         thinking_tokens = count_tokens(last_message.content)
+                        metrics["thinking_tokens"] += thinking_tokens  # Track thinking tokens
                         console.print(f"[bold blue]💭 {agent_name} THINKING - {format_token_count(thinking_tokens)} tokens:[/bold blue]")
                         md = create_markdown(last_message.content)
                         console.print(md)
@@ -101,6 +148,7 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
 
                     # Print tool calls with counter
                     total_calls = len(last_message.tool_calls)
+                    metrics["tool_call_count"] += total_calls  # Track tool call count
                     console.print(f"[bold magenta]🔧 {agent_name} TOOL CALLS ({total_calls}):[/bold magenta]")
                     for i, tool_call in enumerate(last_message.tool_calls, start=1):
                         console.print(f"  • [cyan]Tool Call {i}/{total_calls}: {tool_call['name']}[/cyan]")
@@ -124,6 +172,10 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
 
                 # Check if it's a tool message (result)
                 elif hasattr(last_message, "type") and last_message.type == "tool":
+                    # Count tokens in tool result (even for errors)
+                    tool_tokens = count_tokens(last_message.content)
+                    metrics["tool_result_tokens"] += tool_tokens  # Track tool result tokens
+
                     # Check if it's an error result
                     if hasattr(last_message, "status") and last_message.status == "error":
                         console.print(f"[bold yellow]⚠️  {agent_name} TOOL ERROR ({last_message.name}):[/bold yellow]")
@@ -131,8 +183,6 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                         escaped_error = last_message.content.replace("[", r"\[").replace("]", r"\]")
                         console.print(f"  [yellow]{escaped_error}[/yellow]")
                     else:
-                        # Count tokens in tool result
-                        tool_tokens = count_tokens(last_message.content)
                         console.print(f"[bold green]📊 {agent_name} TOOL RESULT ([cyan]{last_message.name}[/cyan]) - {format_token_count(tool_tokens)} tokens:[/bold green]")
                         content_preview = last_message.content[:500] if len(last_message.content) > 500 else last_message.content
                         # Escape square brackets to prevent Rich markup parsing errors
@@ -144,6 +194,7 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                 elif hasattr(last_message, "type") and last_message.type == "ai":
                     if hasattr(last_message, "content") and last_message.content and last_message.content.strip():
                         thinking_tokens = count_tokens(last_message.content)
+                        metrics["thinking_tokens"] += thinking_tokens  # Track thinking tokens
                         console.print(f"[bold blue]💭 {agent_name} THINKING - {format_token_count(thinking_tokens)} tokens:[/bold blue]")
                         md = create_markdown(last_message.content)
                         console.print(md)
@@ -186,6 +237,7 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
             processed_message_count = len(chunk["messages"])
 
     elapsed = time.perf_counter() - start_time
+    metrics["elapsed_seconds"] = elapsed  # Track elapsed time
     console.print(Panel.fit(
         f"[bold green]✓ {agent_name} Complete ({format_duration(elapsed)})[/bold green]",
         border_style="green"
@@ -211,10 +263,10 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
             # Normalize status values to lowercase for enum compatibility
             data = _normalize_enum_values(data)
 
-            return output_model(**data)
+            return (output_model(**data), metrics)
         except Exception as e:
             console.print(f"[yellow]⚠️ Failed to parse output into {output_model.__name__}: {e}[/yellow]")
             console.print(f"[dim]Raw output: {final_content[:500]}...[/dim]")
             raise ValueError(f"Failed to parse agent output into {output_model.__name__}: {e}")
 
-    return final_content
+    return (final_content, metrics)
