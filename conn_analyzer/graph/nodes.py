@@ -27,6 +27,7 @@ from conn_analyzer.graph.state import (
     create_empty_agent_statistics,
     create_empty_statistics,
 )
+from conn_analyzer.utils.binary_utils import FileType
 from conn_analyzer.graph.models import (
     RuleResultStatus,
     TraceResolvingStatus,
@@ -118,7 +119,7 @@ async def ssl_analysis_node(
     """Execute SSL security analysis - runs ONCE.
 
     This node:
-    1. Gets IDA tools from Static Analysis Engine
+    1. Gets appropriate tools based on file type (IDA for binaries, script tools for scripts)
     2. Creates SSL agent with structured output
     3. Calls agent to analyze SSL/TLS security
     4. Processes structured output (SSLAnalysisOutput)
@@ -132,7 +133,7 @@ async def ssl_analysis_node(
 
     Args:
         state: Current analysis state
-        static_engine: Static Analysis Engine for IDA tools
+        static_engine: Static Analysis Engine for IDA/script tools
         agent_factory: Agent factory for creating SSL agent
 
     Returns:
@@ -140,11 +141,16 @@ async def ssl_analysis_node(
     """
     binary_path = state["binary_path"]
     security_rules = state["security_rules"]
+    file_type = state.get("file_type", FileType.ELF_BINARY)
 
-    console.print(f"[cyan]🔐 Running SSL analysis on: {binary_path}[/cyan]")
-
-    # Get IDA tools from Static Analysis Engine
-    tools = await static_engine.get_tools(binary_path)
+    if file_type == FileType.ELF_BINARY:
+        console.print(f"[cyan]🔐 Running SSL analysis on binary: {binary_path}[/cyan]")
+        # Get IDA tools from Static Analysis Engine
+        tools = await static_engine.get_tools(binary_path)
+    else:
+        console.print(f"[cyan]🔐 Running SSL analysis on script ({file_type.value}): {binary_path}[/cyan]")
+        # Get script tools for script analysis
+        tools = static_engine.get_script_tools(binary_path)
 
     # Create SSL agent with structured output
     ssl_agent = agent_factory.create_ssl_agent(
@@ -153,7 +159,7 @@ async def ssl_analysis_node(
     )
 
     # Execute SSL agent
-    messages = [HumanMessage(content=f"Analyze SSL/TLS security for binary: {binary_path}")]
+    messages = [HumanMessage(content=f"Analyze SSL/TLS security for program: {binary_path}")]
 
     result, metrics = await stream_and_log_agent(
         agent=ssl_agent,
@@ -342,6 +348,7 @@ async def execute_single_dataflow_task(
     static_engine: StaticAnalysisEngine,
     agent_factory: AgentFactory,
     firmware_tools: List[any],
+    file_type: FileType = FileType.ELF_BINARY,
 ) -> tuple[DataflowAnalysisOutput, AgentMetrics]:
     """Execute dataflow analysis for a single task.
 
@@ -350,9 +357,10 @@ async def execute_single_dataflow_task(
 
     Args:
         task: DataflowTask to process
-        static_engine: Static Analysis Engine for IDA tools
+        static_engine: Static Analysis Engine for IDA/script tools
         agent_factory: Agent factory for creating dataflow agent
         firmware_tools: Firmware tools for script analysis
+        file_type: File type of the main file being analyzed
 
     Returns:
         Tuple of (DataflowAnalysisOutput, AgentMetrics)
@@ -365,12 +373,18 @@ async def execute_single_dataflow_task(
     variables = task.variables
     context = task.context or ""
 
-    # Get appropriate tools based on task type
+    # Get appropriate tools based on task type and file type
     if task_type == TaskType.BINARY:
-        tools = await static_engine.get_tools(target)
+        # For BINARY tasks, check if we're analyzing a script or actual binary
+        if file_type != FileType.ELF_BINARY:
+            # Script analysis - use script tools
+            tools = static_engine.get_script_tools(target)
+        else:
+            # Binary analysis - use IDA tools
+            tools = await static_engine.get_tools(target)
         agent = agent_factory.create_dataflow_agent(tools=tools)
     elif task_type == TaskType.SCRIPT:
-        # For scripts, dataflow agent uses firmware tools to read script
+        # For SCRIPT tasks, use firmware tools to read script
         agent = agent_factory.create_dataflow_agent(tools=firmware_tools)
     else:
         raise ValueError(f"Unknown task type: {task_type}")
@@ -482,6 +496,9 @@ async def dataflow_analysis_node(
 
     console.print(f"[cyan]🔍 Running dataflow analysis: {len(pending_tasks)} tasks[/cyan]")
 
+    # Get file type from state
+    file_type = state.get("file_type", FileType.ELF_BINARY)
+
     # Unified trace graph
     traces: Dict[str, VariableTrace] = dict(state.get("traces", {}))
     rule_trace_links: Dict[str, RuleTraceLink] = dict(state.get("rule_trace_links", {}))
@@ -513,6 +530,7 @@ async def dataflow_analysis_node(
                 static_engine=static_engine,
                 agent_factory=agent_factory,
                 firmware_tools=firmware_tools,
+                file_type=file_type,
             )
             # Accumulate metrics
             accumulated_metrics = add_metrics(accumulated_metrics, metrics)
@@ -1203,11 +1221,13 @@ async def binary_analysis_sequential(
 
         try:
             # Execute dataflow analysis using shared helper
+            # Cross-binary analysis is for binaries, so file_type is ELF_BINARY
             result, metrics = await execute_single_dataflow_task(
                 task=task,
                 static_engine=static_engine,
                 agent_factory=agent_factory,
                 firmware_tools=[],  # Cross-binary tasks are always BINARY type, no firmware tools needed
+                file_type=FileType.ELF_BINARY,
             )
             # Accumulate metrics
             accumulated_metrics = add_metrics(accumulated_metrics, metrics)

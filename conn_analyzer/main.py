@@ -31,6 +31,7 @@ from conn_analyzer.utils.file_utils import (
     resolve_binary_path,
     load_security_rules,
 )
+from conn_analyzer.utils.binary_utils import detect_file_type, FileType
 from conn_analyzer.utils.formatting import format_duration
 from conn_analyzer.ida_integration.port_manager import PortManager
 from conn_analyzer.static_analysis.engine import StaticAnalysisEngine
@@ -193,7 +194,15 @@ async def main(
 
     # 2. Load config and resolve paths
     file_path = resolve_binary_path(file_path, firmware_path)
-    console.print(f"[cyan]📁 Analyzing binary:[/cyan] {file_path}")
+
+    # 2.5 Detect file type
+    file_type = detect_file_type(file_path)
+
+    if file_type == FileType.ELF_BINARY:
+        console.print(f"[cyan]📁 Analyzing binary:[/cyan] {file_path}")
+    else:
+        console.print(f"[cyan]📄 Analyzing script ({file_type.value}):[/cyan] {file_path}")
+
     console.print(f"[cyan]📚 Library rules:[/cyan] {rules}")
     if firmware_path:
         console.print(f"[cyan]🗂️  Firmware root:[/cyan] {firmware_path}")
@@ -262,10 +271,16 @@ async def main(
     console.print()
 
     try:
-        # 7. Pre-start MCP session for main binary
-        console.print(f"[cyan]🚀 Starting MCP session for:[/cyan] {file_path}")
-        await static_engine.get_tools(file_path)
-        console.print()
+        # 7. Pre-start MCP session for main binary (only for ELF binaries)
+        if file_type == FileType.ELF_BINARY:
+            console.print(f"[cyan]🚀 Starting MCP session for:[/cyan] {file_path}")
+            await static_engine.get_tools(file_path)
+            console.print()
+        else:
+            console.print(f"[cyan]📝 Script analysis mode - skipping IDA MCP server[/cyan]")
+            # Initialize script tools
+            static_engine.get_script_tools(file_path)
+            console.print()
 
         # 8. Prepare firmware tools (if firmware provided)
         firmware_tools_list = None
@@ -299,7 +314,8 @@ async def main(
         # 10. Create initial state
         initial_state = create_initial_state(
             binary_path=file_path,
-            security_rules=security_rules_content
+            security_rules=security_rules_content,
+            file_type=file_type,
         )
 
         # If fork_checkpoint_id is provided, use already-loaded state for forking

@@ -475,3 +475,24 @@ class StaticAnalysisEngine:
         """
         with self._lock:
             return list(self._sessions.keys())
+
+    def get_script_tools(self, script_path: str) -> List[any]:
+        """Get tools for script analysis (instead of IDA tools).
+
+        This method is used for non-binary files (shell scripts, PHP, etc.)
+        that don't need IDA Pro for analysis.
+
+        Args:
+            script_path: Path to the script file
+
+        Returns:
+            List of script analysis tools
+        """
+        from conn_analyzer.static_analysis import script_tools
+
+        # Normalize path
+        normalized_path = self._normalize_path(script_path)
+
+        # Set the script path and get tools
+        script_tools.set_script_path(normalized_path)
+        return script_tools.get_script_tools()

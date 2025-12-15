@@ -7,6 +7,7 @@ intermediate results.
 
 from enum import Enum
 from typing import TypedDict, Optional, Dict, List, Set, Tuple, Any
+from conn_analyzer.utils.binary_utils import FileType
 from conn_analyzer.graph.models import (
     RuleResult,
     VariableTrace,
@@ -408,13 +409,16 @@ class AnalysisState(TypedDict, total=False):
 
     # NOTE: is this field correctly used?
     binary_path: str
-    """Path to the current binary being analyzed."""
+    """Path to the current binary/script being analyzed."""
 
     main_binary_path: str
-    """Path to the original main binary (preserved during cross-binary analysis)."""
+    """Path to the original main binary/script (preserved during cross-binary analysis)."""
 
     security_rules: str
     """Security rules content (from security_rules/*.md files)."""
+
+    file_type: FileType
+    """Detected file type (elf_binary, shell_script, php_script, etc.)."""
 
     # ========================================================================
     # Workflow Control
@@ -596,14 +600,16 @@ class AnalysisState(TypedDict, total=False):
 
 def create_initial_state(
     binary_path: str,
-    security_rules: str
+    security_rules: str,
+    file_type: FileType = FileType.ELF_BINARY,
 ) -> AnalysisState:
     """
     Create initial state for analysis.
 
     Args:
-        binary_path: Path to binary to analyze
+        binary_path: Path to binary/script to analyze
         security_rules: Security rules content
+        file_type: Detected file type (default: ELF_BINARY for backward compatibility)
 
     Returns:
         Initial AnalysisState with all required fields initialized
@@ -613,6 +619,7 @@ def create_initial_state(
         binary_path=binary_path,
         main_binary_path=binary_path,
         security_rules=security_rules,
+        file_type=file_type,
 
         # Workflow control
         current_phase=AnalysisPhase.INITIAL_SSL_ANALYSIS,
