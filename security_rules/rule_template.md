@@ -111,6 +111,60 @@ from `metarule.md`.
 | < X.Y | [value] | INSECURE |
 | ≥ X.Y | [value] | SECURE |
 
+### Alternative Verification Patterns (if applicable)
+
+When the "standard" secure configuration is not used, document alternative
+patterns that are still secure:
+
+**[Alternative Pattern Name]**:
+When `[insecure mode]` is used, verification can still be secure if:
+1. `[function1]` is called and checked for [condition]
+2. `[function2]` is called and checked for [condition]
+
+**Correct Implementation**:
+\`\`\`c
+// Code example showing the complete secure pattern
+\`\`\`
+
+**Incorrect Implementation (Vulnerability)**:
+\`\`\`c
+// Code example showing common mistakes
+\`\`\`
+
+### Known Bugs and Quirks (if applicable)
+
+Document counterintuitive behaviors from library documentation:
+
+**[Bug/Quirk Name]**: `[function]` [description of unexpected behavior].
+This is documented in [man page section / issue tracker] but commonly overlooked.
+
+### Custom Callback Requirements (if applicable)
+
+If a custom verification callback is provided:
+
+**Secure Callback Requirements**:
+1. MUST check `[parameter]` for [condition]
+2. MUST return [value] on failure
+3. [Other requirements]
+
+**Insecure Callback Patterns**:
+\`\`\`c
+// Examples of callbacks that bypass security
+\`\`\`
+
+### Legacy API Patterns (if applicable)
+
+For [library] versions prior to [version], applications must use:
+
+**Legacy API Functions**:
+| Function | Purpose |
+|----------|---------|
+| `[old_function]` | [What it does] |
+
+**Common Vulnerabilities in Legacy Code**:
+1. [Vulnerability 1]
+2. [Vulnerability 2]
+
 **Detection Patterns**:
 - `[code pattern]` → PASS/FAIL ([reason])
 - `[code pattern]` → CONDITIONAL ([reason])
@@ -125,6 +179,8 @@ from `metarule.md`.
 | [Explicit secure configuration] | PASS | [Why it's secure] |
 | [Default when secure] | PASS | [Why default is secure] |
 | [Explicit insecure configuration] | FAIL | [Why it's insecure] |
+| [Alternative pattern with all checks] | PASS | Manual verification complete |
+| [Alternative pattern missing checks] | FAIL | [Which check is missing] |
 | [Value from variable/config] | CONDITIONAL | Trace variable |
 | [Version-dependent default] | CONDITIONAL | Depends on [library] version |
 | [Cannot determine] | UNDETERMINED | [Why undetermined] |
@@ -243,6 +299,59 @@ Document N/A rules in the Notes section of the Meta-Rule Mapping table.
 - Command-line flags (--insecure, --tlsv1.2)
 - Configuration file syntax
 - Environment variables
+
+### When to Document Alternative Verification Patterns
+
+Document alternative patterns when:
+
+1. **Disabled mode can be made secure**: If a "verification disabled" mode can still be secure with additional manual checks, document the complete sequence required
+2. **Multiple valid approaches exist**: When there are several correct ways to implement a security check
+3. **Manual verification is common**: When applications frequently implement manual verification instead of using built-in modes
+
+**What to Include**:
+- Complete function call sequence required for secure implementation
+- Code examples showing correct vs incorrect patterns
+- Common mistakes that appear correct but are vulnerable
+
+### When to Document Known Bugs and Quirks
+
+Document bugs/quirks when:
+
+1. **Function behavior is counterintuitive**: Document if a function's actual behavior differs from what developers typically expect
+2. **Edge cases affect security**: Document edge cases like "returns success even without a certificate"
+3. **Documentation mentions BUGS or NOTES**: Check library man pages and official documentation for known issues
+
+**Where to Find This Information**:
+- Library man pages (especially BUGS, NOTES, CAVEATS sections)
+- Official library documentation
+- Security advisories
+- Common vulnerability patterns in CVE databases
+
+### When to Document Legacy API Patterns
+
+Document legacy patterns when:
+
+1. **Modern API was introduced recently**: If the secure API is only available in recent versions
+2. **Legacy code is common**: If older patterns are still frequently found in production code
+3. **Manual implementation is error-prone**: If the legacy approach requires manual steps that are commonly implemented incorrectly
+
+**What to Include**:
+- Version when modern API was introduced
+- Legacy functions and their usage
+- Common vulnerabilities in legacy implementations (e.g., incorrect wildcard matching, missing SAN checks)
+
+### When to Document Custom Callback Requirements
+
+Document callback requirements when:
+
+1. **Library supports custom verification callbacks**: Many SSL libraries allow custom callback functions
+2. **Callbacks can bypass security**: If an improperly implemented callback can disable verification
+3. **Multiple parameters must be checked**: If secure callbacks must validate multiple conditions
+
+**What to Include**:
+- Parameters that MUST be checked
+- Return values for success vs failure
+- Examples of insecure callbacks (e.g., always returning success)
 
 ---
 

@@ -311,6 +311,62 @@ Implementations SHOULD include backup pins to prevent lockout.
 
 ---
 
+## Guidance for Library-Specific Rules
+
+When creating library-specific rules that implement these meta-rules, the following aspects MUST be considered and documented:
+
+### 1. Alternative Verification Patterns
+
+A meta-rule violation (e.g., "verification disabled") may still be secure if the library provides an alternative mechanism. Document ALL valid implementation patterns.
+
+If a "disabled" mode can be made secure with additional steps, document:
+1. The complete sequence of required function calls
+2. What makes the implementation secure vs insecure
+3. Common mistakes that appear correct but are vulnerable
+
+### 2. Known Library Bugs and Quirks
+
+Document known bugs, counterintuitive behaviors, or edge cases from library documentation (man pages, NOTES, BUGS sections).
+
+For each verification function, check:
+1. What happens when no certificate is provided?
+2. Are there known bugs that affect security?
+3. What are the edge cases where the function behaves unexpectedly?
+
+### 3. Custom Callback Requirements
+
+When libraries support custom verification callbacks, document what makes a callback secure:
+
+1. Required parameters that MUST be checked
+2. Expected return values for secure behavior
+3. Common insecure callback patterns (e.g., always returning success)
+
+### 4. Legacy API Patterns
+
+For libraries with long histories, document older API patterns still found in production code:
+
+1. When the modern API was introduced
+2. What older code uses instead
+3. Common vulnerabilities in legacy implementations
+
+### 5. Return Value Semantics
+
+Different libraries use different conventions for success/failure indicators. Document:
+
+1. How to check for success vs failure
+2. Whether additional status checks are required
+3. Common mistakes in error handling
+
+### 6. Version-Dependent Behavior
+
+Document when library defaults changed between versions:
+
+1. A table showing behavior changes across versions
+2. Which version introduced secure defaults
+3. How to detect library version in binaries
+
+---
+
 ## References
 
 ### Primary RFCs
