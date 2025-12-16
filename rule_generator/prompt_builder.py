@@ -6,16 +6,18 @@ from typing import Optional
 
 def build_prompt(
     library_name: str,
-    documentation: str,
+    documentation: Optional[str] = None,
     rules_dir: Optional[Path] = None,
+    doc_url: Optional[str] = None,
 ) -> str:
     """
     Build a comprehensive prompt for generating library-specific SSL/TLS rules.
 
     Args:
         library_name: Name of the SSL/TLS library
-        documentation: Library documentation text to analyze
+        documentation: Library documentation text to analyze (mutually exclusive with doc_url)
         rules_dir: Path to security_rules directory (default: auto-detect)
+        doc_url: URL to documentation for Claude to fetch (mutually exclusive with documentation)
 
     Returns:
         Complete prompt string for Claude Code
@@ -36,10 +38,25 @@ def build_prompt(
     if template_path.exists():
         template = template_path.read_text()
 
+    # Build documentation section based on source
+    if doc_url:
+        doc_section = f"""## Library Documentation
+
+Fetch and analyze the documentation from this URL to extract security-relevant information:
+
+URL: {doc_url}
+
+Use your web fetch capability to retrieve the documentation content."""
+    else:
+        doc_section = f"""## Library Documentation
+
+Analyze this documentation to extract security-relevant information:
+
+{documentation}"""
+
     prompt = f"""Generate SSL/TLS security rules for {library_name}.
 
 Your task is to create a complete library-specific rule file following the template structure.
-The output should be saved to: security_rules/rule_{library_name.lower().replace(' ', '_')}.md
 
 ## Meta-Rules Reference
 
@@ -57,11 +74,7 @@ Follow this structure for the rule file:
 
 ---
 
-## Library Documentation
-
-Analyze this documentation to extract security-relevant information:
-
-{documentation}
+{doc_section}
 
 ---
 
@@ -94,7 +107,8 @@ When generating rules, you MUST:
    - When did defaults change between versions?
    - Which version introduced secure defaults?
 
-Now generate the complete rule file in markdown format. Write the file to security_rules/rule_{library_name.lower().replace(' ', '_')}.md
+Output the complete rule file in markdown format directly to stdout.
+Do NOT write to any files - just print the markdown content.
 """
 
     return prompt
