@@ -255,6 +255,34 @@ When revocation information indicates a certificate is revoked, the client MUST 
 
 ---
 
+### S3: Entropy/RNG Initialization
+
+**Priority**: SHOULD
+
+**RFC Sources**: RFC 4086 (Randomness Requirements for Security)
+
+**Requirement**: TLS implementations SHOULD ensure proper initialization of cryptographic random number generators:
+- MUST seed CSPRNG from adequate entropy sources before key generation
+- SHOULD NOT use deterministic or weak entropy sources (time, PID alone)
+- Embedded systems MUST provide external entropy or hardware RNG
+
+**Evidence**:
+- RFC 4086 §3: "Choosing random quantities to foil a resourceful and motivated adversary is surprisingly difficult"
+- RFC 4086 §5.1: "By far the best sources of randomness are hardware-based"
+- RFC 8446 §C.1: "TLS requires a cryptographically secure pseudorandom number generator (CSPRNG)"
+
+**Violations**:
+- Not initializing RNG before TLS operations
+- Using predictable entropy sources (e.g., time-only seeding, fixed seeds)
+- Missing entropy collection on embedded systems without /dev/random or /dev/urandom
+- Using deprecated or weak RNG functions (e.g., `rand()`, `srand()`)
+
+**Rationale**: Weak RNG compromises all cryptographic operations: key generation, nonce generation, session IDs, and random padding. This is especially critical for embedded/IoT systems where traditional entropy sources (hardware interrupts, disk timing, user input) may not exist.
+
+**Note**: Priority is SHOULD because proper RNG initialization is typically handled by the underlying library when adequate system entropy is available. Explicit handling is primarily needed for embedded systems without /dev/random or hardware RNG.
+
+---
+
 ## MAY Requirements
 
 ### O1: Certificate Pinning
@@ -293,6 +321,7 @@ Implementations SHOULD include backup pins to prevent lockout.
 | RFC 8174 | Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words | 2017 | BCP 14 |
 | RFC 9325 | Recommendations for Secure Use of TLS and DTLS | 2022 | BCP 195 |
 | RFC 8996 | Deprecating TLS 1.0 and TLS 1.1 | 2021 | BCP 195 |
+| RFC 4086 | Randomness Requirements for Security | 2005 | BCP 106 |
 | RFC 8446 | The Transport Layer Security (TLS) Protocol Version 1.3 | 2018 | Standards Track |
 | RFC 5280 | Internet X.509 PKI Certificate and CRL Profile | 2008 | Standards Track |
 | RFC 9525 | Service Identity in TLS | 2023 | Standards Track |

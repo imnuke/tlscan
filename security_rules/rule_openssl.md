@@ -1,144 +1,411 @@
 # OpenSSL SSL/TLS Security Rules
 
-## 1. SSL/TLS Usage Detection
-**Priority**: MUST
-**Description**: Verify that SSL/TLS is actually being used for connections, not just linked. Detect conditional usage or plaintext fallbacks.
+This document defines library-specific security rules for OpenSSL-based TLS client implementations. Each rule references the corresponding meta-rule(s) from `metarule.md`.
+
+## Meta-Rule Mapping
+
+| Rule | Meta-Rule(s) | Priority | Description |
+|------|--------------|----------|-------------|
+| R1 | M1 | MUST | TLS Usage Detection |
+| R2 | M3 | MUST | Certificate Chain Verification |
+| R3 | M4 | MUST | Hostname Verification |
+| R4 | M2 | MUST | Protocol Version Enforcement |
+| R5 | M5 | MUST | Cipher Suite Selection |
+| R6 | S1 | SHOULD | Certificate Revocation Checking |
+| R7 | S2 | SHOULD | Cryptographic Strength |
+| R8 | S3 | SHOULD | Entropy/RNG Initialization |
+| R9 | O1 | MAY | Certificate Pinning |
+
+## Version Detection Hints
+
+Use these patterns to identify OpenSSL version in binaries:
+
+| Function/Symbol | Indicates |
+|-----------------|-----------|
+| `SSL_CTX_set_min_proto_version()` | OpenSSL 1.1.0+ |
+| `SSL_set1_host()` | OpenSSL 1.1.0+ |
+| `SSL_CTX_set_ciphersuites()` | OpenSSL 1.1.1+ (TLS 1.3) |
+| `SSLv23_client_method()` | Older code (deprecated in 1.1.0) |
+| `TLS_client_method()` | OpenSSL 1.1.0+ (preferred) |
+| `SSL_CTX_set_options()` with `SSL_OP_NO_*` | Any version (legacy approach) |
+
+---
+
+## R1: TLS Usage Detection
+
+**Meta-Rule(s)**: M1  |  **Priority**: MUST
+
+**What to Verify**: Confirm that SSL/TLS is actually used for connections, not just linked.
 
 **Implementation**:
-- Check for SSL/TLS connection establishment: `SSL_connect()`, `SSL_accept()`, `SSL_new()`
-- Verify SSL context is initialized: `SSL_CTX_new()` must be called
-- Look for conditional usage patterns:
-  - Config-based: SSL enabled only if config flag is set
-  - Protocol scheme: Checks for "https://" vs "http://"
-  - Port-based: Different behavior on port 443 vs 80
-  - Environment variable: SSL enabled via env var (e.g., USE_SSL=1)
-  - Mandatory STARTTLS: SSL required after negotiation, connection aborted if server doesn't support it
-- Detect plaintext fallbacks:
-  - Code paths with `connect()` + `send()`/`recv()` without SSL wrapper
-  - Conditional branches that skip SSL initialization
-  - Error handling that falls back to plaintext
-  - Opportunistic STARTTLS: Sends "STARTTLS" command but continues in plaintext if server doesn't support it (vulnerable to downgrade attacks)
+- `SSL_connect()`: Initiates client TLS handshake - MUST be called for client connections
+- `SSL_new()` + `SSL_CTX_new()`: Context and session creation - required before handshake
+- Default behavior: No TLS unless explicitly initialized and connected
+
+**Binary Analysis**:
+| Function | Purpose | Required for TLS |
+|----------|---------|------------------|
+| `SSL_CTX_new` | Create SSL context | Yes |
+| `SSL_new` | Create SSL session | Yes |
+| `SSL_set_fd` / `SSL_set_bio` | Attach socket | Yes |
+| `SSL_connect` | Client handshake | Yes (client) |
+| `SSL_write` / `SSL_read` | Data transfer | Yes (after handshake) |
 
 **Detection Patterns**:
-- Functions: `SSL_connect`, `SSL_accept`, `SSL_new`, `SSL_CTX_new`, `SSL_write`, `SSL_read`
+- Functions: `SSL_connect`, `SSL_new`, `SSL_CTX_new`, `SSL_write`, `SSL_read`
 - Conditional patterns:
   - `if (use_ssl)` or `if (config.enable_tls)` before SSL calls
-  - `if (strncmp(url, "https://"))` for protocol detection
+  - `if (strncmp(url, "https://", 8) == 0)` for protocol detection
   - Port checks: `if (port == 443)` determining SSL usage
-  - STARTTLS strings: "STARTTLS", "OK STARTTLS", "220 Ready to start TLS" followed by SSL_connect
+  - STARTTLS: "STARTTLS" string followed by `SSL_connect()`
 - Vulnerability indicators:
-  - SSL functions exist but never called in dataflow
-  - Unconditional `connect()` + `send()`/`recv()` without SSL
-  - SSL initialization inside `if(0)` or disabled config branches
-  - Error recovery that establishes plaintext connection
-  - Opportunistic STARTTLS without enforcement (allows plaintext fallback, vulnerable to downgrade attacks)
+  - SSL functions linked but never called in dataflow
+  - Unconditional `connect()` + `send()`/`recv()` without SSL wrapper
+  - SSL initialization inside disabled code branches
+  - Error recovery that falls back to plaintext connection
+  - Opportunistic STARTTLS without enforcement
 
-**Analysis Steps**:
-1. Trace main connection function to verify SSL_connect() is actually reached
-2. Check if SSL context initialization is conditional (config/env/flag-dependent)
-3. Look for plaintext fallback paths (non-SSL socket operations)
-4. If conditional, trace to configuration source (file/env/hardcoded)
-5. For STARTTLS: Check if connection aborts on negotiation failure (mandatory=CONDITIONAL) or falls back to plaintext (opportunistic=FAIL)
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| `SSL_connect()` always called | PASS | TLS connection established |
+| SSL functions not found/linked | FAIL | No TLS implementation |
+| `connect()` without SSL wrapper | FAIL | Plaintext connection |
+| SSL usage depends on config/env | CONDITIONAL | Trace variable to determine |
+| STARTTLS with fallback to plaintext | FAIL | Downgrade attack possible |
+| STARTTLS with mandatory enforcement | CONDITIONAL | Depends on server response handling |
 
-## 2. Certificate Chain and Validity Checking
-**Priority**: MUST
-**Description**: Verify the server's certificate chain against trusted CA certificates AND check certificate validity period (expiration dates)
+---
+
+## R2: Certificate Chain Verification
+
+**Meta-Rule(s)**: M3  |  **Priority**: MUST
+
+**What to Verify**: Server certificate chain is validated against trusted CA store.
 
 **Implementation**:
-- Use `SSL_CTX_set_verify()` or `SSL_set_verify()` with `SSL_VERIFY_PEER` to enable OpenSSL's default verification
-  - This automatically checks BOTH certificate chain validity AND validity period (expiration dates)
-- When `SSL_VERIFY_PEER` is used: Both chain and validity verification are automatic, but `SSL_get_verify_result()` can provide additional details
-- If a custom callback is provided to `SSL_CTX_set_verify()` or `SSL_set_verify()`: The callback MUST check the `preverify_ok` parameter and call `X509_STORE_CTX_get_error()` to retrieve error codes. Critical errors (self-signed, expired, untrusted, revocation, etc.) must cause the callback to return 0. Callbacks that unconditionally return 1 or ignore certificate errors bypass all validation
-- When `SSL_VERIFY_NONE` is used, ALL of the following MUST be manually implemented:
-  - `SSL_get_peer_certificate()` MUST be called and checked (returns NULL if no cert provided)
-  - `SSL_get_verify_result()` MUST be called and checked (returns X509_V_OK if all checks pass, including chain AND validity period)
-  - Note: `SSL_get_verify_result()` returns X509_V_OK even without a certificate, hence the peer certificate check is required first
-  - OR manually check validity period using `X509_get_notBefore()` and `X509_get_notAfter()` to get validity period, then compare with current time using `X509_cmp_time()` or `X509_cmp_current_time()`
+- `SSL_CTX_set_verify()` / `SSL_set_verify()`: Set verification mode
+- Default mode: `SSL_VERIFY_NONE` (0x00) - **INSECURE** - does NOT verify certificates
+- Required mode: `SSL_VERIFY_PEER` (0x01) - verifies certificate chain
+- Custom callback: If provided, MUST check `preverify_ok` parameter and return 0 on error
+
+**Binary Analysis**:
+| Function/Constant | Value | Security |
+|-------------------|-------|----------|
+| `SSL_VERIFY_NONE` | 0x00 | INSECURE - no verification |
+| `SSL_VERIFY_PEER` | 0x01 | SECURE - verify peer cert |
+| `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` | 0x02 | Additional flag (server mode) |
+| `SSL_VERIFY_CLIENT_ONCE` | 0x04 | Additional flag (server mode) |
+
+**Default Behavior (Version-Dependent)**:
+| Version | Default Mode | Security |
+|---------|--------------|----------|
+| All versions | `SSL_VERIFY_NONE` (0x00) | INSECURE |
 
 **Detection Patterns**:
-- Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`, `X509_STORE_CTX_get_error`, `X509_get_notAfter`, `X509_get_notBefore`, `X509_cmp_time`, `X509_cmp_current_time`
+- Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`
 - Constants: `SSL_VERIFY_PEER`, `SSL_VERIFY_NONE`, `X509_V_OK`
-- Vulnerability: Using `SSL_VERIFY_NONE` without manual verification of both chain and validity, or callback that unconditionally returns 1 or ignores critical X509_V_ERR_* errors
+- CA loading: `SSL_CTX_load_verify_locations`, `SSL_CTX_set_default_verify_paths`
+- Callback vulnerabilities:
+  - Callback that returns 1 unconditionally (ignores all errors)
+  - Callback that ignores `preverify_ok` parameter
+  - Callback that doesn't check `X509_STORE_CTX_get_error()`
 
-## 3. Hostname Verification
-**Priority**: MUST
-**Description**: Verify that the certificate matches the hostname being connected to
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| `SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL)` | PASS | Verification enabled |
+| `SSL_set_verify(ssl, SSL_VERIFY_PEER, callback)` with proper callback | PASS | Verification with custom logic |
+| `SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, ...)` | FAIL | Verification disabled |
+| `SSL_CTX_set_verify` not called | FAIL | Default is `SSL_VERIFY_NONE` |
+| Verification mode from runtime variable | CONDITIONAL | Trace variable |
+| Callback always returns 1 | FAIL | Bypasses all verification |
+| No CA certificates loaded | FAIL | Chain cannot be verified |
 
-**Implementation**:
-- Use `X509_check_host()` (OpenSSL 1.0.2+) to verify hostname against certificate
-- Alternative: `SSL_set1_host()` (OpenSSL 1.1.0+) for automatic hostname verification
-- Set hostname verification flags: `SSL_set_hostflags()` with `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`
-- Older versions: Manual verification using `X509_NAME_get_text_by_NID()` and wildcard matching (error-prone)
+---
 
-**Detection Patterns**:
-- Functions: `X509_check_host`, `SSL_set1_host`, `SSL_set_hostflags`, `X509_get_subject_name`
-- Vulnerability: Missing hostname verification after certificate chain validation
+## R3: Hostname Verification
 
-## 4. Certificate Revocation Status
-**Priority**: RECOMMENDED
-**Description**: Check if certificate has been revoked via OCSP or CRL
+**Meta-Rule(s)**: M4  |  **Priority**: MUST
 
-**Implementation**:
-- OCSP: Use `OCSP_sendreq_bio()` and `OCSP_basic_verify()` to check revocation status
-- CRL: Use `X509_STORE_set_flags()` with `X509_V_FLAG_CRL_CHECK` and `X509_V_FLAG_CRL_CHECK_ALL`
-- OCSP Stapling: Check for stapled OCSP response using `SSL_get_tlsext_status_ocsp_resp()`
-
-**Detection Patterns**:
-- Functions: `OCSP_sendreq_bio`, `OCSP_basic_verify`, `X509_STORE_set_flags`, `SSL_get_tlsext_status_ocsp_resp`
-- Constants: `X509_V_FLAG_CRL_CHECK`, `X509_V_FLAG_CRL_CHECK_ALL`
-- Vulnerability: Missing revocation checks entirely
-
-## 5. Protocol Version
-**Priority**: MUST
-**Description**: Enforce TLS 1.2 or higher, disable older insecure protocols
+**What to Verify**: Certificate's Subject Alternative Name (SAN) matches the intended server hostname.
 
 **Implementation**:
-- Use `SSL_CTX_set_min_proto_version()` with `TLS1_2_VERSION` or `TLS1_3_VERSION` (OpenSSL 1.1.0+)
-- Older versions: Use `SSL_CTX_set_options()` with `SSL_OP_NO_SSLv2`, `SSL_OP_NO_SSLv3`, `SSL_OP_NO_TLSv1`, `SSL_OP_NO_TLSv1_1`
-- Check negotiated version: `SSL_get_version()` returns protocol version string
+- `SSL_set1_host()` (OpenSSL 1.1.0+): Sets expected hostname, enables automatic verification
+- `X509_check_host()` (OpenSSL 1.0.2+): Manual hostname verification after handshake
+- `SSL_set_hostflags()`: Configure matching flags (e.g., `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`)
+- Default behavior: **NO** automatic hostname verification - must be explicitly enabled
+
+**Binary Analysis**:
+| Function | Version | Behavior |
+|----------|---------|----------|
+| `SSL_set1_host` | 1.1.0+ | Automatic verification during handshake |
+| `SSL_add1_host` | 1.1.0+ | Add additional hostnames to check |
+| `X509_check_host` | 1.0.2+ | Manual verification (post-handshake) |
+| `X509_VERIFY_PARAM_set1_host` | 1.0.2+ | Alternative API for hostname setting |
+| `SSL_set_hostflags` | 1.1.0+ | Configure verification flags |
+
+**Default Behavior**:
+| Version | Default | Security |
+|---------|---------|----------|
+| All versions | No hostname verification | INSECURE |
 
 **Detection Patterns**:
-- Functions: `SSL_CTX_set_min_proto_version`, `SSL_CTX_set_max_proto_version`, `SSL_CTX_set_options`, `SSL_get_version`
-- Constants: `TLS1_2_VERSION`, `TLS1_3_VERSION`, `SSL_OP_NO_SSLv2`, `SSL_OP_NO_SSLv3`, `SSL_OP_NO_TLSv1`, `SSL_OP_NO_TLSv1_1`
-- Vulnerability: Allowing SSLv2, SSLv3, TLS 1.0, or TLS 1.1
+- Functions: `SSL_set1_host`, `X509_check_host`, `SSL_set_hostflags`, `X509_VERIFY_PARAM_set1_host`
+- Constants: `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`, `X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS`
+- Vulnerability: Certificate chain verified (R2 passes) but hostname not checked
 
-## 6. Cipher Suite Selection
-**Priority**: MUST
-**Description**: Use strong cipher suites, avoid weak or export ciphers
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| `SSL_set1_host(ssl, hostname)` called | PASS | Automatic hostname verification |
+| `X509_check_host()` called after handshake | PASS | Manual verification |
+| No hostname verification function called | FAIL | Hostname not verified |
+| Hostname from runtime variable | CONDITIONAL | Verify hostname source is correct |
+| `SSL_set1_host(ssl, NULL)` | FAIL | Disables hostname checking |
+
+---
+
+## R4: Protocol Version Enforcement
+
+**Meta-Rule(s)**: M2  |  **Priority**: MUST
+
+**What to Verify**: Only TLS 1.2 or higher is allowed; SSL 2.0/3.0 and TLS 1.0/1.1 are disabled.
 
 **Implementation**:
-- Use `SSL_CTX_set_cipher_list()` to specify allowed ciphers (TLS 1.2 and below)
-- Use `SSL_CTX_set_ciphersuites()` for TLS 1.3 cipher suites (OpenSSL 1.1.1+)
-- Recommended: `"HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4"` or `"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256"`
-- Avoid: NULL ciphers, EXPORT ciphers, DES, RC4, MD5-based MACs
+- `SSL_CTX_set_min_proto_version()` (OpenSSL 1.1.0+): Set minimum version
+- `SSL_CTX_set_options()` with `SSL_OP_NO_*` flags: Disable specific versions (any version)
+- Default: Allows all supported versions including insecure ones
+
+**Binary Analysis**:
+| Constant | Hex Value | Version | Security |
+|----------|-----------|---------|----------|
+| `SSL3_VERSION` | 0x0300 | SSL 3.0 | INSECURE |
+| `TLS1_VERSION` | 0x0301 | TLS 1.0 | INSECURE |
+| `TLS1_1_VERSION` | 0x0302 | TLS 1.1 | INSECURE |
+| `TLS1_2_VERSION` | 0x0303 | TLS 1.2 | SECURE |
+| `TLS1_3_VERSION` | 0x0304 | TLS 1.3 | SECURE |
+
+| Option Flag | Hex Value | Effect |
+|-------------|-----------|--------|
+| `SSL_OP_NO_SSLv2` | 0x00000000 | Disabled by default in modern OpenSSL |
+| `SSL_OP_NO_SSLv3` | 0x02000000 | Disable SSL 3.0 |
+| `SSL_OP_NO_TLSv1` | 0x04000000 | Disable TLS 1.0 |
+| `SSL_OP_NO_TLSv1_1` | 0x10000000 | Disable TLS 1.1 |
+| `SSL_OP_NO_TLSv1_2` | 0x08000000 | Disable TLS 1.2 (avoid!) |
+| `SSL_OP_NO_TLSv1_3` | 0x20000000 | Disable TLS 1.3 (avoid!) |
+
+**Default Behavior (Version-Dependent)**:
+| OpenSSL Version | Default Min Protocol | Security |
+|-----------------|---------------------|----------|
+| < 1.1.0 | SSL 3.0 / TLS 1.0 | INSECURE |
+| 1.1.0 - 1.1.1 | TLS 1.0 | INSECURE |
+| 3.0+ | Configurable via openssl.cnf | Check config |
 
 **Detection Patterns**:
-- Functions: `SSL_CTX_set_cipher_list`, `SSL_CTX_set_ciphersuites`, `SSL_get_cipher_name`, `SSL_get_cipher_list`
-- Vulnerability: Using weak cipher strings or not restricting ciphers
+- Functions: `SSL_CTX_set_min_proto_version`, `SSL_CTX_set_options`, `SSL_get_version`
+- Method selection: `TLS_client_method()` (preferred), `SSLv23_client_method()` (deprecated)
+- Vulnerability: Missing version restrictions or using deprecated methods
 
-## 7. Certificate Signature Algorithm and Key Strength
-**Priority**: RECOMMENDED
-**Description**: Verify certificate uses strong signature algorithms and key lengths
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| `SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION)` | PASS | TLS 1.2+ enforced |
+| `SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3\|SSL_OP_NO_TLSv1\|SSL_OP_NO_TLSv1_1)` | PASS | Legacy disabling method |
+| No protocol restrictions set | CONDITIONAL | Depends on OpenSSL version/config |
+| `SSL_CTX_set_min_proto_version(ctx, TLS1_VERSION)` | FAIL | Allows TLS 1.0 |
+| `SSLv3_client_method()` used | FAIL | Forces SSL 3.0 only |
+
+---
+
+## R5: Cipher Suite Selection
+
+**Meta-Rule(s)**: M5  |  **Priority**: MUST
+
+**What to Verify**: Only strong cipher suites are allowed; NULL, RC4, EXPORT, and weak ciphers are disabled.
 
 **Implementation**:
-- Check signature algorithm: `X509_get_signature_nid()` or `X509_get0_signature()`
-- Avoid: MD5, SHA1 signatures; prefer SHA256 or higher
-- Check key strength: `EVP_PKEY_bits()` on public key from `X509_get_pubkey()`
-- Minimum: RSA 2048-bit, ECDSA 256-bit
+- `SSL_CTX_set_cipher_list()`: Set cipher suites for TLS 1.2 and below
+- `SSL_CTX_set_ciphersuites()` (OpenSSL 1.1.1+): Set TLS 1.3 cipher suites
+- Recommended string: `"HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA"`
+
+**Binary Analysis**:
+| Cipher String Pattern | Security |
+|-----------------------|----------|
+| `"HIGH:..."` | Good starting point |
+| `"!aNULL"` | REQUIRED - Disables anonymous auth |
+| `"!eNULL"` / `"!NULL"` | REQUIRED - Disables NULL encryption |
+| `"!EXPORT"` | REQUIRED - Disables export ciphers |
+| `"!RC4"` | REQUIRED - Disables RC4 |
+| `"!DES"` | REQUIRED - Disables DES |
+| `"!MD5"` | REQUIRED - Disables MD5-based MACs |
+| `"ALL"` or `"DEFAULT"` without exclusions | INSECURE |
+| `"eNULL"` / `"aNULL"` / `"LOW"` / `"EXPORT"` | INSECURE |
 
 **Detection Patterns**:
-- Functions: `X509_get_signature_nid`, `X509_get_pubkey`, `EVP_PKEY_bits`, `EVP_PKEY_id`
-- Weakness: MD5, SHA1 signatures or RSA keys < 2048 bits
+- Functions: `SSL_CTX_set_cipher_list`, `SSL_CTX_set_ciphersuites`, `SSL_get_cipher_name`
+- Vulnerability: No cipher restriction or weak cipher string
 
-## 8. Certificate Pinning
-**Priority**: OPTIONAL (HIGH SECURITY)
-**Description**: Pin specific certificates or public keys to prevent MITM attacks
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Cipher string excludes NULL, EXPORT, RC4, weak ciphers | PASS | Strong ciphers only |
+| `SSL_CTX_set_cipher_list(ctx, "ALL")` | FAIL | Allows weak ciphers |
+| No cipher restrictions set | CONDITIONAL | Uses system default |
+| Cipher string from config/env | CONDITIONAL | Trace the value |
+| TLS 1.3 only (OpenSSL 1.1.1+) | PASS | TLS 1.3 has no weak ciphers |
+
+---
+
+## R6: Certificate Revocation Checking
+
+**Meta-Rule(s)**: S1  |  **Priority**: SHOULD
+
+**What to Verify**: Certificate revocation status is checked via CRL or OCSP.
 
 **Implementation**:
-- Extract certificate/public key: `X509_digest()` for cert fingerprint or `EVP_PKEY_get1_RSA()` for public key
-- Compare with pinned values in verification callback set via `SSL_CTX_set_verify()`
-- Store pins as SHA256 hashes of certificates or SPKI (Subject Public Key Info)
+- CRL: `X509_STORE_set_flags()` with `X509_V_FLAG_CRL_CHECK` and `X509_V_FLAG_CRL_CHECK_ALL`
+- OCSP Stapling: `SSL_CTX_set_tlsext_status_cb()` and `SSL_set_tlsext_status_type()`
+- OCSP Manual: `OCSP_sendreq_bio()`, `OCSP_basic_verify()`
+
+**Binary Analysis**:
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `X509_V_FLAG_CRL_CHECK` | 0x4 | Check leaf certificate CRL |
+| `X509_V_FLAG_CRL_CHECK_ALL` | 0x8 | Check entire chain CRL |
+| `SSL_CTRL_SET_TLSEXT_STATUS_REQ_TYPE` | 65 | OCSP stapling control |
 
 **Detection Patterns**:
-- Functions: `X509_digest`, `EVP_PKEY_get1_RSA`, custom verification callbacks
-- Implementation: Hardcoded certificate fingerprints or public key hashes in code
+- Functions: `X509_STORE_set_flags`, `SSL_CTX_set_tlsext_status_cb`, `OCSP_basic_verify`
+- CRL loading: `X509_STORE_add_crl`, `X509_load_crl_file`
+- Vulnerability: No revocation checking implemented
+
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| CRL or OCSP checking implemented | PASS | Revocation verified |
+| OCSP stapling enabled | PASS | Server provides OCSP response |
+| No revocation checking | UNDETERMINED | Not a hard requirement (SHOULD) |
+| Revocation check from config | CONDITIONAL | Trace configuration |
+
+---
+
+## R7: Cryptographic Strength
+
+**Meta-Rule(s)**: S2  |  **Priority**: SHOULD
+
+**What to Verify**: Certificates use strong signature algorithms (SHA-256+) and adequate key sizes.
+
+**Implementation**:
+- `X509_get_signature_nid()`: Get signature algorithm NID
+- `EVP_PKEY_bits()`: Get key size in bits
+- `X509_get_pubkey()`: Extract public key for size checking
+
+**Binary Analysis**:
+| Algorithm NID | Name | Security |
+|---------------|------|----------|
+| `NID_md5WithRSAEncryption` | MD5 | INSECURE |
+| `NID_sha1WithRSAEncryption` | SHA-1 | INSECURE |
+| `NID_sha256WithRSAEncryption` | SHA-256 | SECURE |
+| `NID_sha384WithRSAEncryption` | SHA-384 | SECURE |
+| `NID_sha512WithRSAEncryption` | SHA-512 | SECURE |
+| `NID_ecdsa_with_SHA256` | ECDSA-SHA256 | SECURE |
+
+| Key Type | Minimum Bits |
+|----------|--------------|
+| RSA | 2048 |
+| ECDSA/ECDH | 256 (224 per RFC) |
+| DSA | 2048 |
+
+**Detection Patterns**:
+- Functions: `X509_get_signature_nid`, `EVP_PKEY_bits`, `X509_get_pubkey`
+- Vulnerability: No strength validation or accepting weak signatures
+
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Certificate strength validation implemented | PASS | Strong crypto enforced |
+| No strength checking | UNDETERMINED | Relies on CA issuance practices |
+| MD5/SHA-1 signatures explicitly rejected | PASS | Weak algorithms blocked |
+
+---
+
+## R8: Entropy/RNG Initialization
+
+**Meta-Rule(s)**: S3  |  **Priority**: SHOULD
+
+**What to Verify**: Cryptographic RNG is properly seeded before TLS operations.
+
+**Implementation**:
+- `RAND_poll()`: Automatic seeding from system entropy (preferred)
+- `RAND_seed()` / `RAND_add()`: Manual seeding
+- `RAND_status()`: Check if RNG is properly seeded (returns 1 if OK)
+- OpenSSL 1.1.0+: Automatic seeding on first use if /dev/urandom available
+
+**Binary Analysis**:
+| Function | Purpose |
+|----------|---------|
+| `RAND_poll` | Seed from OS entropy sources |
+| `RAND_seed` | Add entropy manually |
+| `RAND_add` | Add entropy with estimate |
+| `RAND_status` | Check seeding status |
+| `RAND_bytes` | Generate random bytes |
+
+**Default Behavior (Version-Dependent)**:
+| Version | Platform | Default |
+|---------|----------|---------|
+| OpenSSL 1.1.0+ | Linux/macOS | Auto-seeded from /dev/urandom |
+| OpenSSL 1.1.0+ | Embedded/No OS | **MUST** call `RAND_seed()` |
+| OpenSSL 1.0.x | All | May require explicit seeding |
+
+**Detection Patterns**:
+- Functions: `RAND_poll`, `RAND_seed`, `RAND_add`, `RAND_status`
+- Vulnerability indicators:
+  - `RAND_seed(buffer, sizeof(buffer))` with predictable buffer (time, PID)
+  - No entropy initialization on embedded systems
+  - `rand()` or `srand()` used instead of RAND_* functions
+
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| `RAND_poll()` called or system has /dev/urandom | PASS | Proper entropy |
+| `RAND_seed()` with hardware RNG data | PASS | Good entropy source |
+| `RAND_seed(time(NULL), sizeof(time_t))` | FAIL | Predictable seed |
+| No RNG initialization on embedded system | FAIL | Weak randomness |
+| System entropy availability unknown | CONDITIONAL | Check platform |
+
+---
+
+## R9: Certificate Pinning
+
+**Meta-Rule(s)**: O1  |  **Priority**: MAY
+
+**What to Verify**: Certificate or public key pinning is implemented for high-security applications.
+
+**Implementation**:
+- Custom verify callback via `SSL_CTX_set_verify()` or `SSL_set_verify()`
+- `X509_digest()`: Get certificate fingerprint
+- `X509_get_pubkey()` + hash: Get public key hash (SPKI pinning)
+- Compare against hardcoded/stored pin values
+
+**Binary Analysis**:
+| Function | Purpose |
+|----------|---------|
+| `X509_digest` | Certificate fingerprint |
+| `EVP_sha256` | SHA-256 for fingerprint |
+| `X509_get_pubkey` | Extract public key |
+| `i2d_PUBKEY` | Serialize public key (for SPKI) |
+| Custom callback | Pin validation logic |
+
+**Detection Patterns**:
+- Functions: `X509_digest`, `EVP_sha256`, `X509_get_pubkey`, custom verification callbacks
+- Hardcoded hashes: Look for 32-byte (SHA-256) or 64-character hex strings
+- Vulnerability: Pinning without backup pins (lockout risk)
+
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Certificate/public key pinning implemented | PASS | Defense-in-depth |
+| No pinning implemented | UNDETERMINED | Optional feature |
+| Pinning with no backup pins | PASS (with warning) | Lockout risk noted |
+| Pin values from external source | CONDITIONAL | Trace pin source |
