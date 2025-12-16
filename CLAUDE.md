@@ -1,7 +1,7 @@
 # conn-alanyzer Project Memory
 
 ## Overview
-AI-powered **SSL/TLS security analyzer** for firmware binaries. Combines IDA Pro static analysis with multi-agent LLM system to detect SSL/TLS vulnerabilities and trace security-critical configuration values across firmware.
+AI-powered **SSL/TLS security analyzer** for firmware binaries and scripts. Combines IDA Pro static analysis with multi-agent LLM system to detect SSL/TLS vulnerabilities and trace security-critical configuration values across firmware.
 
 ## Architecture
 
@@ -23,6 +23,7 @@ Checkpoint Router → SSL Analysis → Dataflow Analysis → Firmware Exploratio
 - **LangChain/LangGraph**: Multi-agent orchestration with state machine workflow
 - **IDA Pro MCP**: Binary analysis via Model Context Protocol (ports 8800-8900)
 - **Pydantic Models**: Structured agent outputs (not free-form text)
+- **Rich**: Terminal UI with panels, tables, and color-coded output
 - **LLM Providers**: DeepSeek, OpenAI, Anthropic (configured in `llm_config.yaml`)
 
 ## Key Components
@@ -45,16 +46,23 @@ Checkpoint Router → SSL Analysis → Dataflow Analysis → Firmware Exploratio
 - **`state.py`**: `AnalysisState` TypedDict with all workflow state
 - **`models.py`**: Pydantic models (`SSLAnalysisOutput`, `RuleResult`, `VariableTrace`, etc.)
 - **`routing.py`**: Routing logic for conditional workflow branches
+- **`report_formatter.py`**: Rich widget-based report display with color-coded status badges
 
 ### `/conn_analyzer/static_analysis/`
 - **`engine.py`**: Manages IDA Pro MCP servers for multiple binaries
   - Thread-safe multi-binary support
   - Session caching and port allocation
+  - Concurrent analysis via temp binary copies
 - **`firmware_tools.py`**: Filesystem search using `fd` and `ripgrep`
+- **`script_tools.py`**: Analysis tools for shell/PHP/Python scripts
 
 ### `/conn_analyzer/ida_integration/`
 - **`server.py`**: Headless IDA server lifecycle management
 - **`port_manager.py`**: Dynamic port allocation with lock files
+
+### `/conn_analyzer/utils/`
+- **`binary_utils.py`**: File type detection (ELF, shell, PHP, Python scripts)
+- **`state_logging.py`**: State change logging with unified diff display
 
 ### `/conn_analyzer/persistence/`
 - **`checkpointing.py`**: State persistence and thread management
@@ -66,7 +74,8 @@ Checkpoint Router → SSL Analysis → Dataflow Analysis → Firmware Exploratio
 
 ### `/security_rules/`
 Security rule definitions (Markdown):
-- `rule_openssl.md`, `rule_curl.md`, `rule_libcurl.md`, `rule_gnutls.md`, etc.
+- `rule_openssl.md`, `rule_curl.md`, `rule_libcurl.md`, `rule_gnutls.md`, `rule_socket.md`, etc.
+- `metarule.md`: RFC-grounded security requirements (MUST/SHOULD/MAY)
 
 ## Entry Point & CLI
 
@@ -113,7 +122,7 @@ uv run conn_analyzer_new.py --clean-threads --max-age 7
 - `binary_path`: Binary to analyze (optional for --list-threads/--clean-threads)
 - `-m, --model`: LLM model (e.g., `deepseek:deepseek-chat`, `anthropic:claude-sonnet-4-5`), overrides saved metadata when resuming
 - `-f, --firmware-path`: Firmware root (enables cross-binary analysis)
-- `-r, --rules`: Security rule set (default: `openssl`)
+- `-r, --rules`: Security rule set (`openssl`, `curl`, `libcurl`, `gnutls`, `mbedtls`, `php_curl`, `wget`, `socket`)
 
 ## Important Patterns
 
@@ -150,19 +159,38 @@ uv run conn_analyzer_new.py --clean-threads --max-age 7
 - **Stopping conditions** - dataflow traces stop at constants, config files, or max depth
 
 ### IDA Pro Integration
-- MCP server started per binary: `uv run --directory /path/to/ida-pro-mcp idalib-mcp --host localhost --port <PORT> <BINARY>`
+- MCP server started per binary with **temp copy** for concurrent analysis
+- Temp binaries stored in `/tmp/conn_analyzer/binaries/{session_id}/`
+- **Startup timeout**: 5 minutes (increased from 15 seconds)
 - Tools available: `decompile_function`, `get_callers`, `get_xrefs_to`, etc.
 - Port locks in `/tmp/conn_analyzer/port_locks/`
+
+### Script Analysis
+- **File Type Detection**: `binary_utils.detect_file_type()` identifies ELF, shell, PHP, Python
+- **Tool Selection**: Scripts use `script_tools.py` instead of IDA MCP
+- **Script Tools**: `get_script_content()`, `get_lines()`, `search_pattern()`, `find_command_usage()`
+- **Trace Type**: Script findings stored as `TraceType.SCRIPT`
 
 ## State Management
 
 **`AnalysisState`** (TypedDict in `graph/state.py`):
-- **Context**: `binary_path`, `security_rules`, `firmware_path`
+- **Context**: `binary_path`, `main_binary_path`, `security_rules`, `firmware_path`
 - **SSL Results**: `rule_result` (Dict[str, RuleResult]), `applicable`, `client_type`
 - **Tasks**: `pending_dataflow_tasks`, `pending_config_fetch_tasks`
-- **Results**: `variable_traces`, `cross_binary_traces`, `external_values`, `script_findings`
-- **Output**: `final_report`, `errors`
-- **Control**: `current_phase`, `depth` (recursion tracking), `_next_node` (checkpoint router output)
+- **Trace Graph**: `traces` (Dict[str, VariableTrace]), `rule_trace_links` (Dict[str, RuleTraceLink])
+- **Statistics**: `statistics` (AnalysisStatistics with agent metrics)
+- **Output**: `final_report`, `report_data`, `errors`
+- **Control**: `current_phase`, `_next_node` (checkpoint router output)
+
+### Unified Trace Graph Architecture
+
+Traces form a directed acyclic graph (DAG) linking rule conditions to resolved values:
+
+- **TraceType**: `MAIN_BINARY`, `CROSS_BINARY`, `CONFIG_FILE`, `SCRIPT`, `ENVIRONMENT`
+- **VariableTrace**: Graph node with parent/child links and resolution status
+- **RuleTraceLink**: Maps rule conditions to their root traces
+- **Deduplication**: Content-based hashing prevents duplicate analysis
+- **Graph Helpers**: `add_trace_to_graph()`, `resolve_trace_tree()`, `update_trace_statuses()`
 
 ## Checkpointing & Resumability
 
@@ -240,6 +268,51 @@ result = await compiled_graph.ainvoke(
 # Cleanup
 await checkpoint_manager.close()  # Close aiosqlite connection
 ```
+
+## Report Display & Statistics
+
+### Rich Widget-Based Reports
+Report formatter (`graph/report_formatter.py`) uses Rich library for visual output:
+- **Status Badges**: Color-coded (PASS green, FAIL red, CONDITIONAL yellow)
+- **Trace Type Icons**: main_binary, cross_binary, config_file, script
+- **Panels**: Nested panels for rules, conditions, and trace trees
+- **Tables**: Agent performance metrics and summary statistics
+
+### Statistics Tracking
+
+**AgentStatistics** (per agent):
+- `total_tokens`, `thinking_tokens`, `tool_result_tokens`
+- `tool_call_count`, `total_time_seconds`, `invocation_count`
+
+**AnalysisStatistics** (overall):
+- Per-agent stats: `ssl_agent`, `dataflow_agent`, `firmware_agent`
+- Dependency counts: `config_dependency_count`, `script_dependency_count`, `cross_binary_dependency_count`
+- Totals: `total_tokens`, `total_time_seconds`, `total_tool_calls`
+
+### State Logging
+- **Unified Diff Display**: State changes shown as color-coded diffs
+- **Per-Task Logging**: Each task shows before/after state comparison
+- Colors: green (+), red (-), cyan (@@), dim (context)
+
+## Meta-Rules (RFC-Grounded Requirements)
+
+`security_rules/metarule.md` defines implementation-agnostic SSL/TLS security requirements:
+
+**MUST Requirements** (violations = FAIL):
+- **M1**: TLS usage for security-sensitive communications (RFC 9325)
+- **M2**: Protocol version TLS 1.2+ (RFC 8996 prohibits SSL/TLS 1.0/1.1)
+- **M3**: Server certificate verification (RFC 5280)
+- **M4**: Server identity verification via subjectAltName (RFC 9525)
+- **M5**: Cipher suite selection with forward secrecy (RFC 9325)
+
+**SHOULD Requirements** (violations = CONDITIONAL):
+- **S1**: Certificate revocation checking (RFC 5280, RFC 6960)
+- **S2**: Cryptographic strength (SHA-256+, RSA 2048+ bits) (RFC 9325)
+
+**MAY Requirements** (optional enhancements):
+- **O1**: Certificate pinning (RFC 7469, deprecated for browsers)
+
+Library-specific rules reference these meta-rules for consistency.
 
 ## Commit Scopes
 
