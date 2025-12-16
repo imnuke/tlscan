@@ -89,30 +89,96 @@ This document defines library-specific security rules for GnuTLS-based TLS clien
 | `gnutls_certificate_set_x509_trust_file` | Load CA bundle |
 | `gnutls_certificate_set_x509_system_trust` | Use system CA store |
 
-| Verification Flag | Meaning |
-|-------------------|---------|
-| `GNUTLS_CERT_INVALID` | Certificate invalid |
-| `GNUTLS_CERT_SIGNER_NOT_FOUND` | CA not trusted |
-| `GNUTLS_CERT_EXPIRED` | Certificate expired |
-| `GNUTLS_CERT_REVOKED` | Certificate revoked |
-| `GNUTLS_CERT_NOT_ACTIVATED` | Not yet valid |
+| Verification Flag | Value | Meaning |
+|-------------------|-------|---------|
+| `GNUTLS_CERT_INVALID` | (1<<1) | Certificate invalid (check other flags for reason) |
+| `GNUTLS_CERT_SIGNER_NOT_FOUND` | (1<<6) | CA not trusted |
+| `GNUTLS_CERT_EXPIRED` | (1<<10) | Certificate expired |
+| `GNUTLS_CERT_REVOKED` | (1<<5) | Certificate revoked |
+| `GNUTLS_CERT_NOT_ACTIVATED` | (1<<11) | Not yet valid |
+| `GNUTLS_CERT_SIGNATURE_FAILURE` | (1<<2) | Signature verification failed |
+| `GNUTLS_CERT_INSECURE_ALGORITHM` | (1<<8) | Weak algorithm used |
 
 **Default Behavior**:
 | Version | Default | Security |
 |---------|---------|----------|
 | All versions | No verification | INSECURE |
 
+### Proper Verification Pattern
+
+**Correct Usage**:
+```c
+unsigned int status;
+int ret;
+
+// After gnutls_handshake() succeeds:
+ret = gnutls_certificate_verify_peers2(session, &status);
+if (ret < 0) {
+    // FAIL - verification function failed
+    gnutls_perror(ret);
+    return error;
+}
+
+if (status != 0) {
+    // FAIL - certificate verification failed
+    // Check specific flags for details:
+    if (status & GNUTLS_CERT_INVALID) {
+        // Certificate is invalid
+    }
+    if (status & GNUTLS_CERT_SIGNER_NOT_FOUND) {
+        // Issuing CA not trusted
+    }
+    if (status & GNUTLS_CERT_EXPIRED) {
+        // Certificate expired
+    }
+    return error;
+}
+// status == 0 means certificate is valid
+```
+
+**Incorrect Verification Patterns (Vulnerabilities)**:
+```c
+// FAIL: Only checking return value, ignoring status flags
+ret = gnutls_certificate_verify_peers2(session, &status);
+if (ret < 0) { handle_error(); }
+// Missing: check for status != 0
+
+// FAIL: Not calling verification at all
+gnutls_handshake(session);
+// Proceeding without calling gnutls_certificate_verify_peers2/3()
+
+// FAIL: Ignoring the status variable entirely
+gnutls_certificate_verify_peers2(session, &status);
+// status not checked - all certificates accepted
+```
+
+### Certificate Presence Check
+
+Unlike OpenSSL, GnuTLS returns `GNUTLS_E_NO_CERTIFICATE_FOUND` from `gnutls_certificate_verify_peers2()` if no certificate was provided, so the bug of "OK without certificate" does not exist in the same form.
+
+However, you should still check for this error:
+```c
+ret = gnutls_certificate_verify_peers2(session, &status);
+if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
+    // FAIL - server provided no certificate
+    return error;
+}
+```
+
 **Detection Patterns**:
 - Vulnerability: No call to `gnutls_certificate_verify_peers2/3()` after handshake
-- Vulnerability: Return value not checked for error flags
+- Vulnerability: Return value not checked (ret < 0)
+- Vulnerability: Status flags not checked (status != 0)
 - Vulnerability: No CA certificates loaded
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `gnutls_certificate_verify_peers2/3()` called and flags checked | PASS | Verification enabled |
+| `gnutls_certificate_verify_peers2/3()` called, ret and status checked | PASS | Full verification |
 | Verification function not called | FAIL | No certificate validation |
-| Return value not checked | FAIL | Errors ignored |
+| Return value (ret) not checked | FAIL | Function errors ignored |
+| Status flags not checked | FAIL | Verification result ignored |
+| Only checks `ret < 0`, not `status != 0` | FAIL | Accepts invalid certificates |
 | No CA certificates loaded | FAIL | Chain cannot be verified |
 | Verification depends on config | CONDITIONAL | Trace variable |
 

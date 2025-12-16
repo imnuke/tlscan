@@ -92,7 +92,7 @@ Use these patterns to identify OpenSSL version in binaries:
 **Binary Analysis**:
 | Function/Constant | Value | Security |
 |-------------------|-------|----------|
-| `SSL_VERIFY_NONE` | 0x00 | INSECURE - no verification |
+| `SSL_VERIFY_NONE` | 0x00 | INSECURE (unless manual verification) |
 | `SSL_VERIFY_PEER` | 0x01 | SECURE - verify peer cert |
 | `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` | 0x02 | Additional flag (server mode) |
 | `SSL_VERIFY_CLIENT_ONCE` | 0x04 | Additional flag (server mode) |
@@ -102,24 +102,80 @@ Use these patterns to identify OpenSSL version in binaries:
 |---------|--------------|----------|
 | All versions | `SSL_VERIFY_NONE` (0x00) | INSECURE |
 
+### Alternative Verification Pattern (SSL_VERIFY_NONE with Manual Check)
+
+When `SSL_VERIFY_NONE` is used, verification can still be secure if **ALL** of the following are implemented after `SSL_connect()`:
+
+1. **`SSL_get_peer_certificate()`** MUST be called and checked for non-NULL
+2. **`SSL_get_verify_result()`** MUST be called and checked for `X509_V_OK`
+
+**CRITICAL BUG**: `SSL_get_verify_result()` returns `X509_V_OK` even when no certificate was provided by the peer. Therefore, `SSL_get_peer_certificate()` MUST be called **first** to verify a certificate exists.
+
+**Correct Manual Verification Pattern**:
+```c
+// After SSL_connect() succeeds:
+X509 *cert = SSL_get_peer_certificate(ssl);
+if (cert == NULL) {
+    // FAIL - no certificate provided
+    return error;
+}
+long result = SSL_get_verify_result(ssl);
+if (result != X509_V_OK) {
+    // FAIL - certificate verification failed
+    X509_free(cert);
+    return error;
+}
+X509_free(cert);
+// PASS - certificate valid
+```
+
+**Incorrect Manual Verification (Vulnerability)**:
+```c
+// WRONG: Only checks result, not certificate presence
+long result = SSL_get_verify_result(ssl);
+if (result != X509_V_OK) { ... }  // Returns X509_V_OK even without cert!
+```
+
+### Custom Callback Requirements
+
+If a custom verification callback is provided to `SSL_CTX_set_verify()`:
+
+**Secure Callback Requirements**:
+1. MUST check `preverify_ok` parameter
+2. MUST call `X509_STORE_CTX_get_error()` to retrieve specific error codes
+3. MUST return 0 on any verification failure
+4. MAY return 1 only for intentional policy decisions (e.g., allowing self-signed certs in specific cases)
+
+**Insecure Callback Patterns**:
+```c
+// FAIL: Returns 1 unconditionally (bypasses all verification)
+int callback(int preverify_ok, X509_STORE_CTX *ctx) {
+    return 1;
+}
+
+// FAIL: Ignores preverify_ok (ignores OpenSSL's verification result)
+int callback(int preverify_ok, X509_STORE_CTX *ctx) {
+    return my_custom_check(ctx);
+}
+```
+
 **Detection Patterns**:
 - Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`
 - Constants: `SSL_VERIFY_PEER`, `SSL_VERIFY_NONE`, `X509_V_OK`
 - CA loading: `SSL_CTX_load_verify_locations`, `SSL_CTX_set_default_verify_paths`
-- Callback vulnerabilities:
-  - Callback that returns 1 unconditionally (ignores all errors)
-  - Callback that ignores `preverify_ok` parameter
-  - Callback that doesn't check `X509_STORE_CTX_get_error()`
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL)` | PASS | Verification enabled |
 | `SSL_set_verify(ssl, SSL_VERIFY_PEER, callback)` with proper callback | PASS | Verification with custom logic |
-| `SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, ...)` | FAIL | Verification disabled |
+| `SSL_VERIFY_NONE` + `SSL_get_peer_certificate()` + `SSL_get_verify_result()` | PASS | Manual verification (both checks) |
+| `SSL_VERIFY_NONE` + only `SSL_get_verify_result()` | FAIL | Missing peer certificate check (bug) |
+| `SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, ...)` without manual check | FAIL | Verification disabled |
 | `SSL_CTX_set_verify` not called | FAIL | Default is `SSL_VERIFY_NONE` |
 | Verification mode from runtime variable | CONDITIONAL | Trace variable |
 | Callback always returns 1 | FAIL | Bypasses all verification |
+| Callback ignores `preverify_ok` | FAIL | Ignores OpenSSL's verification |
 | No CA certificates loaded | FAIL | Chain cannot be verified |
 
 ---
@@ -150,16 +206,64 @@ Use these patterns to identify OpenSSL version in binaries:
 |---------|---------|----------|
 | All versions | No hostname verification | INSECURE |
 
+### Legacy Hostname Verification (Pre-1.0.2)
+
+For OpenSSL versions prior to 1.0.2, there is no built-in hostname verification API. Applications must implement manual hostname verification:
+
+**Legacy API Functions**:
+| Function | Purpose |
+|----------|---------|
+| `X509_NAME_get_text_by_NID()` | Extract CN from subject |
+| `X509_get_ext_d2i(..., NID_subject_alt_name, ...)` | Get SAN extension |
+| Manual string comparison | Compare with expected hostname |
+
+**Legacy Verification Pattern (Error-Prone)**:
+```c
+// Get certificate (already verified in R2)
+X509 *cert = SSL_get_peer_certificate(ssl);
+
+// Try Subject Alternative Names first
+GENERAL_NAMES *sans = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
+if (sans != NULL) {
+    for (int i = 0; i < sk_GENERAL_NAME_num(sans); i++) {
+        GENERAL_NAME *san = sk_GENERAL_NAME_value(sans, i);
+        if (san->type == GEN_DNS) {
+            // Compare san->d.dNSName with expected hostname
+            // MUST handle wildcards correctly
+        }
+    }
+}
+
+// Fallback to Common Name (CN) if no SAN
+X509_NAME *subject = X509_get_subject_name(cert);
+char cn[256];
+X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
+// Compare cn with expected hostname
+// MUST handle wildcards correctly
+```
+
+**Common Vulnerabilities in Legacy Code**:
+1. **Missing SAN check**: Only checking CN, ignoring SANs
+2. **Incorrect wildcard matching**: `*.example.com` should not match `foo.bar.example.com`
+3. **NUL byte injection**: Not handling embedded NUL characters in CN/SAN
+4. **Case sensitivity**: Hostname comparison must be case-insensitive
+5. **No verification at all**: Many pre-1.0.2 applications simply skip hostname verification
+
 **Detection Patterns**:
 - Functions: `SSL_set1_host`, `X509_check_host`, `SSL_set_hostflags`, `X509_VERIFY_PARAM_set1_host`
-- Constants: `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`, `X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS`
+- Legacy functions: `X509_NAME_get_text_by_NID`, `X509_get_ext_d2i`
+- Constants: `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`, `X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS`, `NID_subject_alt_name`, `NID_commonName`
 - Vulnerability: Certificate chain verified (R2 passes) but hostname not checked
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `SSL_set1_host(ssl, hostname)` called | PASS | Automatic hostname verification |
-| `X509_check_host()` called after handshake | PASS | Manual verification |
+| `X509_check_host()` called after handshake | PASS | Manual verification (1.0.2+) |
+| `X509_VERIFY_PARAM_set1_host()` called | PASS | Alternative API (1.0.2+) |
+| Legacy code with SAN + CN check + proper wildcard handling | PASS | Manual verification (pre-1.0.2) |
+| Legacy code with only CN check | CONDITIONAL | Vulnerable if cert has SAN |
+| Legacy code with incorrect wildcard matching | FAIL | Bypass possible |
 | No hostname verification function called | FAIL | Hostname not verified |
 | Hostname from runtime variable | CONDITIONAL | Verify hostname source is correct |
 | `SSL_set1_host(ssl, NULL)` | FAIL | Disables hostname checking |

@@ -117,7 +117,7 @@ This document defines library-specific security rules for mbedTLS-based TLS clie
 | Mode | Value | Security |
 |------|-------|----------|
 | `MBEDTLS_SSL_VERIFY_NONE` | 0 | INSECURE |
-| `MBEDTLS_SSL_VERIFY_OPTIONAL` | 1 | INSECURE (manual check required) |
+| `MBEDTLS_SSL_VERIFY_OPTIONAL` | 1 | INSECURE (unless manual check performed) |
 | `MBEDTLS_SSL_VERIFY_REQUIRED` | 2 | SECURE |
 
 **Default Behavior**:
@@ -126,10 +126,69 @@ This document defines library-specific security rules for mbedTLS-based TLS clie
 | Client | `MBEDTLS_SSL_VERIFY_REQUIRED` (2) | SECURE |
 | Server | `MBEDTLS_SSL_VERIFY_NONE` (0) | N/A (server mode) |
 
+### MBEDTLS_SSL_VERIFY_OPTIONAL with Manual Verification
+
+When `MBEDTLS_SSL_VERIFY_OPTIONAL` is used, the handshake succeeds even if certificate verification fails. The application **MUST** manually check the verification result:
+
+**Correct Manual Verification Pattern**:
+```c
+// Set OPTIONAL mode (perhaps for custom error handling)
+mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+
+// After mbedtls_ssl_handshake() succeeds:
+uint32_t flags = mbedtls_ssl_get_verify_result(&ssl);
+if (flags != 0) {
+    // FAIL - certificate verification failed
+    char buf[512];
+    mbedtls_x509_crt_verify_info(buf, sizeof(buf), "", flags);
+    // Log/handle error: buf contains human-readable error
+    return error;
+}
+// flags == 0 means verification passed
+```
+
+**Verification Result Flags**:
+| Flag | Meaning |
+|------|---------|
+| `MBEDTLS_X509_BADCERT_EXPIRED` | Certificate expired |
+| `MBEDTLS_X509_BADCERT_REVOKED` | Certificate revoked |
+| `MBEDTLS_X509_BADCERT_CN_MISMATCH` | CN/SAN mismatch (hostname) |
+| `MBEDTLS_X509_BADCERT_NOT_TRUSTED` | Not signed by trusted CA |
+| `MBEDTLS_X509_BADCRL_NOT_TRUSTED` | CRL not trusted |
+| `MBEDTLS_X509_BADCRL_EXPIRED` | CRL expired |
+| `MBEDTLS_X509_BADCERT_MISSING` | No certificate provided |
+| `MBEDTLS_X509_BADCERT_SKIP_VERIFY` | Verification was skipped |
+
+**Incorrect Patterns (Vulnerabilities)**:
+```c
+// FAIL: OPTIONAL without checking result
+mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+mbedtls_ssl_handshake(&ssl);
+// Proceeding without calling mbedtls_ssl_get_verify_result()
+
+// FAIL: Checking result but not handling failure
+flags = mbedtls_ssl_get_verify_result(&ssl);
+// flags not checked - proceeding regardless
+```
+
+### Certificate Presence Check
+
+Unlike OpenSSL, mbedTLS sets `MBEDTLS_X509_BADCERT_MISSING` flag when no certificate is provided, so checking `flags != 0` will catch this case. However, when using `VERIFY_NONE`, you must explicitly check:
+
+```c
+// With VERIFY_NONE, you must get the peer certificate manually
+const mbedtls_x509_crt *peer_cert = mbedtls_ssl_get_peer_cert(&ssl);
+if (peer_cert == NULL) {
+    // FAIL - no certificate provided
+    return error;
+}
+```
+
 **Detection Patterns**:
 - `mbedtls_ssl_conf_authmode(conf, 2)` → PASS (REQUIRED)
 - `mbedtls_ssl_conf_authmode(conf, 0)` → FAIL (NONE)
-- `mbedtls_ssl_conf_authmode(conf, 1)` → FAIL (OPTIONAL without manual check)
+- `mbedtls_ssl_conf_authmode(conf, 1)` + `mbedtls_ssl_get_verify_result()` checked → PASS
+- `mbedtls_ssl_conf_authmode(conf, 1)` without result check → FAIL
 - `mbedtls_ssl_conf_authmode` not called → PASS (default is REQUIRED for clients)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
@@ -138,8 +197,9 @@ This document defines library-specific security rules for mbedTLS-based TLS clie
 | Authmode set to `REQUIRED` (2) | PASS | Verification enabled |
 | Authmode not set (client) | PASS | Default is REQUIRED |
 | Authmode set to `NONE` (0) | FAIL | Verification disabled |
-| Authmode set to `OPTIONAL` (1) | FAIL | Unless manual verification follows |
-| `OPTIONAL` + `mbedtls_ssl_get_verify_result()` checked | PASS | Manual verification |
+| `OPTIONAL` (1) without `mbedtls_ssl_get_verify_result()` check | FAIL | Errors ignored |
+| `OPTIONAL` (1) + `mbedtls_ssl_get_verify_result()` checked for 0 | PASS | Manual verification |
+| `NONE` (0) + `mbedtls_ssl_get_peer_cert()` + manual verification | CONDITIONAL | Check implementation |
 | Authmode from variable | CONDITIONAL | Trace variable |
 | No CA chain loaded | FAIL | Chain cannot be verified |
 
