@@ -161,23 +161,27 @@ Examples:
                 cwd=work_dir,
             )
 
-            # Stream stdout line by line
-            output_lines = []
+            # Stream stdout for progress display
             for line in process.stdout:
                 if not args.quiet:
                     print(line, end="", file=sys.stderr)  # Show progress to stderr
-                output_lines.append(line)
 
             # Wait for process to complete and get stderr
             _, stderr = process.communicate()
 
-    if process.returncode != 0:
-        print(f"Claude Code error: {stderr}", file=sys.stderr)
-        sys.exit(1)
+            if process.returncode != 0:
+                print(f"Claude Code error: {stderr}", file=sys.stderr)
+                sys.exit(1)
+
+            # Read the generated file from temp working directory
+            output_file = Path(work_dir) / "output.md"
+            if not output_file.exists():
+                print("Error: Claude did not generate output.md", file=sys.stderr)
+                sys.exit(1)
+
+            final_output = output_file.read_text()
 
     # Output the final result
-    final_output = "".join(output_lines)
-
     if args.output:
         args.output.write_text(final_output)
         print(f"Rules written to {args.output}", file=sys.stderr)

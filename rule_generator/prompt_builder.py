@@ -107,8 +107,7 @@ When generating rules, you MUST:
    - When did defaults change between versions?
    - Which version introduced secure defaults?
 
-Output the complete rule file in markdown format directly to stdout.
-Do NOT write to any files - just print the markdown content.
+Write the complete rule file to: output.md
 """
 
     return prompt
