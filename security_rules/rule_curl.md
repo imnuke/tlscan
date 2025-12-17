@@ -1,109 +1,385 @@
-# cURL Command-Line Tool SSL/TLS Security Rules
+# curl Command-Line SSL/TLS Security Rules
 
-## 1. SSL/TLS Usage Detection
-**Priority**: MUST
-**Description**: Verify that HTTPS is actually being used in commands/scripts.
+This document defines security rules for curl command-line tool usage in scripts and binaries. Each rule references the corresponding meta-rule(s) from `metarule.md`.
+
+## Meta-Rule Mapping
+
+| Rule | Meta-Rule(s) | Priority | Description |
+|------|--------------|----------|-------------|
+| R1 | M1 | MUST | TLS Usage Detection |
+| R2 | M3, M4 | MUST | Certificate & Hostname Verification (Combined) |
+| R3 | M2 | MUST | Protocol Version Enforcement |
+| R4 | M5 | SHOULD | Cipher Suite Selection |
+| R5 | S1 | SHOULD | Certificate Revocation Checking |
+| R6 | O1 | MAY | Certificate Pinning |
+
+**Notes**:
+- Entropy/RNG (S3) is not applicable to curl CLI as it relies on the underlying SSL backend.
+- R2 combines M3 and M4 because `--insecure`/`-k` disables both certificate chain verification AND hostname verification simultaneously.
+
+## Version Detection Hints
+
+| Pattern | Indicates |
+|---------|-----------|
+| `--tls-max` option | curl 7.54.0+ |
+| `--tlsv1.3` option | curl 7.52.0+ |
+| `--pinnedpubkey` option | curl 7.39.0+ |
+| `--proto-default` option | curl 7.45.0+ |
+| `--ssl-revoke-best-effort` | curl 7.70.0+ |
+
+**Default TLS Version History**:
+| curl Version | Default Minimum | Security |
+|--------------|-----------------|----------|
+| < 7.39.0 | SSLv3 allowed | INSECURE |
+| 7.39.0 - 7.76.x | SSLv3 disabled, TLS 1.0+ | INSECURE |
+| 7.77.0 - 8.15.x | SSL 2/3 refused, TLS 1.0+ | INSECURE |
+| ≥ 8.16.0 | TLS 1.2 minimum | SECURE |
+
+---
+
+## R1: TLS Usage Detection
+
+**Meta-Rule(s)**: M1  |  **Priority**: MUST
+
+**What to Verify**: Confirm HTTPS is used for connections, not HTTP or plaintext.
 
 **Implementation**:
-- Check URL scheme in commands: "https://" vs "http://"
-- Look for `--proto` or `--proto-redir` that might allow HTTP downgrades
-- Check scripts for conditional curl invocation with different protocols
-- Verify no HTTP fallback in error handling
+- URL scheme must be `https://` not `http://`
+- Use `--proto =https` to restrict to HTTPS only
+- Use `--proto-redir =https` to prevent redirect downgrades
+- Default: No protocol restriction - allows HTTP and HTTPS
+
+**Command-Line Options**:
+| Option | Purpose | Secure Usage |
+|--------|---------|--------------|
+| URL argument | Target URL | Must start with `https://` |
+| `--proto` | Allowed protocols | `=https` or `-http` |
+| `--proto-redir` | Protocols for redirects | `=https` or `-http` |
+| `--proto-default` | Default for schemeless URLs | `https` |
 
 **Detection Patterns**:
-- Command patterns: `curl https://` vs `curl http://`
-- Conditional URLs in shell scripts: `curl "$PROTOCOL://example.com"`
-- Protocol restrictions: `--proto =https` (forces HTTPS only)
-- Flags: `--proto`, `--proto-redir`, `--proto-default`
+- URL strings: `https://` vs `http://` in command arguments
+- Protocol restrictions: `--proto =https`, `--proto -all,https`
+- Redirect safety: `--proto-redir =https`
+- Variable URLs: `curl "$URL"`, `curl "${SCHEME}://..."`
 
 **Vulnerability Indicators**:
-- Hardcoded HTTP URLs for sensitive operations
-- Scripts that construct URLs conditionally: `${USE_SSL:+https}://`
+- Hardcoded `http://` URLs for sensitive operations
+- Shell variables constructing URLs: `curl "${USE_SSL:+https}://..."`
 - Missing `--proto =https` when handling sensitive data
-- HTTP fallback after SSL/TLS errors
+- No `--proto-redir` allowing HTTP redirect after HTTPS start
+- Fallback to HTTP in error handling: `curl https://... || curl http://...`
 
-## 2. Certificate Chain Checking
-**Priority**: MUST
-**Description**: Verify the server's certificate chain against trusted CA certificates
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| URL starts with `https://` | PASS | TLS connection |
+| `--proto =https` used | PASS | Only HTTPS allowed |
+| URL starts with `http://` | FAIL | Plaintext connection |
+| Fallback to HTTP on error | FAIL | Downgrade possible |
+| URL from variable | CONDITIONAL | Trace variable source |
+| No `--proto-redir` with HTTPS URL | CONDITIONAL | Redirect may downgrade |
 
-**Implementation**:
-- Default: certificate verification is enabled
-- Specify CA bundle: `--cacert <file>` or `--capath <directory>`
-- **CRITICAL VULNERABILITY**: `--insecure` or `-k` flag disables ALL certificate verification
+---
 
-**Detection Patterns**:
-- Flags: `--cacert`, `--capath`
-- Vulnerability: presence of `--insecure` or `-k` flag in command-line or scripts
+## R2: Certificate & Hostname Verification (Combined)
 
-## 3. Hostname Verification
-**Priority**: MUST
-**Description**: Verify that the certificate matches the hostname
+**Meta-Rule(s)**: M3, M4  |  **Priority**: MUST
 
-**Implementation**:
-- Default: hostname verification is enabled
-- **CRITICAL VULNERABILITY**: `--insecure` or `-k` flag also disables hostname verification
-
-**Detection Patterns**:
-- Vulnerability: presence of `--insecure` or `-k` flag
-
-## 4. Protocol Version
-**Priority**: MUST
-**Description**: Enforce secure TLS versions
+**What to Verify**: Server certificate chain is validated AND certificate identity matches hostname.
 
 **Implementation**:
-- Use `--tlsv1.2` to enforce TLS 1.2 as minimum
-- Use `--tlsv1.3` to enforce TLS 1.3
-- Use `--tls-max <version>` to set maximum version
-- Avoid: `--sslv2`, `--sslv3`, `--tlsv1.0`, `--tlsv1.1` (insecure)
+- Default: Both certificate chain verification AND hostname verification are ENABLED
+- `--insecure` / `-k`: Disables ALL certificate checks (chain AND hostname)
+- `--cacert <file>`: Specify CA certificate bundle
+- `--capath <dir>`: Specify CA certificate directory
+
+**Combined Rule Rationale**: The `--insecure`/`-k` flag disables both M3 (certificate chain verification) and M4 (hostname verification) simultaneously. There is no curl option to disable only one of these checks - they are coupled.
+
+**Command-Line Options**:
+| Option | Purpose | Effect |
+|--------|---------|--------|
+| `--insecure`, `-k` | Skip SSL verification | DISABLES M3 AND M4 |
+| `--cacert <file>` | CA certificate file | Custom trust store |
+| `--capath <dir>` | CA certificate directory | Custom trust store |
+| (default) | Normal verification | SECURE (both M3 and M4) |
+
+**Default Behavior**:
+| Setting | Default | Security |
+|---------|---------|----------|
+| Certificate verification | Enabled | SECURE |
+| Hostname verification | Enabled | SECURE |
 
 **Detection Patterns**:
-- Flags: `--tlsv1.2`, `--tlsv1.3`, `--tls-max`, `--ssl`, `--ssl-reqd`
-- Vulnerability: Not specifying minimum TLS version or using insecure versions
+- `curl ... --insecure` → FAIL (disables M3 AND M4)
+- `curl ... -k` → FAIL (same as --insecure)
+- `curl https://...` (no -k) → PASS (uses defaults)
+- `curl ... --cacert /path/to/ca.crt` → PASS (custom CA, verification enabled)
+- Script variable: `curl $CURL_OPTS` where CURL_OPTS may contain `-k` → CONDITIONAL
 
-## 5. Certificate Pinning
-**Priority**: OPTIONAL (HIGH SECURITY)
-**Description**: Pin specific public keys
+**Vulnerability Indicators**:
+- Presence of `--insecure` or `-k` anywhere in command
+- Environment variables that may inject `-k`: `CURL_OPTIONS`, `CURL_OPTS`
+- Alias definitions: `alias curl='curl -k'`
+- Config file `.curlrc` containing `insecure` option
+
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| No `--insecure`/`-k` flag | PASS | Default verification enabled (M3+M4) |
+| `--cacert` or `--capath` specified | PASS | Custom CA, verification enabled |
+| `--insecure` or `-k` present | FAIL | Both M3 and M4 disabled |
+| Options from variable/config | CONDITIONAL | Trace option source |
+| `.curlrc` file exists | CONDITIONAL | Check for `insecure` setting |
+
+---
+
+## R3: Protocol Version Enforcement
+
+**Meta-Rule(s)**: M2  |  **Priority**: MUST
+
+**What to Verify**: Only TLS 1.2 or higher is negotiated.
 
 **Implementation**:
-- Use `--pinnedpubkey <hashes>` to specify SHA256 public key hashes
-- Format: `sha256//base64hash` or path to file with public key
+- `--tlsv1.2`: Set TLS 1.2 as minimum version
+- `--tlsv1.3`: Set TLS 1.3 as minimum version
+- `--tls-max <version>`: Set maximum TLS version
+- Default: Depends on curl version (see Version Detection Hints)
+
+**Command-Line Options**:
+| Option | Minimum Version | Security |
+|--------|-----------------|----------|
+| `--tlsv1.3` | TLS 1.3 | SECURE |
+| `--tlsv1.2` | TLS 1.2 | SECURE |
+| `--tlsv1.1` | TLS 1.1 | INSECURE |
+| `--tlsv1.0` | TLS 1.0 | INSECURE |
+| `--tlsv1` | TLS 1.0 | INSECURE |
+| `--sslv3` | SSL 3.0 | INSECURE (refused since 7.77.0) |
+| `--sslv2` | SSL 2.0 | INSECURE (refused since 7.77.0) |
+| (none) | curl version dependent | See table below |
+
+**Default Behavior (Version-Dependent)**:
+| curl Version | Default Minimum | Security |
+|--------------|-----------------|----------|
+| < 7.39.0 | SSLv3 allowed | INSECURE |
+| 7.39.0 - 8.15.x | TLS 1.0 | INSECURE |
+| ≥ 8.16.0 | TLS 1.2 | SECURE |
 
 **Detection Patterns**:
-- Flags: `--pinnedpubkey`
-- Implementation: Public key hashes in command-line or config
+- `curl --tlsv1.2 https://...` → PASS (TLS 1.2 minimum)
+- `curl --tlsv1.3 https://...` → PASS (TLS 1.3 minimum)
+- `curl --tlsv1 https://...` → FAIL (allows TLS 1.0)
+- `curl --tlsv1.0 https://...` → FAIL (TLS 1.0)
+- `curl --tlsv1.1 https://...` → FAIL (TLS 1.1)
+- `curl https://...` (no TLS option) → CONDITIONAL (depends on curl version)
 
-## 6. Certificate Revocation
-**Priority**: RECOMMENDED
-**Description**: Check certificate revocation status
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| `--tlsv1.2` or `--tlsv1.3` used | PASS | Secure minimum enforced |
+| `--tlsv1`, `--tlsv1.0`, `--tlsv1.1` | FAIL | Allows insecure protocols |
+| `--sslv2`, `--sslv3` | FAIL | Insecure protocols |
+| No TLS version flag | CONDITIONAL | Depends on curl version |
+| TLS option from variable | CONDITIONAL | Trace variable |
+
+---
+
+## R4: Cipher Suite Selection
+
+**Meta-Rule(s)**: M5  |  **Priority**: SHOULD
+
+**What to Verify**: Strong cipher suites are used, weak ciphers excluded.
 
 **Implementation**:
-- CRL checking: limited support, depends on SSL backend
-- `--ssl-no-revoke`: disables revocation checking (Windows only, insecure)
+- `--ciphers <list>`: Cipher suites for TLS 1.2 and below
+- `--tls13-ciphers <list>`: Cipher suites for TLS 1.3
+- Format depends on SSL backend (OpenSSL, NSS, GnuTLS, etc.)
+- Default: Uses SSL backend default ciphers
+
+**Command-Line Options**:
+| Option | Purpose | Format |
+|--------|---------|--------|
+| `--ciphers` | TLS 1.2 ciphers | Backend-specific |
+| `--tls13-ciphers` | TLS 1.3 ciphers | Backend-specific |
+| `--proxy-ciphers` | Proxy TLS 1.2 ciphers | Backend-specific |
+| `--proxy-tls13-ciphers` | Proxy TLS 1.3 ciphers | Backend-specific |
+
+**Insecure Cipher Patterns** (in cipher string):
+| Pattern | Risk |
+|---------|------|
+| `NULL` | No encryption |
+| `EXPORT` | Weak export ciphers |
+| `RC4` | Broken stream cipher |
+| `DES` | Weak block cipher (56-bit) |
+| `MD5` | Weak hash for HMAC |
+| `aNULL` | No authentication |
+| `eNULL` | No encryption |
+
+**Secure Cipher String Example** (OpenSSL format):
+```
+HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
+```
 
 **Detection Patterns**:
-- Flags: `--ssl-no-revoke`
-- Vulnerability: Using `--ssl-no-revoke` flag
+- `--ciphers 'HIGH:!aNULL:!eNULL'` → PASS (strong ciphers)
+- `--ciphers` containing `NULL`, `EXPORT`, `RC4` → FAIL
+- No `--ciphers` option → CONDITIONAL (uses backend default)
 
-## 7. Cipher Suite Selection
-**Priority**: RECOMMENDED
-**Description**: Restrict cipher suites
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Strong cipher string configured | PASS | Weak ciphers excluded |
+| Cipher string contains weak ciphers | FAIL | Insecure ciphers allowed |
+| No `--ciphers` specified | CONDITIONAL | Uses backend default |
+| Cipher string from variable | CONDITIONAL | Trace variable |
+
+---
+
+## R5: Certificate Revocation Checking
+
+**Meta-Rule(s)**: S1  |  **Priority**: SHOULD
+
+**What to Verify**: Certificate revocation status is checked.
 
 **Implementation**:
-- Use `--ciphers <list>` to specify allowed ciphers
-- Format depends on SSL backend (OpenSSL, NSS, etc.)
+- Revocation checking support varies by SSL backend
+- `--ssl-revoke-best-effort`: Check CRL if available (Windows, curl 7.70.0+)
+- `--ssl-no-revoke`: Disable revocation checking (Windows only)
+- Default: Backend-dependent
+
+**Command-Line Options**:
+| Option | Purpose | Security |
+|--------|---------|----------|
+| `--ssl-revoke-best-effort` | Best-effort CRL check | SECURE |
+| `--ssl-no-revoke` | Disable revocation | INSECURE |
+| (default) | Backend behavior | Variable |
+
+**Platform Notes**:
+| Platform | Default Behavior |
+|----------|------------------|
+| Windows (Schannel) | CRL checking enabled by default |
+| Linux (OpenSSL) | No automatic revocation checking |
+| macOS (SecureTransport) | May use system OCSP |
 
 **Detection Patterns**:
-- Flags: `--ciphers`
-- Vulnerability: Not restricting ciphers or allowing weak ciphers
+- `--ssl-revoke-best-effort` → PASS (revocation enabled)
+- `--ssl-no-revoke` → FAIL (revocation disabled)
+- No revocation option → UNDETERMINED (SHOULD requirement)
 
-## 8. Certificate File Formats
-**Priority**: INFORMATIONAL
-**Description**: Specify certificate file formats if needed
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| `--ssl-revoke-best-effort` used | PASS | Revocation checking enabled |
+| `--ssl-no-revoke` used | FAIL | Revocation checking disabled |
+| No revocation option | UNDETERMINED | SHOULD requirement, backend-dependent |
+
+---
+
+## R6: Certificate Pinning
+
+**Meta-Rule(s)**: O1  |  **Priority**: MAY
+
+**What to Verify**: Certificate or public key pinning is implemented.
 
 **Implementation**:
-- `--cert-type <type>`: PEM (default), DER, P12
-- `--cacert-type <type>`: CA certificate format
-- `--key-type <type>`: private key format
+- `--pinnedpubkey <hashes>`: Pin public key by SHA256 hash
+- Format: `sha256//base64-encoded-hash`
+- Multiple pins: Semicolon-separated
+- Alternative: Path to file containing public key in PEM or DER format
+
+**Command-Line Options**:
+| Option | Purpose | Format |
+|--------|---------|--------|
+| `--pinnedpubkey` | Pin public key | `sha256//hash` or file path |
+
+**Pin Format Examples**:
+```bash
+# Single pin
+curl --pinnedpubkey "sha256//WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=" https://example.com
+
+# Multiple pins (backup)
+curl --pinnedpubkey "sha256//hash1;sha256//hash2" https://example.com
+
+# From file
+curl --pinnedpubkey /path/to/pubkey.pem https://example.com
+```
 
 **Detection Patterns**:
-- Flags: `--cert-type`, `--cacert-type`, `--key-type`
+- `--pinnedpubkey` option present → PASS (pinning enabled)
+- `--pinnedpubkey` not used → UNDETERMINED (optional feature)
+- Pin value from variable → CONDITIONAL (trace pin source)
+
+**PASS/FAIL/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| `--pinnedpubkey` with hash | PASS | Pinning enabled |
+| `--pinnedpubkey` not used | UNDETERMINED | Optional feature |
+| Pin value from variable | CONDITIONAL | Trace pin source |
+
+---
+
+## Script Analysis Patterns
+
+When analyzing shell scripts that use curl, look for these patterns:
+
+### Configuration Files
+
+**`.curlrc` locations** (checked in order):
+1. `$CURL_HOME/.curlrc`
+2. `$HOME/.curlrc`
+3. (Windows) `%APPDATA%\_curlrc`
+
+**Dangerous `.curlrc` contents**:
+```
+insecure
+# or
+-k
+```
+
+### Environment Variables
+
+| Variable | Risk |
+|----------|------|
+| `CURL_CA_BUNDLE` | Custom CA - verify it's valid |
+| `SSL_CERT_FILE` | Custom CA - verify it's valid |
+| `SSL_CERT_DIR` | Custom CA directory |
+
+### Script Patterns to Flag
+
+```bash
+# FAIL: Hardcoded insecure
+curl -k https://...
+curl --insecure https://...
+
+# FAIL: HTTP for sensitive data
+curl http://api.example.com/secrets
+
+# CONDITIONAL: Variable options
+curl $CURL_OPTS https://...
+curl ${CURL_FLAGS} https://...
+
+# CONDITIONAL: Constructed URL
+curl "${PROTOCOL}://example.com"
+
+# FAIL: HTTP fallback
+curl https://... || curl http://...
+
+# CONDITIONAL: Check .curlrc
+if [ -f ~/.curlrc ]; then ...
+```
+
+---
+
+## Result Determination Summary
+
+| Priority | Scenario | Result |
+|----------|----------|--------|
+| MUST | Option explicitly secure | PASS |
+| MUST | Option explicitly insecure | FAIL |
+| MUST | No option, secure default | PASS |
+| MUST | No option, version-dependent default | CONDITIONAL |
+| SHOULD | Feature enabled | PASS |
+| SHOULD | Feature explicitly disabled | FAIL |
+| SHOULD | Feature not configured | UNDETERMINED |
+| MAY | Feature implemented | PASS |
+| MAY | Feature not implemented | UNDETERMINED |

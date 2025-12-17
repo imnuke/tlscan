@@ -255,6 +255,34 @@ When revocation information indicates a certificate is revoked, the client MUST 
 
 ---
 
+### S3: Entropy/RNG Initialization
+
+**Priority**: SHOULD
+
+**RFC Sources**: RFC 4086 (Randomness Requirements for Security)
+
+**Requirement**: TLS implementations SHOULD ensure proper initialization of cryptographic random number generators:
+- MUST seed CSPRNG from adequate entropy sources before key generation
+- SHOULD NOT use deterministic or weak entropy sources (time, PID alone)
+- Embedded systems MUST provide external entropy or hardware RNG
+
+**Evidence**:
+- RFC 4086 §3: "Choosing random quantities to foil a resourceful and motivated adversary is surprisingly difficult"
+- RFC 4086 §5.1: "By far the best sources of randomness are hardware-based"
+- RFC 8446 §C.1: "TLS requires a cryptographically secure pseudorandom number generator (CSPRNG)"
+
+**Violations**:
+- Not initializing RNG before TLS operations
+- Using predictable entropy sources (e.g., time-only seeding, fixed seeds)
+- Missing entropy collection on embedded systems without /dev/random or /dev/urandom
+- Using deprecated or weak RNG functions (e.g., `rand()`, `srand()`)
+
+**Rationale**: Weak RNG compromises all cryptographic operations: key generation, nonce generation, session IDs, and random padding. This is especially critical for embedded/IoT systems where traditional entropy sources (hardware interrupts, disk timing, user input) may not exist.
+
+**Note**: Priority is SHOULD because proper RNG initialization is typically handled by the underlying library when adequate system entropy is available. Explicit handling is primarily needed for embedded systems without /dev/random or hardware RNG.
+
+---
+
 ## MAY Requirements
 
 ### O1: Certificate Pinning
@@ -283,6 +311,62 @@ Implementations SHOULD include backup pins to prevent lockout.
 
 ---
 
+## Guidance for Library-Specific Rules
+
+When creating library-specific rules that implement these meta-rules, the following aspects MUST be considered and documented:
+
+### 1. Alternative Verification Patterns
+
+A meta-rule violation (e.g., "verification disabled") may still be secure if the library provides an alternative mechanism. Document ALL valid implementation patterns.
+
+If a "disabled" mode can be made secure with additional steps, document:
+1. The complete sequence of required function calls
+2. What makes the implementation secure vs insecure
+3. Common mistakes that appear correct but are vulnerable
+
+### 2. Known Library Bugs and Quirks
+
+Document known bugs, counterintuitive behaviors, or edge cases from library documentation (man pages, NOTES, BUGS sections).
+
+For each verification function, check:
+1. What happens when no certificate is provided?
+2. Are there known bugs that affect security?
+3. What are the edge cases where the function behaves unexpectedly?
+
+### 3. Custom Callback Requirements
+
+When libraries support custom verification callbacks, document what makes a callback secure:
+
+1. Required parameters that MUST be checked
+2. Expected return values for secure behavior
+3. Common insecure callback patterns (e.g., always returning success)
+
+### 4. Legacy API Patterns
+
+For libraries with long histories, document older API patterns still found in production code:
+
+1. When the modern API was introduced
+2. What older code uses instead
+3. Common vulnerabilities in legacy implementations
+
+### 5. Return Value Semantics
+
+Different libraries use different conventions for success/failure indicators. Document:
+
+1. How to check for success vs failure
+2. Whether additional status checks are required
+3. Common mistakes in error handling
+
+### 6. Version-Dependent Behavior
+
+Document when library defaults changed between versions:
+
+1. A table showing behavior changes across versions
+2. Which version introduced secure defaults
+3. How to detect library version in binaries
+
+---
+
 ## References
 
 ### Primary RFCs
@@ -293,6 +377,7 @@ Implementations SHOULD include backup pins to prevent lockout.
 | RFC 8174 | Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words | 2017 | BCP 14 |
 | RFC 9325 | Recommendations for Secure Use of TLS and DTLS | 2022 | BCP 195 |
 | RFC 8996 | Deprecating TLS 1.0 and TLS 1.1 | 2021 | BCP 195 |
+| RFC 4086 | Randomness Requirements for Security | 2005 | BCP 106 |
 | RFC 8446 | The Transport Layer Security (TLS) Protocol Version 1.3 | 2018 | Standards Track |
 | RFC 5280 | Internet X.509 PKI Certificate and CRL Profile | 2008 | Standards Track |
 | RFC 9525 | Service Identity in TLS | 2023 | Standards Track |
