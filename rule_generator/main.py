@@ -2,6 +2,7 @@
 """CLI entry point for the rule generator."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -136,6 +137,16 @@ Examples:
             credentials_file = user_config / ".credentials.json"
             if credentials_file.exists():
                 shutil.copy(credentials_file, Path(config_dir) / ".credentials.json")
+
+            # Create settings to allow web tools
+            settings = {
+                "permissions": {
+                    "allow": ["WebSearch", "WebFetch", "Read", "Glob", "Grep", "Write"],
+                    "defaultMode": "acceptEdits",
+                }
+            }
+            settings_path = Path(config_dir) / "settings.json"
+            settings_path.write_text(json.dumps(settings))
 
             env = os.environ.copy()
             env["CLAUDE_CONFIG_DIR"] = config_dir
