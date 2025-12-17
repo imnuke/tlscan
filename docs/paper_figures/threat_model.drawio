@@ -1,90 +1,160 @@
-<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0" version="29.2.1">
-  <diagram id="_Xb4aLSiq2GN7rbYBg37" name="threat_model">
-    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+<mxfile host="app.diagrams.net" agent="Claude Code" version="29.2.1">
+  <diagram id="threat_model" name="Threat Model">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="850" pageHeight="450" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-1" parent="1" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" value="Cloud Server" vertex="1">
-          <mxGeometry height="60" width="110" x="278" y="150" as="geometry" />
+
+        <!-- ==================== PANEL (a) ==================== -->
+
+        <!-- Panel (a) Container -->
+        <mxCell id="panel_a" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#AAAAAA;strokeWidth=1;dashed=1;dashPattern=4 4;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="390" height="400" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-8" edge="1" parent="1" source="C7jKB3fgUxIm3b1_o-_2-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.34;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.44;entryY=0.941;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;" target="C7jKB3fgUxIm3b1_o-_2-1">
+
+        <!-- Panel (a) Title -->
+        <mxCell id="title_a" value="(a) Credential Interception" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="30" width="390" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (a) Subtitle -->
+        <mxCell id="subtitle_a" value="(Device → Cloud)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="20" y="50" width="390" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (a) - Embedded Device -->
+        <mxCell id="device_a" value="Embedded&#xa;Device" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="90" width="90" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (a) - Cloud Server -->
+        <mxCell id="cloud_a" value="Cloud&#xa;Server" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="280" y="85" width="100" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (a) - Attacker -->
+        <mxCell id="attacker_a" value="Attacker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8E8E8;strokeColor=#000000;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="170" y="175" width="90" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (a) - Arrow: Device to Attacker -->
+        <mxCell id="arrow_a_dev_att" value="" style="endArrow=classic;html=1;strokeWidth=1.5;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="device_a" target="attacker_a">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="325" y="320" />
-              <mxPoint x="326" y="320" />
+              <mxPoint x="105" y="198" />
             </Array>
-            <mxPoint x="325.20000000000005" y="250" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-2" parent="1" style="fillColorStyles=neutralFill;neutralFill=#9DA6A8;shape=mxgraph.networks2.icon;aspect=fixed;fillColor=#EDEDED;strokeColor=#000000;gradientColor=#5B6163;network2IconShadow=1;network2bgFillColor=none;network2Icon=mxgraph.networks2.nas_filer;network2IconW=1;network2IconH=0.62;points=[[0.34,0,0,0,0],[0.66,0,0,0,0]];" value="" vertex="1">
-          <mxGeometry height="31" width="50" x="308" y="430" as="geometry" />
+
+        <!-- Panel (a) - Arrow: Attacker to Cloud -->
+        <mxCell id="arrow_a_att_cloud" value="" style="endArrow=classic;html=1;strokeWidth=1.5;strokeColor=#000000;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=0.75;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="attacker_a" target="cloud_a">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="320" y="198" />
+            </Array>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-9" edge="1" parent="1" source="C7jKB3fgUxIm3b1_o-_2-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.55;exitY=0.95;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.66;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;" target="C7jKB3fgUxIm3b1_o-_2-2">
+
+        <!-- Panel (a) - Data Box -->
+        <mxCell id="data_a" value="&lt;font face=&quot;Courier New&quot;&gt;&lt;span style=&quot;font-size: 9px;&quot;&gt;username=&lt;b&gt;admin&lt;/b&gt;&lt;br&gt;password=&lt;b&gt;secret&lt;/b&gt;&lt;/span&gt;&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F8F8F8;strokeColor=#999999;strokeWidth=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="115" y="255" width="200" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (a) - Arrow: Attacker to Data -->
+        <mxCell id="arrow_a_att_data" value="" style="endArrow=classic;html=1;strokeWidth=1.5;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="attacker_a" target="data_a">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-10" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="&lt;div&gt;&lt;font face=&quot;Courier New&quot; style=&quot;font-size: 10px;&quot;&gt;Response:&lt;/font&gt;&lt;/div&gt;&lt;div&gt;&lt;font face=&quot;Courier New&quot; style=&quot;font-size: 10px;&quot;&gt;download_url=https://real.vendor.net&lt;/font&gt;&lt;/div&gt;" vertex="1">
-          <mxGeometry height="60" width="140" x="428" y="180" as="geometry" />
+
+        <!-- Panel (a) - Intercept Label -->
+        <mxCell id="label_a_intercept" value="intercepts" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=8;fontStyle=2;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="190" y="233" width="50" height="15" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-7" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="&lt;div align=&quot;left&quot;&gt;&lt;font style=&quot;font-size: 10px;&quot; face=&quot;Courier New&quot;&gt;Request:&lt;/font&gt;&lt;/div&gt;&lt;div align=&quot;left&quot;&gt;&lt;font style=&quot;font-size: 10px;&quot; face=&quot;Courier New&quot;&gt;username=&lt;span style=&quot;color: rgb(255, 20, 59);&quot;&gt;admin&lt;/span&gt;&lt;/font&gt;&lt;/div&gt;&lt;div align=&quot;left&quot;&gt;&lt;font style=&quot;font-size: 10px;&quot; face=&quot;Courier New&quot;&gt;password=&lt;span style=&quot;color: rgb(255, 20, 59);&quot;&gt;nobodyknows&lt;/span&gt;&lt;/font&gt;&lt;/div&gt;&lt;div align=&quot;left&quot;&gt;&lt;font style=&quot;font-size: 10px;&quot; face=&quot;Courier New&quot;&gt;func=download_firmware&lt;/font&gt;&lt;/div&gt;" vertex="1">
-          <mxGeometry height="60" width="146" x="120" y="341" as="geometry" />
+
+        <!-- Panel (a) - Consequence Box -->
+        <mxCell id="consequence_a" value="Information Leakage" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CCCCCC;strokeColor=#000000;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="115" y="340" width="200" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-17" edge="1" parent="1" style="curved=1;endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="C7jKB3fgUxIm3b1_o-_2-12" value="">
-          <mxGeometry height="50" relative="1" width="50" as="geometry">
+
+        <!-- Panel (a) - Arrow: Data to Consequence -->
+        <mxCell id="arrow_a_data_conseq" value="" style="endArrow=classic;html=1;strokeWidth=1.5;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="data_a" target="consequence_a">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== PANEL (b) ==================== -->
+
+        <!-- Panel (b) Container -->
+        <mxCell id="panel_b" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#AAAAAA;strokeWidth=1;dashed=1;dashPattern=4 4;" vertex="1" parent="1">
+          <mxGeometry x="440" y="20" width="390" height="400" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (b) Title -->
+        <mxCell id="title_b" value="(b) Response Tampering" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="440" y="30" width="390" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (b) Subtitle -->
+        <mxCell id="subtitle_b" value="(Cloud → Device)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=10;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="440" y="50" width="390" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (b) - Embedded Device -->
+        <mxCell id="device_b" value="Embedded&#xa;Device" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="480" y="90" width="90" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (b) - Cloud Server -->
+        <mxCell id="cloud_b" value="Cloud&#xa;Server" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="85" width="100" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (b) - Attacker -->
+        <mxCell id="attacker_b" value="Attacker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8E8E8;strokeColor=#000000;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="590" y="175" width="90" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Panel (b) - Arrow: Cloud to Attacker -->
+        <mxCell id="arrow_b_cloud_att" value="" style="endArrow=classic;html=1;strokeWidth=1.5;strokeColor=#000000;exitX=0.25;exitY=0.75;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="cloud_b" target="attacker_b">
+          <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="238" y="380" />
+              <mxPoint x="720" y="198" />
             </Array>
-            <mxPoint x="298" y="440" as="sourcePoint" />
-            <mxPoint x="168" y="320" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-18" connectable="0" parent="1" style="group" value="" vertex="1">
-          <mxGeometry height="58" width="58" x="208" y="250" as="geometry" />
-        </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-13" parent="C7jKB3fgUxIm3b1_o-_2-18" style="image;points=[];aspect=fixed;html=1;align=center;shadow=0;dashed=0;image=img/lib/allied_telesis/computer_and_terminals/Personal_Computer.svg;" value="" vertex="1">
-          <mxGeometry height="28" width="20.66" x="37.34000000000003" y="30" as="geometry" />
-        </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-12" parent="C7jKB3fgUxIm3b1_o-_2-18" style="shape=image;html=1;verticalAlign=top;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;imageAspect=0;aspect=fixed;image=https://cdn0.iconfinder.com/data/icons/kameleon-free-pack/110/Hacker-128.png" value="" vertex="1">
-          <mxGeometry height="58" width="58" as="geometry" />
-        </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-20" edge="1" parent="1" source="C7jKB3fgUxIm3b1_o-_2-12" style="curved=1;endArrow=classic;html=1;rounded=0;exitX=0.75;exitY=0;exitDx=0;exitDy=0;" value="">
-          <mxGeometry height="50" relative="1" width="50" as="geometry">
+
+        <!-- Panel (b) - Arrow: Attacker to Device -->
+        <mxCell id="arrow_b_att_dev" value="" style="endArrow=classic;html=1;strokeWidth=1.5;strokeColor=#000000;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="attacker_b" target="device_b">
+          <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="268" y="220" />
+              <mxPoint x="525" y="198" />
             </Array>
-            <mxPoint x="258" y="260" as="sourcePoint" />
-            <mxPoint x="308" y="210" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-21" edge="1" parent="1" style="curved=1;endArrow=classic;html=1;rounded=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" target="C7jKB3fgUxIm3b1_o-_2-24" value="">
-          <mxGeometry height="50" relative="1" width="50" as="geometry">
-            <Array as="points">
-              <mxPoint x="438" y="220" />
-            </Array>
-            <mxPoint x="378" y="210" as="sourcePoint" />
-            <mxPoint x="428" y="160" as="targetPoint" />
-          </mxGeometry>
+
+        <!-- Panel (b) - Data Box -->
+        <mxCell id="data_b" value="&lt;font face=&quot;Courier New&quot;&gt;&lt;span style=&quot;font-size: 9px;&quot;&gt;download_url=&lt;br&gt;&lt;b&gt;attacker.com/mal.bin&lt;/b&gt;&lt;/span&gt;&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F8F8F8;strokeColor=#999999;strokeWidth=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="535" y="255" width="200" height="45" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-22" connectable="0" parent="1" style="group" value="" vertex="1">
-          <mxGeometry height="58" width="58" x="428" y="282" as="geometry" />
+
+        <!-- Panel (b) - Arrow: Attacker to Data -->
+        <mxCell id="arrow_b_att_data" value="" style="endArrow=classic;html=1;strokeWidth=1.5;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="attacker_b" target="data_b">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-23" parent="C7jKB3fgUxIm3b1_o-_2-22" style="image;points=[];aspect=fixed;html=1;align=center;shadow=0;dashed=0;image=img/lib/allied_telesis/computer_and_terminals/Personal_Computer.svg;" value="" vertex="1">
-          <mxGeometry height="28" width="20.66" x="37.34000000000003" y="30" as="geometry" />
+
+        <!-- Panel (b) - Modify Label -->
+        <mxCell id="label_b_modify" value="modifies" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=8;fontStyle=2;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="610" y="233" width="50" height="15" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-24" parent="C7jKB3fgUxIm3b1_o-_2-22" style="shape=image;html=1;verticalAlign=top;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;imageAspect=0;aspect=fixed;image=https://cdn0.iconfinder.com/data/icons/kameleon-free-pack/110/Hacker-128.png" value="" vertex="1">
-          <mxGeometry height="58" width="58" as="geometry" />
+
+        <!-- Panel (b) - Consequence Box -->
+        <mxCell id="consequence_b" value="Code/Command Execution" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CCCCCC;strokeColor=#000000;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="535" y="340" width="200" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-25" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="&lt;div&gt;&lt;font face=&quot;Courier New&quot; style=&quot;font-size: 10px;&quot;&gt;Response:&lt;/font&gt;&lt;/div&gt;&lt;div&gt;&lt;font face=&quot;Courier New&quot; style=&quot;font-size: 10px;&quot;&gt;download_url=https://&lt;span style=&quot;color: rgb(255, 20, 59);&quot;&gt;fake.hacker.net&lt;/span&gt;&lt;/font&gt;&lt;/div&gt;" vertex="1">
-          <mxGeometry height="60" width="140" x="442" y="362" as="geometry" />
+
+        <!-- Panel (b) - Arrow: Data to Consequence -->
+        <mxCell id="arrow_b_data_conseq" value="" style="endArrow=classic;html=1;strokeWidth=1.5;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="data_b" target="consequence_b">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="C7jKB3fgUxIm3b1_o-_2-26" edge="1" parent="1" source="C7jKB3fgUxIm3b1_o-_2-24" style="curved=1;endArrow=classic;html=1;rounded=0;exitX=0.25;exitY=1;exitDx=0;exitDy=0;" value="">
-          <mxGeometry height="50" relative="1" width="50" as="geometry">
-            <Array as="points">
-              <mxPoint x="438" y="420" />
-            </Array>
-            <mxPoint x="398" y="410" as="sourcePoint" />
-            <mxPoint x="368" y="450" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
+
       </root>
     </mxGraphModel>
   </diagram>
