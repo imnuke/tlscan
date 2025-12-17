@@ -77,6 +77,11 @@ Security rule definitions (Markdown):
 - `rule_openssl.md`, `rule_curl.md`, `rule_libcurl.md`, `rule_gnutls.md`, `rule_socket.md`, etc.
 - `metarule.md`: RFC-grounded security requirements (MUST/SHOULD/MAY)
 
+### `/paper/`
+Academic paper materials for top security conference submission (S&P, USENIX Security, CCS, NDSS):
+- **`figures/`**: Draw.io diagrams (threat model, system overview, etc.)
+- **`writing/`**: Manuscript sections and drafts
+
 ## Entry Point & CLI
 
 **Main Entry**: `conn_analyzer_new.py` → `conn_analyzer/cli.py`
@@ -329,6 +334,7 @@ Use these scopes for conventional commit messages:
 | `cli` | Command-line interface, argument parsing | `feat(cli): add --list-threads flag` |
 | `rules` | Security rule definitions | `docs(rules): update openssl rule` |
 | `config` | Configuration loading, llm_config | `fix(config): validate api keys` |
+| `paper` | Academic paper materials (figures, writing) | `docs(paper): add threat model figure` |
 | `logging` | Logging, output formatting, reporting | `refactor(logging): improve state diffs` |
 
 **Guidelines**:
