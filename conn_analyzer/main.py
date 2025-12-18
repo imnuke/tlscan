@@ -39,7 +39,9 @@ from conn_analyzer.agents.factory import AgentFactory
 from conn_analyzer.graph.state import create_initial_state
 from conn_analyzer.graph.workflow import create_analysis_graph, run_analysis
 from conn_analyzer.graph.report_formatter import format_and_display_report
+from conn_analyzer.graph.models import LibraryVersions
 from conn_analyzer.utils.state_logging import display_final_state
+from conn_analyzer.firmware_cache import FirmwareCache
 
 from conn_analyzer.static_analysis import firmware_tools
 
@@ -299,6 +301,36 @@ async def main(
             console.print(f"[green]✓ Firmware tools ready ({len(firmware_tools_list)} tools)[/green]")
             console.print()
 
+        # 8.5 Load library versions from firmware cache (if firmware provided)
+        library_versions = None
+        if firmware_path:
+            cache = FirmwareCache(firmware_path)
+            if cache.exists():
+                console.print("[cyan]📦 Loading cached library versions...[/cyan]")
+                cached_data = cache.load_versions()
+                if cached_data:
+                    library_versions = LibraryVersions.from_cache(cached_data, file_path)
+
+                    # Display detected versions
+                    if library_versions.firmware_libraries:
+                        console.print("[dim]  Firmware libraries:[/dim]")
+                        for lib_id, ver in sorted(library_versions.firmware_libraries.items()):
+                            if ver.version:
+                                console.print(f"[dim]    └─ {lib_id}: {ver.version} ({ver.confidence.value} confidence)[/dim]")
+
+                    if library_versions.libraries:
+                        console.print("[dim]  Binary requirements:[/dim]")
+                        for lib_id, ver in sorted(library_versions.libraries.items()):
+                            if ver.version:
+                                console.print(f"[dim]    └─ {lib_id}: {ver.version} ({ver.confidence.value} confidence)[/dim]")
+
+                    console.print("[green]✓ Library versions loaded[/green]")
+                else:
+                    console.print("[yellow]⚠ Cache exists but could not be loaded[/yellow]")
+            else:
+                console.print("[yellow]⚠ No version cache found. Run 'scan_network_clients.py --save-cache' first.[/yellow]")
+            console.print()
+
         # 9. Create LangGraph workflow with dependency injection and checkpointing
         console.print("[cyan]🎯 Building analysis workflow graph...[/cyan]")
         graph = create_analysis_graph(
@@ -316,6 +348,7 @@ async def main(
             binary_path=file_path,
             security_rules=security_rules_content,
             file_type=file_type,
+            library_versions=library_versions,
         )
 
         # If fork_checkpoint_id is provided, use already-loaded state for forking

@@ -513,6 +513,190 @@ class RuleTraceLink(BaseModel):
 
 
 # ============================================================================
+# Library Version Detection Models
+# ============================================================================
+
+class VersionConfidence(str, Enum):
+    """Confidence level for detected library version."""
+
+    HIGH = "high"      # Version string found directly
+    MEDIUM = "medium"  # SONAME or symbol versioning
+    LOW = "low"        # Inferred from API presence only
+    NONE = "none"      # Could not determine
+
+
+class VersionDetectionMethod(str, Enum):
+    """Method used to detect library version."""
+
+    VERSION_STRING = "version_string"    # Direct version string in .rodata
+    SONAME = "soname"                    # From DT_SONAME
+    VERDEF = "verdef"                    # Symbol versioning VERDEF section
+    VERNEED = "verneed"                  # Symbol versioning VERNEED section
+    API_INFERENCE = "api_inference"      # Based on presence of version-specific APIs
+
+
+class LibraryVersion(BaseModel):
+    """
+    Version information for a detected library.
+
+    Stores the detected version along with confidence level, detection method,
+    and supporting details for traceability.
+    """
+
+    library: str = Field(
+        description="Library identifier (e.g., 'openssl', 'libcurl', 'gnutls', 'mbedtls')"
+    )
+
+    version: Optional[str] = Field(
+        None,
+        description="Detected version string (e.g., '1.1.1k', '7.68.0', '>=1.1.0')"
+    )
+
+    version_major: Optional[int] = Field(
+        None,
+        description="Major version number for comparison"
+    )
+
+    version_minor: Optional[int] = Field(
+        None,
+        description="Minor version number for comparison"
+    )
+
+    version_patch: Optional[int] = Field(
+        None,
+        description="Patch version number for comparison"
+    )
+
+    confidence: VersionConfidence = Field(
+        default=VersionConfidence.NONE,
+        description="Confidence level of version detection"
+    )
+
+    detection_method: VersionDetectionMethod = Field(
+        default=VersionDetectionMethod.API_INFERENCE,
+        description="Method used to detect the version"
+    )
+
+    source_path: Optional[str] = Field(
+        None,
+        description="Path to library file if detected from .so file (relative to firmware root)"
+    )
+
+    soname: Optional[str] = Field(
+        None,
+        description="SONAME if available (e.g., 'libssl.so.1.1')"
+    )
+
+    details: str = Field(
+        default="",
+        description="Additional detection details (e.g., 'Found: OpenSSL 1.1.1k 25 Mar 2021')"
+    )
+
+    required_symbols: List[str] = Field(
+        default_factory=list,
+        description="List of required symbol versions from VERNEED (e.g., ['OPENSSL_1_1_0'])"
+    )
+
+
+class LibraryVersions(BaseModel):
+    """
+    Collection of library versions for analysis.
+
+    Contains both firmware-level library versions (from .so files) and
+    binary-specific version requirements (from VERNEED sections).
+    """
+
+    binary_path: str = Field(
+        description="Path to the binary being analyzed"
+    )
+
+    libraries: Dict[str, LibraryVersion] = Field(
+        default_factory=dict,
+        description="Detected library versions for the binary being analyzed (keyed by library id)"
+    )
+
+    firmware_libraries: Dict[str, LibraryVersion] = Field(
+        default_factory=dict,
+        description="Library versions found in firmware .so files (keyed by library id)"
+    )
+
+    @classmethod
+    def from_cache(cls, cache_data: Dict, binary_path: str) -> "LibraryVersions":
+        """Create LibraryVersions from cached JSON data.
+
+        Args:
+            cache_data: Data loaded from library_versions.json cache
+            binary_path: Path to the binary being analyzed
+
+        Returns:
+            LibraryVersions instance populated from cache
+        """
+        from pathlib import Path
+
+        result = cls(binary_path=binary_path)
+
+        # Load firmware-level library versions
+        for lib_id, lib_data in cache_data.get("firmware_libraries", {}).items():
+            result.firmware_libraries[lib_id] = LibraryVersion(
+                library=lib_id,
+                version=lib_data.get("version"),
+                confidence=VersionConfidence(lib_data.get("confidence", "none")),
+                detection_method=VersionDetectionMethod(lib_data.get("method", "api_inference")),
+                source_path=lib_data.get("source_path"),
+                soname=lib_data.get("soname"),
+                details=lib_data.get("details", ""),
+                required_symbols=lib_data.get("required_symbols", []),
+            )
+
+        # Load binary-specific versions
+        # Try to find matching binary in cache (use relative path)
+        binary_versions = cache_data.get("binary_versions", {})
+        for cached_path, libs in binary_versions.items():
+            # Match by basename or full path
+            if binary_path.endswith(cached_path) or cached_path.endswith(Path(binary_path).name):
+                for lib_id, lib_data in libs.items():
+                    result.libraries[lib_id] = LibraryVersion(
+                        library=lib_id,
+                        version=lib_data.get("version"),
+                        confidence=VersionConfidence(lib_data.get("confidence", "none")),
+                        detection_method=VersionDetectionMethod(lib_data.get("method", "api_inference")),
+                        soname=lib_data.get("soname"),
+                        details=lib_data.get("details", ""),
+                        required_symbols=lib_data.get("required_symbols", []),
+                    )
+                break
+
+        return result
+
+    def format_for_prompt(self) -> str:
+        """Format library versions for inclusion in agent prompts.
+
+        Returns:
+            Human-readable string describing detected versions
+        """
+        lines = []
+
+        # Binary-specific versions first
+        if self.libraries:
+            lines.append("Binary library requirements:")
+            for lib_id, ver in sorted(self.libraries.items()):
+                if ver.version:
+                    lines.append(f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence, {ver.detection_method.value})")
+
+        # Firmware library versions
+        if self.firmware_libraries:
+            if lines:
+                lines.append("")
+            lines.append("Firmware library versions:")
+            for lib_id, ver in sorted(self.firmware_libraries.items()):
+                if ver.version:
+                    source = f" from {ver.source_path}" if ver.source_path else ""
+                    lines.append(f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence){source}")
+
+        return "\n".join(lines) if lines else "No library versions detected"
+
+
+# ============================================================================
 # Firmware Analysis Models
 # ============================================================================
 

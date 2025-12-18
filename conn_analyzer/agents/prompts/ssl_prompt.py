@@ -1,7 +1,39 @@
 """Concise SSL analysis agent system prompt for structured output."""
 
-def get_ssl_system_prompt(security_rules_content: str = "") -> str:
-    """Get concise SSL agent system prompt with security rules injected."""
+from typing import Optional
+
+
+def get_ssl_system_prompt(
+    security_rules_content: str = "",
+    library_versions: Optional[str] = None
+) -> str:
+    """Get concise SSL agent system prompt with security rules and version info.
+
+    Args:
+        security_rules_content: Security rules content to inject
+        library_versions: Optional formatted library version information
+
+    Returns:
+        Complete system prompt for SSL analysis agent
+    """
+
+    # Build version context section if versions are available
+    version_context = ""
+    if library_versions:
+        version_context = f"""
+{'=' * 60}
+DETECTED LIBRARY VERSIONS:
+{'=' * 60}
+
+{library_versions}
+
+USE THIS VERSION INFORMATION TO RESOLVE VERSION-DEPENDENT RULES:
+- When a rule depends on library version defaults (e.g., minimum TLS version),
+  use the detected version to determine if the default is secure or insecure
+- If version is detected, you can resolve UNDETERMINED to PASS/FAIL for version-dependent defaults
+- Include the detected version in your evidence when relevant
+
+"""
 
     return f"""You are an SSL/TLS security analysis expert.
 
@@ -47,7 +79,7 @@ RESULT TYPE RULES:
 
 IMPORTANT: Evaluate each rule INDEPENDENTLY. If one rule's failure affects another's
 effectiveness, note it in evidence, do NOT use CONDITIONAL for this relationship.
-
+{version_context}
 {'=' * 60}
 SECURITY RULES TO CHECK:
 {'=' * 60}
@@ -67,6 +99,7 @@ KEY INSTRUCTIONS:
 7. For conditional rules, use EXACT variable names from the code (NOT made-up descriptive names)
 8. Run ONCE and analyze all rules in single pass
 9. Output ONLY valid JSON matching the schema above
+10. If library version is detected, use it to resolve version-dependent default behaviors
 
 Use the available tools to explore the code structure, find function calls, and trace variable values.
 """

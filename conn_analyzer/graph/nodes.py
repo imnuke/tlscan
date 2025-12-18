@@ -152,10 +152,15 @@ async def ssl_analysis_node(
         # Get script tools for script analysis
         tools = static_engine.get_script_tools(binary_path)
 
+    # Get library version info for version-dependent rules
+    library_versions = state.get("library_versions")
+    library_versions_str = library_versions.format_for_prompt() if library_versions else None
+
     # Create SSL agent with structured output
     ssl_agent = agent_factory.create_ssl_agent(
         tools=tools,
-        security_rules_content=security_rules
+        security_rules_content=security_rules,
+        library_versions=library_versions_str
     )
 
     # Execute SSL agent
