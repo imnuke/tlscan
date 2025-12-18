@@ -185,7 +185,7 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 - `wget --secure-protocol=PFS https://...` → PASS (if OpenSSL supports TLS 1.2+)
 - `wget --secure-protocol=TLSv1 https://...` → FAIL
 - `wget --secure-protocol=SSLv3 https://...` → FAIL
-- `wget https://...` (no protocol option) → CONDITIONAL (depends on system)
+- `wget https://...` (no protocol option) → UNDETERMINED (system-dependent default)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -194,7 +194,7 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | `--secure-protocol=PFS` | PASS | Forward secrecy enforced |
 | `--secure-protocol=TLSv1`, `TLSv1_1` | FAIL | Insecure protocol |
 | `--secure-protocol=SSLv2`, `SSLv3` | FAIL | Insecure protocol |
-| `--secure-protocol=auto` or not set | CONDITIONAL | Depends on system |
+| `--secure-protocol=auto` or not set | UNDETERMINED | Depends on system (not traceable) |
 | Protocol option from variable | CONDITIONAL | Trace variable |
 
 ---

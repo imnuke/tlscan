@@ -182,7 +182,7 @@ For [library] versions prior to [version], applications must use:
 | [Alternative pattern with all checks] | PASS | Manual verification complete |
 | [Alternative pattern missing checks] | FAIL | [Which check is missing] |
 | [Value from variable/config] | CONDITIONAL | Trace variable |
-| [Version-dependent default] | CONDITIONAL | Depends on [library] version |
+| [Version-dependent default] | UNDETERMINED | Depends on [library] version (not traceable) |
 | [Cannot determine] | UNDETERMINED | [Why undetermined] |
 ```
 
@@ -232,7 +232,7 @@ For rules that don't map to meta-rules but are important for the specific librar
 | MUST | Option explicitly set to secure value | PASS |
 | MUST | Option NOT set, default is secure | PASS |
 | MUST | Option explicitly set to insecure value | FAIL |
-| MUST | Option NOT set, default is version-dependent | CONDITIONAL |
+| MUST | Option NOT set, default is version-dependent | UNDETERMINED |
 | MUST | Option set to runtime variable | CONDITIONAL |
 | SHOULD | Feature enabled | PASS |
 | SHOULD | Feature explicitly disabled | FAIL |
@@ -272,9 +272,11 @@ Add LS rules for:
 ### Handling Version-Dependent Defaults
 
 1. **Document version history** in a table showing when defaults changed
-2. **Mark as CONDITIONAL** when relying on default that varies by version
-3. **PASS only** when explicitly set to secure value (version-independent)
-4. **Include version detection hints** to help identify library version
+2. **Mark as UNDETERMINED** when relying on default that varies by version (not traceable)
+3. **Mark as CONDITIONAL** only when a traceable code variable controls the behavior
+4. **PASS only** when explicitly set to secure value (version-independent)
+5. **Include version detection hints** for informational purposes
+6. **Document version requirements** in the evidence field
 
 ### When Meta-Rules Are N/A
 

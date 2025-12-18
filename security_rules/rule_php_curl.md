@@ -267,7 +267,7 @@ curl_setopt($ch, CURLOPT_SSLVERSION, 0);
 |----------|--------|--------|
 | `CURLOPT_SSLVERSION` ≥ 6 | PASS | TLS 1.2+ enforced |
 | `CURLOPT_SSLVERSION` 1-5 | FAIL | Allows insecure protocols |
-| `CURLOPT_SSLVERSION` = 0 or not set | CONDITIONAL | Depends on libcurl version |
+| `CURLOPT_SSLVERSION` = 0 or not set | UNDETERMINED | Depends on libcurl version (not traceable) |
 | Value from variable | CONDITIONAL | Trace variable |
 
 ---
