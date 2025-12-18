@@ -204,7 +204,7 @@ curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $config['verify_host']);
 ```
 
-**Cross-Rule Note**: Hostname verification (R3) is only meaningful if certificate verification (R2) is also enabled. Document in evidence if R2 fails.
+**Security Note**: CURLOPT_SSL_VERIFYHOST operates independently of CURLOPT_SSL_VERIFYPEER per libcurl documentation. Evaluate R3 based solely on VERIFYHOST setting. If R2 fails, note the combined security impact in evidence but do NOT change R3's result.
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
