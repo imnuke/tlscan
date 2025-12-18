@@ -216,7 +216,7 @@ class RuleResult(BaseModel):
     """
 
     rule_id: str = Field(
-        description="Unique rule identifier (e.g., 'rule_certificate_chain_verification')"
+        description="Unique rule identifier matching rule header (e.g., 'R2')"
     )
 
     rule_name: str = Field(
