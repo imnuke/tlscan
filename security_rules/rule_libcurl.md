@@ -219,14 +219,14 @@ This document defines library-specific security rules for libcurl-based TLS clie
 - `curl_easy_setopt(handle, 32, 6)` → PASS (TLS 1.2 minimum)
 - `curl_easy_setopt(handle, 32, 7)` → PASS (TLS 1.3 minimum)
 - `curl_easy_setopt(handle, 32, value < 6)` → FAIL (allows insecure versions)
-- No call to option 32 → CONDITIONAL (depends on libcurl version)
+- No call to option 32 → UNDETERMINED (version-dependent default)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `CURLOPT_SSLVERSION` ≥ 6 | PASS | TLS 1.2+ enforced |
 | `CURLOPT_SSLVERSION` < 6 and > 0 | FAIL | Allows insecure protocols |
-| `CURLOPT_SSLVERSION` = 0 or not set | CONDITIONAL | Depends on libcurl version |
+| `CURLOPT_SSLVERSION` = 0 or not set | UNDETERMINED | Depends on libcurl version (not traceable) |
 | `curl_easy_setopt(h, 32, var)` | CONDITIONAL | Trace variable |
 
 ---
@@ -337,6 +337,6 @@ This document defines library-specific security rules for libcurl-based TLS clie
 | Option explicitly set to secure value | PASS | `curl_easy_setopt(curl, 81, 2)` |
 | Option NOT set, default is secure | PASS | `CURLOPT_SSL_VERIFYHOST` not called |
 | Option explicitly set to insecure value | FAIL | `curl_easy_setopt(curl, 64, 0)` |
-| Option NOT set, default is version-dependent | CONDITIONAL | `CURLOPT_SSLVERSION` not set |
+| Option NOT set, default is version-dependent | UNDETERMINED | `CURLOPT_SSLVERSION` not set |
 | Option set to runtime variable | CONDITIONAL | `curl_easy_setopt(curl, 64, config_value)` |
 | Cannot find relevant code | UNDETERMINED | No `curl_easy_setopt` calls found |

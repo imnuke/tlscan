@@ -171,7 +171,7 @@ This document defines security rules for curl command-line tool usage in scripts
 - `curl --tlsv1 https://...` → FAIL (allows TLS 1.0)
 - `curl --tlsv1.0 https://...` → FAIL (TLS 1.0)
 - `curl --tlsv1.1 https://...` → FAIL (TLS 1.1)
-- `curl https://...` (no TLS option) → CONDITIONAL (depends on curl version)
+- `curl https://...` (no TLS option) → UNDETERMINED (version-dependent default)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -179,7 +179,7 @@ This document defines security rules for curl command-line tool usage in scripts
 | `--tlsv1.2` or `--tlsv1.3` used | PASS | Secure minimum enforced |
 | `--tlsv1`, `--tlsv1.0`, `--tlsv1.1` | FAIL | Allows insecure protocols |
 | `--sslv2`, `--sslv3` | FAIL | Insecure protocols |
-| No TLS version flag | CONDITIONAL | Depends on curl version |
+| No TLS version flag | UNDETERMINED | Depends on curl version (not traceable) |
 | TLS option from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -377,7 +377,7 @@ if [ -f ~/.curlrc ]; then ...
 | MUST | Option explicitly secure | PASS |
 | MUST | Option explicitly insecure | FAIL |
 | MUST | No option, secure default | PASS |
-| MUST | No option, version-dependent default | CONDITIONAL |
+| MUST | No option, version-dependent default | UNDETERMINED |
 | SHOULD | Feature enabled | PASS |
 | SHOULD | Feature explicitly disabled | FAIL |
 | SHOULD | Feature not configured | UNDETERMINED |
