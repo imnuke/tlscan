@@ -16,6 +16,17 @@
 
 **离线阶段 (Offline Phase)。** 本阶段从RFC协议规范中提取与实现无关的安全要求，并将其映射为针对特定SSL/TLS库的检测规则。该过程利用大语言模型的语义理解能力，自动生成覆盖OpenSSL、libcurl、GnuTLS、mbedTLS等主流库的规则集。
 
+此外，离线阶段还执行**库版本检测**。系统扫描固件中的SSL/TLS库文件（如libssl.so、libcurl.so）和命令行工具（curl、wget），提取其版本信息。版本检测采用多种方法并按置信度排序：
+
+| 方法 | 置信度 | 目标 | 描述 |
+|-----|--------|-----|------|
+| 版本字符串 | 高 | 库文件、二进制 | 解析.rodata段中的版本标识（如"OpenSSL 1.1.1k"） |
+| SONAME | 中 | 库文件 | 从动态段提取（如libssl.so.1.1 → OpenSSL 1.1.x） |
+| VERNEED/VERDEF | 中 | ELF文件 | ELF符号版本节（如OPENSSL_1_1_0） |
+| API推断 | 低 | 二进制 | 根据导入的版本特定函数推断 |
+
+检测结果缓存至固件目录下的`.conn_analyzer/library_versions.json`，供在线分析阶段使用。
+
 **在线阶段 (Online Phase)。** 给定待分析的固件镜像，系统首先执行目标发现，识别固件中使用SSL/TLS的客户端程序。随后，多智能体分析框架对每个目标程序执行安全规则检查、数据流追踪和跨边界分析，最终生成包含完整追踪路径的安全评估报告。
 
 ```
@@ -35,6 +46,10 @@
 │        │  OpenSSL   │  libcurl   │   GnuTLS   │  mbedTLS   │ ...      │
 │        │  Rules     │  Rules     │   Rules    │  Rules     │          │
 │        └────────────┴────────────┴────────────┴────────────┘          │
+│                                                                          │
+│  Firmware ──▶ Library Version Detection ──▶ Version Cache              │
+│               (libssl.so, libcurl.so,       (.conn_analyzer/)          │
+│                curl, wget binaries)                                     │
 └────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -232,6 +247,14 @@ if (config.verify_cert) {
 - **PASS**：安全措施正确实现，无条件启用
 - **FAIL**：安全措施缺失或被显式禁用
 - **CONDITIONAL**：安全措施的启用依赖于运行时可变条件
+
+**版本依赖的默认行为。** 部分安全规则的判定依赖于库的默认行为，而默认行为随库版本变化。例如：
+
+- libcurl < 7.39.0：无CURLOPT_SSLVERSION时默认允许SSLv3（不安全）
+- libcurl ≥ 7.39.0 且 < 8.16.0：默认允许TLS 1.0（不安全）
+- libcurl ≥ 8.16.0：默认要求TLS 1.2（安全）
+
+当代码未显式设置相关选项时，$\mathcal{A}_{ssl}$需要根据库版本判断默认行为是否安全。由于版本信息在离线阶段已检测并缓存，$\mathcal{A}_{ssl}$可直接给出PASS或FAIL的确定性结果，无需后续的数据流追踪。
 
 **CONDITIONAL状态处理。** 当规则$r_i$的判定结果为CONDITIONAL时，系统提取影响该规则的条件变量集合$V_i = \{v_1, v_2, ..., v_k\}$，并为每个变量附加安全语义映射$M_i: \mathcal{D}(v_j) \rightarrow \{\textsc{Pass}, \textsc{Fail}\}$。后续的数据流分析阶段将追踪这些变量的实际取值，以确定最终安全状态。
 
