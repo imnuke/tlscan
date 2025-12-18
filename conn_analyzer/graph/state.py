@@ -15,6 +15,7 @@ from conn_analyzer.graph.models import (
     ConfigFetchTask,
     DataflowTask,
     TraceResolvingStatus,
+    LibraryVersions,
 )
 
 
@@ -557,6 +558,25 @@ class AnalysisState(TypedDict, total=False):
     """Startup scripts that invoke the analyzed binary (for CLI argument analysis)."""
 
     # ========================================================================
+    # Library Version Information
+    # ========================================================================
+
+    library_versions: Optional[LibraryVersions]
+    """
+    Detected library version information.
+
+    Contains versions detected from:
+    - The binary being analyzed (via VERNEED sections, API inference)
+    - Library files in firmware (via version strings, SONAME, VERDEF)
+
+    Used by SSL agent to resolve version-dependent rules from UNDETERMINED
+    to PASS/FAIL when defaults are known for the detected version.
+
+    Loaded from firmware cache (.conn_analyzer/library_versions.json) or
+    detected at startup if cache is not available.
+    """
+
+    # ========================================================================
     # Final Output
     # ========================================================================
 
@@ -602,6 +622,7 @@ def create_initial_state(
     binary_path: str,
     security_rules: str,
     file_type: FileType = FileType.ELF_BINARY,
+    library_versions: Optional[LibraryVersions] = None,
 ) -> AnalysisState:
     """
     Create initial state for analysis.
@@ -610,6 +631,7 @@ def create_initial_state(
         binary_path: Path to binary/script to analyze
         security_rules: Security rules content
         file_type: Detected file type (default: ELF_BINARY for backward compatibility)
+        library_versions: Optional detected library versions from firmware cache
 
     Returns:
         Initial AnalysisState with all required fields initialized
@@ -643,6 +665,9 @@ def create_initial_state(
         # Firmware
         firmware_details=None,
         script_findings=None,
+
+        # Library versions
+        library_versions=library_versions,
 
         # Final output
         final_report="",

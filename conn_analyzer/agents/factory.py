@@ -99,20 +99,22 @@ class AgentFactory:
     def create_ssl_agent(
         self,
         tools: List[any],
-        security_rules_content: str = ""
+        security_rules_content: str = "",
+        library_versions: Optional[str] = None
     ) -> any:
         """Create SSL analysis agent with structured output.
 
         Args:
             tools: IDA tools from Static Analysis Engine
             security_rules_content: Security rules to inject into prompt
+            library_versions: Optional formatted library version information for version-dependent rules
 
         Returns:
             Agent that returns SSLAnalysisOutput Pydantic model
         """
         from conn_analyzer.agents.prompts.ssl_prompt import get_ssl_system_prompt
 
-        system_prompt = get_ssl_system_prompt(security_rules_content)
+        system_prompt = get_ssl_system_prompt(security_rules_content, library_versions)
 
         # Get temperature for SSL analysis agent
         temperature = self._config.get_agent_temperature('ssl_analysis')
