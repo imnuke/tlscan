@@ -11,8 +11,8 @@ Analyze the code for SSL/TLS client security compliance and output JSON matching
   "client_type": "OpenSSL|libcurl|mbedTLS|GnuTLS|etc",
   "rules": [
     {{
-      "rule_id": "rule_certificate_verification",
-      "rule_name": "Certificate Verification Enabled",
+      "rule_id": "R2",
+      "rule_name": "Certificate Chain Verification",
       "result": "pass|fail|conditional|undetermined",
       "evidence": "detailed evidence with function names and addresses",
       "conditions": []  // for conditional, list variables to trace

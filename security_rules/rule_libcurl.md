@@ -177,7 +177,7 @@ This document defines library-specific security rules for libcurl-based TLS clie
 | `CURLOPT_SSL_VERIFYHOST` set to 1 | FAIL | Deprecated/unreliable |
 | `curl_easy_setopt(h, 81, var)` | CONDITIONAL | Trace variable |
 
-**Cross-Rule Note**: Hostname verification (R3) is only meaningful if certificate verification (R2) is also enabled. Document in evidence if R2 fails.
+**Security Note**: CURLOPT_SSL_VERIFYHOST operates independently of CURLOPT_SSL_VERIFYPEER per libcurl documentation. Evaluate R3 based solely on VERIFYHOST setting. If R2 fails, note the combined security impact in evidence but do NOT change R3's result.
 
 ---
 
