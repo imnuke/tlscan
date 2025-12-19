@@ -306,14 +306,14 @@ curl --pinnedpubkey /path/to/pubkey.pem https://example.com
 
 **Detection Patterns**:
 - `--pinnedpubkey` option present → PASS (pinning enabled)
-- `--pinnedpubkey` not used → UNDETERMINED (optional feature)
+- `--pinnedpubkey` not used → FAIL (pinning not implemented)
 - Pin value from variable → CONDITIONAL (trace pin source)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `--pinnedpubkey` with hash | PASS | Pinning enabled |
-| `--pinnedpubkey` not used | UNDETERMINED | Optional feature |
+| `--pinnedpubkey` not used | FAIL | Pinning not implemented |
 | Pin value from variable | CONDITIONAL | Trace pin source |
 
 ---

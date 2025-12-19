@@ -453,11 +453,11 @@ mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
 **Detection Patterns**:
 - Custom verify callback with pin comparison → PASS
 - Hardcoded SHA-256 hashes (32 bytes or 64 hex chars) → PASS
-- No pinning → UNDETERMINED (optional)
+- No pinning → FAIL (pinning not implemented)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Certificate/key pinning implemented | PASS | Defense-in-depth |
-| No pinning | UNDETERMINED | Optional feature |
+| No pinning | FAIL | Pinning not implemented |
 | Pin values from variable | CONDITIONAL | Trace pin source |

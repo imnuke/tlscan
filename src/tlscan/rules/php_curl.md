@@ -371,7 +371,7 @@ curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE);
 // PASS: Pinning enabled
 curl_setopt($ch, CURLOPT_PINNEDPUBLICKEY, 'sha256//hash1;sha256//hash2');
 
-// UNDETERMINED: No pinning
+// FAIL: No pinning
 // Not setting CURLOPT_PINNEDPUBLICKEY
 ```
 
@@ -379,7 +379,7 @@ curl_setopt($ch, CURLOPT_PINNEDPUBLICKEY, 'sha256//hash1;sha256//hash2');
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `CURLOPT_PINNEDPUBLICKEY` set | PASS | Pinning enabled |
-| Pinning not configured | UNDETERMINED | Optional feature |
+| Pinning not configured | FAIL | Pinning not implemented |
 | Pin value from variable | CONDITIONAL | Trace pin source |
 
 ---

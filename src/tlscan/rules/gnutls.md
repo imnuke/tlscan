@@ -382,11 +382,11 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 **Detection Patterns**:
 - Fingerprint comparison in verify callback → PASS
 - Hardcoded certificate hashes → PASS (look for 32-byte or 64-char hex)
-- No pinning implemented → UNDETERMINED (optional)
+- No pinning implemented → FAIL (pinning not implemented)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Certificate/key pinning implemented | PASS | Defense-in-depth |
-| No pinning | UNDETERMINED | Optional feature |
+| No pinning | FAIL | Pinning not implemented |
 | Pin values from variable | CONDITIONAL | Trace pin source |
