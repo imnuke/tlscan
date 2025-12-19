@@ -5,13 +5,15 @@ from typing import Optional
 
 def get_ssl_system_prompt(
     security_rules_content: str = "",
-    library_versions: Optional[str] = None
+    library_versions: Optional[str] = None,
+    library_name: str = "unknown"
 ) -> str:
     """Get concise SSL agent system prompt with security rules and version info.
 
     Args:
         security_rules_content: Security rules content to inject
         library_versions: Optional formatted library version information
+        library_name: Name of the library/command being analyzed (from -r argument)
 
     Returns:
         Complete system prompt for SSL analysis agent
@@ -80,6 +82,16 @@ RESULT TYPE RULES:
 IMPORTANT: Evaluate each rule INDEPENDENTLY. If one rule's failure affects another's
 effectiveness, note it in evidence, do NOT use CONDITIONAL for this relationship.
 {version_context}
+{'=' * 60}
+ANALYSIS SCOPE:
+{'=' * 60}
+
+You are analyzing: {library_name}
+
+CRITICAL INSTRUCTIONS:
+1. Set client_type to "{library_name}" in your output
+2. Only analyze {library_name} usage patterns - do NOT analyze other SSL/TLS implementations
+
 {'=' * 60}
 SECURITY RULES TO CHECK:
 {'=' * 60}

@@ -157,10 +157,12 @@ async def ssl_analysis_node(
     library_versions_str = library_versions.format_for_prompt() if library_versions else None
 
     # Create SSL agent with structured output
+    library_name = state.get("library_name", "unknown")
     ssl_agent = agent_factory.create_ssl_agent(
         tools=tools,
         security_rules_content=security_rules,
-        library_versions=library_versions_str
+        library_versions=library_versions_str,
+        library_name=library_name
     )
 
     # Execute SSL agent
