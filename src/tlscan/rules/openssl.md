@@ -510,6 +510,6 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Certificate/public key pinning implemented | PASS | Defense-in-depth |
-| No pinning implemented | UNDETERMINED | Optional feature |
+| No pinning implemented | FAIL | Pinning not implemented |
 | Pinning with no backup pins | PASS (with warning) | Lockout risk noted |
 | Pin values from external source | CONDITIONAL | Trace pin source |

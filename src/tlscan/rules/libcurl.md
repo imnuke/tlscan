@@ -317,13 +317,13 @@ This document defines library-specific security rules for libcurl-based TLS clie
 
 **Detection Patterns**:
 - `curl_easy_setopt(h, 10230, "sha256//...")` → PASS (pinning enabled)
-- Option 10230 not used → UNDETERMINED (optional feature)
+- Option 10230 not used → FAIL (pinning not implemented)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `CURLOPT_PINNEDPUBLICKEY` set | PASS | Pinning enabled |
-| Pinning not configured | UNDETERMINED | Optional feature |
+| Pinning not configured | FAIL | Pinning not implemented |
 | Pin value from variable | CONDITIONAL | Trace pin source |
 
 ---
