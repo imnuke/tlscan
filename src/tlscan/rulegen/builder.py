@@ -30,7 +30,7 @@ def build_prompt(
     template = ""
 
     metarules_path = rules_dir / "metarule.md"
-    template_path = rules_dir / "rule_template.md"
+    template_path = rules_dir / "template.md"
 
     if metarules_path.exists():
         metarules = metarules_path.read_text()
