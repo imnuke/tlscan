@@ -165,6 +165,18 @@ This document defines security rules for curl command-line tool usage in scripts
 | 7.39.0 - 8.15.x | TLS 1.0 | INSECURE |
 | ≥ 8.16.0 | TLS 1.2 | SECURE |
 
+**Backend TLS Version Defaults (when no --tlsv* flag and curl version unknown)**:
+| Backend | Version Range | Minimum TLS | Security |
+|---------|--------------|-------------|----------|
+| OpenSSL | 3.0+ | TLS 1.2 | PASS |
+| OpenSSL | 1.1.1+ | TLS 1.2 | PASS |
+| OpenSSL | 1.0.x | TLS 1.0 | FAIL |
+| GnuTLS | 3.6+ | TLS 1.2 | PASS |
+| mbedTLS | 2.x+ | TLS 1.2 | PASS |
+| wolfSSL | 4.x+ | TLS 1.2 | PASS |
+
+**Resolution**: If curl version is unknown, use detected backend version to determine minimum TLS.
+
 **Detection Patterns**:
 - `curl --tlsv1.2 https://...` → PASS (TLS 1.2 minimum)
 - `curl --tlsv1.3 https://...` → PASS (TLS 1.3 minimum)
@@ -220,17 +232,31 @@ This document defines security rules for curl command-line tool usage in scripts
 HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 ```
 
+**Backend Cipher Suite Defaults (when no --ciphers specified)**:
+| Backend | Version | Default Config | Security |
+|---------|---------|----------------|----------|
+| OpenSSL | 3.0+ | TLS_AES_* + ECDHE preferred | PASS |
+| OpenSSL | 1.1.1+ | DEFAULT:!aNULL:!eNULL (ECDHE) | PASS |
+| OpenSSL | 1.0.x | DEFAULT (may include weak) | CONDITIONAL |
+| GnuTLS | 3.6+ | NORMAL priority | PASS |
+| mbedTLS | 2.x+ | Secure defaults | PASS |
+| wolfSSL | 4.x+ | Secure defaults | PASS |
+
+**Resolution**: When no --ciphers specified and backend is detected, use Security column.
+
 **Detection Patterns**:
 - `--ciphers 'HIGH:!aNULL:!eNULL'` → PASS (strong ciphers)
 - `--ciphers` containing `NULL`, `EXPORT`, `RC4` → FAIL
-- No `--ciphers` option → CONDITIONAL (uses backend default)
+- No `--ciphers`, backend PASS in table → PASS (secure backend default)
+- No `--ciphers`, backend unknown → CONDITIONAL (cannot verify default)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Strong cipher string configured | PASS | Weak ciphers excluded |
 | Cipher string contains weak ciphers | FAIL | Insecure ciphers allowed |
-| No `--ciphers` specified | CONDITIONAL | Uses backend default |
+| No `--ciphers`, backend detected as PASS | PASS | Uses secure backend default |
+| No `--ciphers`, backend unknown | CONDITIONAL | Cannot verify backend default |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -261,17 +287,31 @@ HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 | Linux (OpenSSL) | No automatic revocation checking |
 | macOS (SecureTransport) | May use system OCSP |
 
+**Backend Revocation Defaults (when no revocation option specified)**:
+| Backend | Default Behavior | Verdict |
+|---------|-----------------|---------|
+| OpenSSL | DISABLED (no CRL/OCSP) | CONDITIONAL |
+| GnuTLS | DISABLED | CONDITIONAL |
+| mbedTLS | DISABLED | CONDITIONAL |
+| Schannel (Windows) | CRL enabled | PASS |
+| SecureTransport (macOS) | May use system OCSP | CONDITIONAL |
+| wolfSSL | DISABLED | CONDITIONAL |
+
+**Resolution**: When no revocation option specified and backend is detected, use Verdict column.
+**Note**: CONDITIONAL (not FAIL) because S1 is a SHOULD requirement, not MUST.
+
 **Detection Patterns**:
 - `--ssl-revoke-best-effort` → PASS (revocation enabled)
-- `--ssl-no-revoke` → FAIL (revocation disabled)
-- No revocation option → UNDETERMINED (SHOULD requirement)
+- `--ssl-no-revoke` → CONDITIONAL (explicit disable of SHOULD)
+- No revocation option, backend known → use Verdict from table
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `--ssl-revoke-best-effort` used | PASS | Revocation checking enabled |
-| `--ssl-no-revoke` used | FAIL | Revocation checking disabled |
-| No revocation option | UNDETERMINED | SHOULD requirement, backend-dependent |
+| `--ssl-no-revoke` used | CONDITIONAL | Explicit disable of SHOULD requirement |
+| No option, Schannel backend | PASS | Schannel enables CRL by default |
+| No option, other backend | CONDITIONAL | SHOULD requirement not satisfied |
 
 ---
 

@@ -215,6 +215,18 @@ This document defines library-specific security rules for libcurl-based TLS clie
 | 7.39.0 - 8.15.x | TLS 1.0 | INSECURE |
 | ≥ 8.16.0 | TLS 1.2 | SECURE |
 
+**Backend TLS Version Defaults (when CURLOPT_SSLVERSION=0 or not set and libcurl version unknown)**:
+| Backend | Version Range | Minimum TLS | Security |
+|---------|--------------|-------------|----------|
+| OpenSSL | 3.0+ | TLS 1.2 | PASS |
+| OpenSSL | 1.1.1+ | TLS 1.2 | PASS |
+| OpenSSL | 1.0.x | TLS 1.0 | FAIL |
+| GnuTLS | 3.6+ | TLS 1.2 | PASS |
+| mbedTLS | 2.x+ | TLS 1.2 | PASS |
+| wolfSSL | 4.x+ | TLS 1.2 | PASS |
+
+**Resolution**: If SSLVERSION=0 (or not set) and libcurl version unknown, use detected backend version.
+
 **Detection Patterns**:
 - `curl_easy_setopt(handle, 32, 6)` → PASS (TLS 1.2 minimum)
 - `curl_easy_setopt(handle, 32, 7)` → PASS (TLS 1.3 minimum)
@@ -249,17 +261,31 @@ This document defines library-specific security rules for libcurl-based TLS clie
 | `CURLOPT_TLS13_CIPHERS` | 10276 | TLS 1.3 ciphers |
 | `CURLOPT_PROXY_SSL_CIPHER_LIST` | 10259 | Proxy ciphers |
 
+**Backend Cipher Suite Defaults (when no cipher configuration)**:
+| Backend | Version | Default Config | Security |
+|---------|---------|----------------|----------|
+| OpenSSL | 3.0+ | TLS_AES_* + ECDHE preferred | PASS |
+| OpenSSL | 1.1.1+ | DEFAULT:!aNULL:!eNULL (ECDHE) | PASS |
+| OpenSSL | 1.0.x | DEFAULT (may include weak) | CONDITIONAL |
+| GnuTLS | 3.6+ | NORMAL priority | PASS |
+| mbedTLS | 2.x+ | Secure defaults | PASS |
+| wolfSSL | 4.x+ | Secure defaults | PASS |
+
+**Resolution**: When no cipher configured and backend is detected, use Security column.
+
 **Detection Patterns**:
 - Cipher string containing `NULL`, `EXPORT`, `RC4`, `DES` → FAIL
 - Cipher string with `HIGH:!aNULL:!eNULL:!EXPORT` → PASS
-- No cipher restriction → CONDITIONAL (uses backend default)
+- No cipher config, backend PASS in table → PASS (secure backend default)
+- No cipher config, backend unknown → CONDITIONAL (cannot verify default)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Strong cipher string configured | PASS | Weak ciphers excluded |
 | Weak ciphers in string | FAIL | Insecure ciphers allowed |
-| No cipher configuration | CONDITIONAL | Uses SSL backend default |
+| No cipher config, backend detected as PASS | PASS | Uses secure backend default |
+| No cipher config, backend unknown | CONDITIONAL | Cannot verify backend default |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -285,17 +311,31 @@ This document defines library-specific security rules for libcurl-based TLS clie
 | `CURLSSLOPT_REVOKE_BEST_EFFORT` | 32 | Check CRL if available |
 | `CURLSSLOPT_NO_REVOKE` | 2 | Disable revocation check (Windows) |
 
+**Backend Revocation Defaults (when no revocation configuration)**:
+| Backend | Default Behavior | Verdict |
+|---------|-----------------|---------|
+| OpenSSL | DISABLED (no CRL/OCSP) | CONDITIONAL |
+| GnuTLS | DISABLED | CONDITIONAL |
+| mbedTLS | DISABLED | CONDITIONAL |
+| Schannel (Windows) | CRL enabled | PASS |
+| SecureTransport (macOS) | May use system OCSP | CONDITIONAL |
+| wolfSSL | DISABLED | CONDITIONAL |
+
+**Resolution**: When no revocation config and backend is detected, use Verdict column.
+**Note**: CONDITIONAL (not FAIL) because S1 is a SHOULD requirement, not MUST.
+
 **Detection Patterns**:
 - `CURLSSLOPT_REVOKE_BEST_EFFORT` flag set → PASS
-- `CURLSSLOPT_NO_REVOKE` flag set → FAIL
-- No revocation configuration → UNDETERMINED
+- `CURLSSLOPT_NO_REVOKE` flag set → CONDITIONAL (explicit disable of SHOULD)
+- No revocation config, backend known → use Verdict from table
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Revocation checking enabled | PASS | CRL/OCSP check performed |
-| `CURLSSLOPT_NO_REVOKE` used | FAIL | Revocation check disabled |
-| No configuration | UNDETERMINED | SHOULD requirement |
+| `CURLSSLOPT_NO_REVOKE` used | CONDITIONAL | Explicit disable of SHOULD requirement |
+| No config, Schannel backend | PASS | Schannel enables CRL by default |
+| No config, other backend | CONDITIONAL | SHOULD requirement not satisfied |
 
 ---
 

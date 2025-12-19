@@ -35,6 +35,22 @@ USE THIS VERSION INFORMATION TO RESOLVE VERSION-DEPENDENT RULES:
 - If version is detected, you can resolve UNDETERMINED to PASS/FAIL for version-dependent defaults
 - Include the detected version in your evidence when relevant
 
+RESOLVING BACKEND-DEPENDENT RULES:
+
+When a rule's criteria says "uses backend default" or would be UNDETERMINED/CONDITIONAL:
+1. Check the DETECTED LIBRARY VERSIONS section for backend info (e.g., "[backend: OpenSSL 1.1.1w]")
+2. Find the rule's "Backend Default Behavior" or "Backend * Defaults" table in the security rules
+3. Match the backend name and version range to find the corresponding row
+4. Use the Security/Verdict column as the result
+
+Example resolution:
+- Rule: Cipher Suite Selection - No --ciphers option found
+- Backend detected: OpenSSL 1.1.1w
+- Table lookup: "OpenSSL 1.1.1+" row → Security = PASS
+- Result: PASS with evidence citing secure backend default
+
+Important: Always include the backend version in your evidence when using backend defaults to determine results.
+
 """
 
     return f"""You are an SSL/TLS security analysis expert.
