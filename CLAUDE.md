@@ -1,4 +1,4 @@
-# conn-alanyzer Project Memory
+# tlscan Project Memory
 
 ## Overview
 AI-powered **SSL/TLS security analyzer** for firmware binaries and scripts. Combines IDA Pro static analysis with multi-agent LLM system to detect SSL/TLS vulnerabilities and trace security-critical configuration values across firmware.
@@ -26,69 +26,124 @@ Checkpoint Router → SSL Analysis → Dataflow Analysis → Firmware Exploratio
 - **Rich**: Terminal UI with panels, tables, and color-coded output
 - **LLM Providers**: DeepSeek, OpenAI, Anthropic (configured in `llm_config.yaml`)
 
+## Project Structure
+
+```
+tlscan/
+├── pyproject.toml
+├── llm_config.yaml           # LLM API keys (gitignored)
+├── src/
+│   └── tlscan/               # Main package
+│       ├── config/           # Configuration
+│       │   ├── settings.py   # Code constants
+│       │   └── loader.py     # Load llm_config.yaml
+│       ├── analyzer/         # Core multi-agent analyzer
+│       │   ├── main.py
+│       │   ├── cli.py
+│       │   ├── cache.py
+│       │   ├── workflow/     # LangGraph workflow
+│       │   │   ├── graph.py, nodes.py, state.py
+│       │   │   ├── models.py, routing.py, formatter.py
+│       │   ├── agents/       # LLM agents
+│       │   │   ├── factory.py
+│       │   │   ├── core/{context,execution,middleware}.py
+│       │   │   └── prompts/{ssl,dataflow,firmware}.py
+│       │   ├── static_engine/  # Binary analysis
+│       │   │   ├── engine.py, firmware.py, scripts.py
+│       │   │   └── ida/{server,ports}.py
+│       │   ├── persistence/  # Checkpointing
+│       │   │   └── checkpoints.py
+│       │   └── utils/        # Utilities
+│       │       ├── binary.py, files.py
+│       │       ├── formatting.py, logging.py
+│       ├── scanner/          # Network client scanner
+│       │   ├── cli.py, detector.py
+│       │   ├── version.py, indicators.py
+│       ├── rulegen/          # Rule generator
+│       │   ├── cli.py, builder.py
+│       └── rules/            # Security rules (bundled)
+│           ├── metarule.md, template.md
+│           ├── openssl.md, curl.md, libcurl.md
+│           ├── gnutls.md, mbedtls.md, wget.md
+├── tests/
+└── docs/paper/               # Academic paper materials
+```
+
 ## Key Components
 
-### `/conn_analyzer/`
+### `/src/tlscan/config/`
+- **`settings.py`**: Configuration constants (token thresholds, IDA settings, paths)
+- **`loader.py`**: Loads LLM API keys from `llm_config.yaml`
+
+### `/src/tlscan/analyzer/`
 - **`main.py`**: Main orchestrator - initializes LLM, loads rules, creates workflow
 - **`cli.py`**: CLI argument parsing
-- **`config_loader.py`**: Loads LLM API keys from `llm_config.yaml`
+- **`cache.py`**: Firmware cache management
 
-### `/conn_analyzer/agents/`
-- **`factory.py`**: Creates specialized agents with structured Pydantic output
-  - SSL Agent: Analyzes security rules
-  - Dataflow Agent: Traces variable values
-  - Firmware Agent: Searches firmware filesystem
-- **`prompts/`**: System prompts for each agent type
-
-### `/conn_analyzer/graph/`
-- **`workflow.py`**: LangGraph state machine construction with checkpoint router entry point
+### `/src/tlscan/analyzer/workflow/`
+- **`graph.py`**: LangGraph state machine construction with checkpoint router entry point
 - **`nodes.py`**: Workflow nodes (SSL analysis, dataflow, routing logic)
 - **`state.py`**: `AnalysisState` TypedDict with all workflow state
 - **`models.py`**: Pydantic models (`SSLAnalysisOutput`, `RuleResult`, `VariableTrace`, etc.)
 - **`routing.py`**: Routing logic for conditional workflow branches
-- **`report_formatter.py`**: Rich widget-based report display with color-coded status badges
+- **`formatter.py`**: Rich widget-based report display with color-coded status badges
 
-### `/conn_analyzer/static_analysis/`
+### `/src/tlscan/analyzer/agents/`
+- **`factory.py`**: Creates specialized agents with structured Pydantic output
+  - SSL Agent: Analyzes security rules
+  - Dataflow Agent: Traces variable values
+  - Firmware Agent: Searches firmware filesystem
+- **`core/`**: Execution infrastructure (context management, middleware)
+- **`prompts/`**: System prompts for each agent type
+
+### `/src/tlscan/analyzer/static_engine/`
 - **`engine.py`**: Manages IDA Pro MCP servers for multiple binaries
-  - Thread-safe multi-binary support
-  - Session caching and port allocation
-  - Concurrent analysis via temp binary copies
-- **`firmware_tools.py`**: Filesystem search using `fd` and `ripgrep`
-- **`script_tools.py`**: Analysis tools for shell/PHP/Python scripts
+- **`firmware.py`**: Filesystem search using `fd` and `ripgrep`
+- **`scripts.py`**: Analysis tools for shell/PHP/Python scripts
+- **`ida/server.py`**: Headless IDA server lifecycle management
+- **`ida/ports.py`**: Dynamic port allocation with lock files
 
-### `/conn_analyzer/ida_integration/`
-- **`server.py`**: Headless IDA server lifecycle management
-- **`port_manager.py`**: Dynamic port allocation with lock files
+### `/src/tlscan/analyzer/utils/`
+- **`binary.py`**: File type detection (ELF, shell, PHP, Python scripts)
+- **`files.py`**: Path resolution and rule loading
+- **`logging.py`**: State change logging with unified diff display
+- **`formatting.py`**: Token counting and duration formatting
 
-### `/conn_analyzer/utils/`
-- **`binary_utils.py`**: File type detection (ELF, shell, PHP, Python scripts)
-- **`state_logging.py`**: State change logging with unified diff display
-
-### `/conn_analyzer/persistence/`
-- **`checkpointing.py`**: State persistence and thread management
+### `/src/tlscan/analyzer/persistence/`
+- **`checkpoints.py`**: State persistence and thread management
   - CheckpointManager: Thread/checkpoint lifecycle with metadata storage
   - AsyncSqliteSaver: LangGraph's automatic checkpointing
-  - Age-based cleanup utilities
-  - Storage: `.state_snapshots/checkpoints.db` (SQLite)
-  - Metadata: `.state_snapshots/metadata/{thread_id}.json`
 
-### `/security_rules/`
-Security rule definitions (Markdown):
-- `rule_openssl.md`, `rule_curl.md`, `rule_libcurl.md`, `rule_gnutls.md`, `rule_socket.md`, etc.
+### `/src/tlscan/scanner/`
+Network client scanner for detecting SSL/TLS library usage:
+- **`cli.py`**: CLI entry point (`tlscan-detect`)
+- **`detector.py`**: Library detection and scoring logic
+- **`version.py`**: Library version extraction from ELF binaries
+- **`indicators.py`**: Library indicator sets (symbols, strings)
+
+### `/src/tlscan/rulegen/`
+Security rule generator:
+- **`cli.py`**: CLI entry point (`tlscan-rulegen`)
+- **`builder.py`**: Prompt building for rule generation
+
+### `/src/tlscan/rules/`
+Security rule definitions (Markdown), bundled with package:
 - `metarule.md`: RFC-grounded security requirements (MUST/SHOULD/MAY)
+- Library-specific rules: `openssl.md`, `curl.md`, `libcurl.md`, `gnutls.md`, `mbedtls.md`, `wget.md`, `socket.md`, `php_curl.md`
 
-### `/paper/`
-Academic paper materials for top security conference submission (S&P, USENIX Security, CCS, NDSS):
-- **`figures/`**: Draw.io diagrams (threat model, system overview, etc.)
-- **`writing/`**: Manuscript sections and drafts
+### `/docs/paper/`
+Academic paper materials for top security conference submission.
 
-## Entry Point & CLI
+## Entry Points & CLI
 
-**Main Entry**: `conn_analyzer_new.py` → `conn_analyzer/cli.py`
+**Three CLI commands**:
+- `tlscan` → Core analyzer (`tlscan.analyzer.cli:main`)
+- `tlscan-detect` → Network client scanner (`tlscan.scanner.cli:main`)
+- `tlscan-rulegen` → Rule generator (`tlscan.rulegen.cli:main`)
 
 ### Basic Analysis
 ```bash
-uv run conn_analyzer_new.py \
+tlscan \
    --model deepseek:deepseek-chat \
    -r openssl \
    --firmware-path /path/to/firmware \
@@ -103,29 +158,17 @@ uv run conn_analyzer_new.py \
 - `--list-checkpoints THREAD_ID`: Show checkpoints in thread
 - `--clean-threads --max-age DAYS`: Delete threads older than N days (default: 7)
 
-### Example: Resume & Fork Workflow
+### Scanner Usage
 ```bash
-# Run with checkpointing enabled
-uv run conn_analyzer_new.py binary.so -m deepseek:deepseek-chat --save-checkpoints
-
-# List available threads
-uv run conn_analyzer_new.py --list-threads
-
-# List checkpoints in specific thread
-uv run conn_analyzer_new.py --list-checkpoints libssl_20241203_143052
-
-# Fork from checkpoint (creates new thread, fresh LLM calls)
-uv run conn_analyzer_new.py \
-  --resume libssl_20241203_143052 \
-  --fork-from-checkpoint 550e8400-e29b-41d4-a716-446655440000
-
-# Cleanup old threads
-uv run conn_analyzer_new.py --clean-threads --max-age 7
+tlscan-detect /path/to/firmware
+tlscan-detect /path/to/firmware --libraries openssl libcurl
+tlscan-detect /path/to/firmware --json > results.jsonl
+tlscan-detect /path/to/firmware --save-cache
 ```
 
 **Arguments**:
 - `binary_path`: Binary to analyze (optional for --list-threads/--clean-threads)
-- `-m, --model`: LLM model (e.g., `deepseek:deepseek-chat`, `anthropic:claude-sonnet-4-5`), overrides saved metadata when resuming
+- `-m, --model`: LLM model (e.g., `deepseek:deepseek-chat`, `anthropic:claude-sonnet-4-5`)
 - `-f, --firmware-path`: Firmware root (enables cross-binary analysis)
 - `-r, --rules`: Security rule set (`openssl`, `curl`, `libcurl`, `gnutls`, `mbedtls`, `php_curl`, `wget`, `socket`)
 
@@ -165,20 +208,20 @@ uv run conn_analyzer_new.py --clean-threads --max-age 7
 
 ### IDA Pro Integration
 - MCP server started per binary with **temp copy** for concurrent analysis
-- Temp binaries stored in `/tmp/conn_analyzer/binaries/{session_id}/`
+- Temp binaries stored in `/tmp/tlscan/binaries/{session_id}/`
 - **Startup timeout**: 5 minutes (increased from 15 seconds)
 - Tools available: `decompile_function`, `get_callers`, `get_xrefs_to`, etc.
-- Port locks in `/tmp/conn_analyzer/port_locks/`
+- Port locks in `/tmp/tlscan/port_locks/`
 
 ### Script Analysis
-- **File Type Detection**: `binary_utils.detect_file_type()` identifies ELF, shell, PHP, Python
-- **Tool Selection**: Scripts use `script_tools.py` instead of IDA MCP
+- **File Type Detection**: `binary.detect_file_type()` identifies ELF, shell, PHP, Python
+- **Tool Selection**: Scripts use `scripts.py` instead of IDA MCP
 - **Script Tools**: `get_script_content()`, `get_lines()`, `search_pattern()`, `find_command_usage()`
 - **Trace Type**: Script findings stored as `TraceType.SCRIPT`
 
 ## State Management
 
-**`AnalysisState`** (TypedDict in `graph/state.py`):
+**`AnalysisState`** (TypedDict in `workflow/state.py`):
 - **Context**: `binary_path`, `main_binary_path`, `security_rules`, `firmware_path`
 - **SSL Results**: `rule_result` (Dict[str, RuleResult]), `applicable`, `client_type`
 - **Tasks**: `pending_dataflow_tasks`, `pending_config_fetch_tasks`
@@ -219,42 +262,6 @@ Analysis state is automatically persisted after each workflow node execution usi
 - `created_at`, `updated_at`
 - `checkpoint_count`
 
-### Resumption Modes
-
-**1. Resume from Latest**
-```bash
-uv run conn_analyzer_new.py --resume libssl_20241203_143052
-```
-- Loads thread metadata (model, rules, firmware_path)
-- Uses CLI `--model` override if provided
-- Continues from last checkpoint
-- Checkpoint router determines starting node
-
-**2. Fork from Checkpoint**
-```bash
-uv run conn_analyzer_new.py \
-  --resume libssl_20241203_143052 \
-  --fork-from-checkpoint <UUID>
-```
-- Loads state from specific checkpoint
-- Creates NEW thread ID
-- Runs with fresh LLM calls (no replay)
-- Useful for exploring alternative analysis paths
-
-### Maintenance
-
-**List Operations**:
-- `--list-threads`: Show all threads with metadata
-- `--list-checkpoints THREAD_ID`: Show all checkpoints in thread
-
-**Cleanup**:
-```bash
-uv run conn_analyzer_new.py --clean-threads --max-age 7
-```
-- Deletes threads older than 7 days (default)
-- Removes SQLite records + metadata JSON files
-- Shows summary before deletion
-
 ### Implementation Pattern
 
 **Async Initialization** (required):
@@ -277,7 +284,7 @@ await checkpoint_manager.close()  # Close aiosqlite connection
 ## Report Display & Statistics
 
 ### Rich Widget-Based Reports
-Report formatter (`graph/report_formatter.py`) uses Rich library for visual output:
+Report formatter (`workflow/formatter.py`) uses Rich library for visual output:
 - **Status Badges**: Color-coded (PASS green, FAIL red, CONDITIONAL yellow)
 - **Trace Type Icons**: main_binary, cross_binary, config_file, script
 - **Panels**: Nested panels for rules, conditions, and trace trees
@@ -294,14 +301,9 @@ Report formatter (`graph/report_formatter.py`) uses Rich library for visual outp
 - Dependency counts: `config_dependency_count`, `script_dependency_count`, `cross_binary_dependency_count`
 - Totals: `total_tokens`, `total_time_seconds`, `total_tool_calls`
 
-### State Logging
-- **Unified Diff Display**: State changes shown as color-coded diffs
-- **Per-Task Logging**: Each task shows before/after state comparison
-- Colors: green (+), red (-), cyan (@@), dim (context)
-
 ## Meta-Rules (RFC-Grounded Requirements)
 
-`security_rules/metarule.md` defines implementation-agnostic SSL/TLS security requirements:
+`src/tlscan/rules/metarule.md` defines implementation-agnostic SSL/TLS security requirements:
 
 **MUST Requirements** (violations = FAIL):
 - **M1**: TLS usage for security-sensitive communications (RFC 9325)
@@ -325,12 +327,13 @@ Use these scopes for conventional commit messages:
 
 | Scope | Description | Examples |
 |-------|-------------|----------|
-| `graph` | Workflow, nodes, state, routing, models | `feat(graph): add synthesis node` |
+| `workflow` | Workflow, nodes, state, routing, models | `feat(workflow): add synthesis node` |
 | `agents` | Agent factory, prompts, LLM interactions | `fix(agents): handle timeout in ssl agent` |
 | `state` | State management, AnalysisState fields | `refactor(state): simplify task tracking` |
 | `persistence` | Checkpointing, thread management | `feat(persistence): add fork support` |
-| `ida` | IDA Pro integration, MCP server, static analysis | `fix(ida): handle port conflicts` |
-| `firmware` | Firmware exploration, filesystem tools | `feat(firmware): add config file search` |
+| `static-engine` | IDA Pro integration, MCP server, static analysis | `fix(static-engine): handle port conflicts` |
+| `scanner` | Network client scanner | `feat(scanner): add version detection` |
+| `rulegen` | Rule generator | `fix(rulegen): improve prompt builder` |
 | `cli` | Command-line interface, argument parsing | `feat(cli): add --list-threads flag` |
 | `rules` | Security rule definitions | `docs(rules): update openssl rule` |
 | `config` | Configuration loading, llm_config | `fix(config): validate api keys` |
@@ -344,11 +347,12 @@ Use these scopes for conventional commit messages:
 
 ## Development Notes
 
-- Uses **v2 architecture** with modular design
+- Uses **src/ layout** with modern Python packaging
 - Checkpoint system enables resumable analysis with state persistence in `.state_snapshots/`
 - Fork-from-checkpoint: Load state, create new thread, run with fresh LLM calls
 - Thread = complete analysis run with all checkpoints and metadata
 - Firmware tools use `fd` and `rg` for fast searching
 - Configuration in `llm_config.yaml` (gitignored - contains API keys)
+- Rules are bundled with package, override via `SSLENS_RULES_DIR` environment variable
 - **After implementation**: Always present a commit message in Conventional Commits format (see Commit Messages section)
 - When using TodoWrite for multi-step tasks, the final step should be preparing the commit message

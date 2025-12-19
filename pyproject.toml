@@ -1,7 +1,7 @@
 [project]
-name = "conn-alanyzer"
+name = "tlscan"
 version = "0.1.0"
-description = "Add your description here"
+description = "TLS Security Analysis Tool for Firmware Binaries"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -23,6 +23,21 @@ dependencies = [
     "rich>=14.1.0",
     "tiktoken>=0.8.0",
 ]
+
+[project.scripts]
+tlscan = "tlscan.analyzer.cli:run"
+tlscan-detect = "tlscan.scanner.cli:main"
+tlscan-rulegen = "tlscan.rulegen.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"tlscan.rules" = ["*.md"]
 
 [tool.uv.sources]
 pygraphviz = { git = "https://github.com/pygraphviz/pygraphviz.git", rev = "2fa8af802aeecfe92e53425c2503587de9593d9e" }
