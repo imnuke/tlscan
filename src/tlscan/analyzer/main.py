@@ -341,6 +341,7 @@ async def main(
             security_rules=security_rules_content,
             file_type=file_type,
             library_versions=library_versions,
+            library_name=rules,
         )
 
         # If fork_checkpoint_id is provided, use already-loaded state for forking

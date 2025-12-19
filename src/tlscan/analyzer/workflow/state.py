@@ -421,6 +421,9 @@ class AnalysisState(TypedDict, total=False):
     file_type: FileType
     """Detected file type (elf_binary, shell_script, php_script, etc.)."""
 
+    library_name: str
+    """Name of the library/command being analyzed (from -r argument, e.g., 'curl', 'libcurl', 'openssl')."""
+
     # ========================================================================
     # Workflow Control
     # ========================================================================
@@ -623,6 +626,7 @@ def create_initial_state(
     security_rules: str,
     file_type: FileType = FileType.ELF_BINARY,
     library_versions: Optional[LibraryVersions] = None,
+    library_name: str = "unknown",
 ) -> AnalysisState:
     """
     Create initial state for analysis.
@@ -632,6 +636,7 @@ def create_initial_state(
         security_rules: Security rules content
         file_type: Detected file type (default: ELF_BINARY for backward compatibility)
         library_versions: Optional detected library versions from firmware cache
+        library_name: Name of the library/command being analyzed (from -r argument)
 
     Returns:
         Initial AnalysisState with all required fields initialized
@@ -642,6 +647,7 @@ def create_initial_state(
         main_binary_path=binary_path,
         security_rules=security_rules,
         file_type=file_type,
+        library_name=library_name,
 
         # Workflow control
         current_phase=AnalysisPhase.INITIAL_SSL_ANALYSIS,
