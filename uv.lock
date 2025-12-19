@@ -136,51 +136,6 @@ wheels = [
 ]
 
 [[package]]
-name = "conn-alanyzer"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "ida-domain" },
-    { name = "idapro" },
-    { name = "langchain" },
-    { name = "langchain-anthropic" },
-    { name = "langchain-deepseek" },
-    { name = "langchain-mcp-adapters" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
-    { name = "langgraph-checkpoint-sqlite" },
-    { name = "networkx" },
-    { name = "numpy" },
-    { name = "pyelftools" },
-    { name = "pygraphviz" },
-    { name = "pyyaml" },
-    { name = "rich" },
-    { name = "tiktoken" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.20.0" },
-    { name = "ida-domain", specifier = ">=0.2.0" },
-    { name = "idapro", specifier = ">=0.0.6" },
-    { name = "langchain", specifier = ">=1.0.1" },
-    { name = "langchain-anthropic", specifier = ">=1.0.0" },
-    { name = "langchain-deepseek", specifier = ">=1.0.0" },
-    { name = "langchain-mcp-adapters", specifier = ">=0.1.11" },
-    { name = "langchain-openai", specifier = ">=1.0.0" },
-    { name = "langgraph", specifier = ">=0.2.0" },
-    { name = "langgraph-checkpoint-sqlite", specifier = ">=0.2.0" },
-    { name = "networkx", specifier = ">=3.5" },
-    { name = "numpy", specifier = ">=2.0.0" },
-    { name = "pyelftools", specifier = ">=0.32" },
-    { name = "pygraphviz", git = "https://github.com/pygraphviz/pygraphviz.git?rev=2fa8af802aeecfe92e53425c2503587de9593d9e" },
-    { name = "pyyaml", specifier = ">=6.0.0" },
-    { name = "rich", specifier = ">=14.1.0" },
-    { name = "tiktoken", specifier = ">=0.8.0" },
-]
-
-[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1187,6 +1142,51 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/28/c0/3c7a39ff68022ddfd7d93f3337ad90389a342f761c4d71de99a3ccc57857/tiktoken-0.12.0-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:54c891b416a0e36b8e2045b12b33dd66fb34a4fe7965565f1b482da50da3e86a", size = 1194908, upload-time = "2025-10-06T20:22:32.073Z" },
     { url = "https://files.pythonhosted.org/packages/ab/0d/c1ad6f4016a3968c048545f5d9b8ffebf577774b2ede3e2e352553b685fe/tiktoken-0.12.0-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:5edb8743b88d5be814b1a8a8854494719080c28faaa1ccbef02e87354fe71ef0", size = 1253706, upload-time = "2025-10-06T20:22:33.385Z" },
     { url = "https://files.pythonhosted.org/packages/af/df/c7891ef9d2712ad774777271d39fdef63941ffba0a9d59b7ad1fd2765e57/tiktoken-0.12.0-cp314-cp314t-win_amd64.whl", hash = "sha256:f61c0aea5565ac82e2ec50a05e02a6c44734e91b51c10510b084ea1b8e633a71", size = 920667, upload-time = "2025-10-06T20:22:34.444Z" },
+]
+
+[[package]]
+name = "tlscan"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "ida-domain" },
+    { name = "idapro" },
+    { name = "langchain" },
+    { name = "langchain-anthropic" },
+    { name = "langchain-deepseek" },
+    { name = "langchain-mcp-adapters" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-sqlite" },
+    { name = "networkx" },
+    { name = "numpy" },
+    { name = "pyelftools" },
+    { name = "pygraphviz" },
+    { name = "pyyaml" },
+    { name = "rich" },
+    { name = "tiktoken" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "ida-domain", specifier = ">=0.2.0" },
+    { name = "idapro", specifier = ">=0.0.6" },
+    { name = "langchain", specifier = ">=1.0.1" },
+    { name = "langchain-anthropic", specifier = ">=1.0.0" },
+    { name = "langchain-deepseek", specifier = ">=1.0.0" },
+    { name = "langchain-mcp-adapters", specifier = ">=0.1.11" },
+    { name = "langchain-openai", specifier = ">=1.0.0" },
+    { name = "langgraph", specifier = ">=0.2.0" },
+    { name = "langgraph-checkpoint-sqlite", specifier = ">=0.2.0" },
+    { name = "networkx", specifier = ">=3.5" },
+    { name = "numpy", specifier = ">=2.0.0" },
+    { name = "pyelftools", specifier = ">=0.32" },
+    { name = "pygraphviz", git = "https://github.com/pygraphviz/pygraphviz.git?rev=2fa8af802aeecfe92e53425c2503587de9593d9e" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "rich", specifier = ">=14.1.0" },
+    { name = "tiktoken", specifier = ">=0.8.0" },
 ]
 
 [[package]]
