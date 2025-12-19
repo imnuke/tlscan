@@ -183,6 +183,47 @@ PHP_CURL_INSECURE: Set[str] = {
     "CURLOPT_SSL_VERIFYPEER", "CURLOPT_SSL_VERIFYHOST", "verify_peer", "verify_host",
 }
 
+# ============================================================================
+# Curl SSL backend internal symbols
+# These symbols are present when curl/libcurl is compiled with a specific backend
+# ============================================================================
+
+CURL_BACKEND_OPENSSL: Set[str] = {
+    "Curl_ossl_init", "Curl_ossl_cleanup", "Curl_ossl_connect",
+    "Curl_ossl_connect_nonblocking", "Curl_ossl_data_pending",
+    "Curl_ossl_close", "Curl_ossl_shutdown", "Curl_ossl_session_free",
+    "Curl_ossl_set_engine", "Curl_ossl_set_engine_default",
+    "ossl_connect_common", "ossl_connect_step1", "ossl_connect_step2",
+}
+
+CURL_BACKEND_GNUTLS: Set[str] = {
+    "Curl_gtls_init", "Curl_gtls_cleanup", "Curl_gtls_connect",
+    "Curl_gtls_connect_nonblocking", "Curl_gtls_data_pending",
+    "Curl_gtls_close", "Curl_gtls_shutdown", "Curl_gtls_session_free",
+    "gtls_connect_common", "gtls_connect_step1", "gtls_connect_step2",
+}
+
+CURL_BACKEND_MBEDTLS: Set[str] = {
+    "Curl_mbedtls_init", "Curl_mbedtls_cleanup", "Curl_mbedtls_connect",
+    "Curl_mbedtls_connect_nonblocking", "Curl_mbedtls_data_pending",
+    "Curl_mbedtls_close", "Curl_mbedtls_shutdown",
+    "mbed_connect_common", "mbed_connect_step1", "mbed_connect_step2",
+}
+
+CURL_BACKEND_NSS: Set[str] = {
+    "Curl_nss_init", "Curl_nss_cleanup", "Curl_nss_connect",
+    "Curl_nss_connect_nonblocking", "Curl_nss_data_pending",
+    "Curl_nss_close", "Curl_nss_shutdown", "Curl_nss_session_free",
+    "nss_connect_common", "nss_connect_step1", "nss_connect_step2",
+}
+
+CURL_BACKEND_WOLFSSL: Set[str] = {
+    "Curl_wolfssl_init", "Curl_wolfssl_cleanup", "Curl_wolfssl_connect",
+    "Curl_wolfssl_connect_nonblocking", "Curl_wolfssl_data_pending",
+    "Curl_wolfssl_close", "Curl_wolfssl_shutdown",
+    "wolfssl_connect_common", "wolfssl_connect_step1", "wolfssl_connect_step2",
+}
+
 # ASCII printable character range
 PRINTABLE = set(range(0x20, 0x7F))
 

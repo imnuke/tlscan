@@ -60,6 +60,9 @@ from tlscan.analyzer.utils.logging import (
 )
 
 from rich.console import Console
+from rich.panel import Panel
+
+from tlscan.analyzer.agents.prompts.ssl import get_ssl_system_prompt
 
 console = Console()
 
@@ -155,9 +158,17 @@ async def ssl_analysis_node(
     # Get library version info for version-dependent rules
     library_versions = state.get("library_versions")
     library_versions_str = library_versions.format_for_prompt() if library_versions else None
+    library_name = state.get("library_name", "unknown")
+
+    # Build and display the system prompt before agent execution
+    system_prompt = get_ssl_system_prompt(security_rules, library_versions_str, library_name)
+    console.print(Panel(
+        system_prompt,
+        title="[bold blue]SSL Agent System Prompt[/bold blue]",
+        border_style="blue"
+    ))
 
     # Create SSL agent with structured output
-    library_name = state.get("library_name", "unknown")
     ssl_agent = agent_factory.create_ssl_agent(
         tools=tools,
         security_rules_content=security_rules,

@@ -356,3 +356,18 @@ Use these scopes for conventional commit messages:
 - Rules are bundled with package, override via `SSLENS_RULES_DIR` environment variable
 - **After implementation**: Always present a commit message in Conventional Commits format (see Commit Messages section)
 - When using TodoWrite for multi-step tasks, the final step should be preparing the commit message
+
+### Rich Library Pitfalls
+
+**Square Bracket Markup Interpretation**: Rich interprets `[...]` as markup/style tags. Text like `[backend: OpenSSL]` will be **silently removed** because Rich treats it as an invalid style tag.
+
+**Solution**: Escape the opening bracket with backslash:
+```python
+# WRONG - Rich will silently remove this:
+line = f"Library version [backend: {name}]"
+
+# CORRECT - Escaped bracket displays literally:
+line = f"Library version \\[backend: {name}]"
+```
+
+This applies to Panel, Table, console.print, and any Rich-rendered output.
