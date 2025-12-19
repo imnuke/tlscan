@@ -97,6 +97,14 @@ def parse_args():
         metavar="DAYS",
         help="Delete threads older than DAYS days (default: 7, used with --clean-threads)"
     )
+    parser.add_argument(
+        "--total-timeout",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="Total timeout for analysis in seconds (default: 1200 = 20 minutes). "
+             "Set to 0 to disable timeout."
+    )
     return parser.parse_args()
 
 
@@ -237,13 +245,18 @@ def run():
             rules=args.rules,
             save_checkpoints=args.save_checkpoints,
             thread_id=args.resume,
-            fork_checkpoint_id=args.fork_from_checkpoint
+            fork_checkpoint_id=args.fork_from_checkpoint,
+            total_timeout=args.total_timeout
         ))
     except KeyboardInterrupt:
         console.print()
         console.print("[yellow]🛑 Analysis interrupted by user (Ctrl-C)[/yellow]")
         console.print("[dim]Cleanup already completed[/dim]")
         sys.exit(0)
+    except asyncio.TimeoutError:
+        console.print()
+        console.print("[red]✗ Analysis terminated due to timeout[/red]")
+        sys.exit(1)
     except Exception as e:
         console.print()
         console.print(f"[red]✗ Fatal error: {e}[/red]")

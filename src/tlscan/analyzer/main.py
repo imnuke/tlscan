@@ -8,6 +8,7 @@ LangGraph-based workflow with new architecture:
 - Clean separation of concerns
 """
 
+import asyncio
 import time
 import logging
 
@@ -18,6 +19,7 @@ from tlscan.config import (
     LOG_LEVEL_HTTPX,
     LOG_LEVEL_HTTPCORE,
     LOG_LEVEL_MCP,
+    ANALYSIS_TOTAL_TIMEOUT,
 )
 from tlscan.analyzer.utils.files import (
     resolve_binary_path,
@@ -100,7 +102,8 @@ async def main(
     rules: str = "openssl",
     save_checkpoints: bool = False,
     thread_id: str = None,
-    fork_checkpoint_id: str = None
+    fork_checkpoint_id: str = None,
+    total_timeout: int = None
 ):
     """
     Main function to analyze SSL/TLS connections using LangGraph v2 architecture.
@@ -120,8 +123,13 @@ async def main(
         save_checkpoints: Enable automatic state checkpointing (default: False)
         thread_id: Resume from this thread ID (optional)
         fork_checkpoint_id: Fork from specific checkpoint with fresh execution (requires thread_id)
+        total_timeout: Total timeout in seconds (default: 1200 = 20 minutes, 0 to disable)
     """
     total_start_time = time.perf_counter()
+
+    # Resolve timeout (None means use default, 0 means disabled)
+    if total_timeout is None:
+        total_timeout = ANALYSIS_TOTAL_TIMEOUT
 
     console.print()
     console.print(Panel.fit(
@@ -375,6 +383,10 @@ async def main(
             "[bold green]🚀 Starting Structured Security Analysis[/bold green]",
             border_style="green"
         ))
+        if total_timeout > 0:
+            console.print(f"[dim]  ⏱  Timeout: {total_timeout / 60:.0f} minutes[/dim]")
+        else:
+            console.print("[dim]  ⏱  Timeout: disabled[/dim]")
         console.print()
 
         # Build config with thread_id
@@ -385,13 +397,29 @@ async def main(
         # Always use fresh execution (no replay mode)
         is_resuming = False
 
-        final_state = await run_analysis(
+        # Execute workflow with optional timeout
+        analysis_coro = run_analysis(
             graph=graph,
             initial_state=initial_state,
             config=workflow_config,
             show_checkpoints=save_checkpoints or (thread_id is not None),
             is_resuming=is_resuming
         )
+
+        if total_timeout > 0:
+            try:
+                final_state = await asyncio.wait_for(analysis_coro, timeout=total_timeout)
+            except asyncio.TimeoutError:
+                console.print()
+                console.print(Panel.fit(
+                    f"[bold red]✗ Analysis timed out after {total_timeout / 60:.1f} minutes[/bold red]",
+                    border_style="red"
+                ))
+                console.print("[yellow]Tip: Use --total-timeout to increase the limit, or 0 to disable[/yellow]")
+                raise
+        else:
+            # Timeout disabled
+            final_state = await analysis_coro
 
         # 12. Display final report
         console.print()

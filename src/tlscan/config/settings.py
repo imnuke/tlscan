@@ -41,6 +41,13 @@ PORT_LOCK_TIMEOUT = 3600
 """Timeout in seconds for port locks (1 hour). Locks older than this are considered stale."""
 
 # ============================================================================
+# Analysis Timeout
+# ============================================================================
+
+ANALYSIS_TOTAL_TIMEOUT = 1200
+"""Total timeout in seconds for the entire analysis workflow (default: 20 minutes)."""
+
+# ============================================================================
 # File Paths
 # ============================================================================
 
