@@ -161,7 +161,17 @@ Examples:
                 confidence = info.get("confidence", "unknown")
                 method = info.get("method", "unknown")
                 source = info.get("source_path", "")
-                print(f"  {lib_type}: {version} ({confidence} confidence, {method})")
+
+                # Build version line with optional backend
+                line = f"  {lib_type}: {version} ({confidence} confidence, {method})"
+                backend = info.get("backend")
+                if backend:
+                    backend_str = backend.get("name", "")
+                    if backend.get("version"):
+                        backend_str += f" {backend['version']}"
+                    line += f" [backend: {backend_str}]"
+                print(line)
+
                 if source:
                     print(f"    Source: {source}")
             print()

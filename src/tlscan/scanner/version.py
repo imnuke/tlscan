@@ -15,6 +15,8 @@ try:
 except ImportError:
     raise SystemExit("Missing dependency: pyelftools\nInstall with: pip install pyelftools")
 
+from .backend import detect_ssl_backend
+
 # ============================================================================
 # Version Detection Patterns
 # ============================================================================
@@ -361,5 +363,47 @@ def scan_firmware_libraries(root: str) -> Dict[str, Dict[str, Any]]:
                         "details": f"Exported versions: {', '.join(verdef_versions[:5])}",
                     }
                     break
+
+    # Detect SSL backend for libcurl, curl_cli, and wget_cli
+    for lib_type in ["libcurl", "curl_cli", "wget_cli"]:
+        if lib_type in result:
+            source_path = result[lib_type].get("source_path", "")
+            if source_path:
+                lib_path = root_path / source_path
+                if lib_path.exists():
+                    backend = detect_ssl_backend(str(lib_path))
+                    if backend:
+                        result[lib_type]["backend"] = {
+                            "name": backend.name,
+                            "version": backend.version,
+                            "confidence": backend.confidence,
+                            "detection_method": backend.detection_method,
+                        }
+
+    # Cross-reference backend versions with detected library versions
+    # If backend was detected but version is missing, try to fill from detected libraries
+    backend_to_lib = {
+        "OpenSSL": "openssl",
+        "GnuTLS": "gnutls",
+        "mbedTLS": "mbedtls",
+        "wolfSSL": "wolfssl",
+        "NSS": "nss",
+    }
+
+    for lib_type in ["libcurl", "curl_cli", "wget_cli"]:
+        if lib_type in result and "backend" in result[lib_type]:
+            backend = result[lib_type]["backend"]
+            if not backend.get("version"):
+                # Try to find version from detected libraries
+                backend_name = backend.get("name", "")
+                lib_key = backend_to_lib.get(backend_name)
+                if lib_key and lib_key in result:
+                    backend["version"] = result[lib_key].get("version")
+
+    # Inherit backend for curl_cli from libcurl if not detected
+    # (curl binary links to libcurl.so, not directly to SSL library)
+    if "curl_cli" in result and "backend" not in result["curl_cli"]:
+        if "libcurl" in result and "backend" in result["libcurl"]:
+            result["curl_cli"]["backend"] = result["libcurl"]["backend"].copy()
 
     return result

@@ -35,6 +35,7 @@ from .indicators import (
     PHP_CURL_FUNCTIONS, PHP_CURL_INTERNAL, PHP_CURL_CURLOPT, PHP_CURL_INSECURE,
 )
 from .version import detect_library_version, scan_firmware_libraries
+from .backend import detect_ssl_backend
 
 
 # ============================================================================
@@ -427,6 +428,21 @@ def scan_file(path: str, libraries: List[str], min_strlen: int) -> Optional[Dict
             ver = detect_library_version(path, version_lib_type, symbols)
             if ver:
                 version_info[lib_key] = ver
+
+        # Detect SSL backend for curl/libcurl binaries
+        if "libcurl" in results or "curl_wget" in results:
+            backend = detect_ssl_backend(path, symbols)
+            if backend:
+                # Attach backend info to the appropriate library's version info
+                lib_key = "libcurl" if "libcurl" in results else "curl_wget"
+                if lib_key not in version_info:
+                    version_info[lib_key] = {}
+                version_info[lib_key]["backend"] = {
+                    "name": backend.name,
+                    "version": backend.version,
+                    "confidence": backend.confidence,
+                    "detection_method": backend.detection_method,
+                }
 
     return {
         "path": path,
