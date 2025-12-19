@@ -70,7 +70,7 @@ def load_security_rules(library_name: str = "openssl") -> str:
     Returns:
         Content of the rules file, or empty string if file not found
     """
-    rule_file = SECURITY_RULES_DIR / f"rule_{library_name}.md"
+    rule_file = SECURITY_RULES_DIR / f"{library_name}.md"
 
     if rule_file.exists():
         try:

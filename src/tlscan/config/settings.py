@@ -6,7 +6,6 @@ This module centralizes all configuration constants used throughout the applicat
 
 import os
 from pathlib import Path
-from importlib.resources import files
 
 # ============================================================================
 # Token Management
@@ -58,7 +57,7 @@ TEMP_BINARIES_DIR = TEMP_FILES_DIR / "binaries"
 """Directory for temporary binary copies used during analysis."""
 
 # Rules directory - default to bundled rules, allow override via environment
-SECURITY_RULES_DIR = Path(str(files("tlscan.rules")))
+SECURITY_RULES_DIR = Path(__file__).parent.parent / "rules"
 """Directory containing security rule markdown files."""
 
 if custom_rules := os.environ.get("TLSCAN_RULES_DIR"):
