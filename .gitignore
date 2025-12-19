@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Draw.io backup files
+*.drawio.bkp
+
 temp_files/
 
 # State snapshots and checkpoints
