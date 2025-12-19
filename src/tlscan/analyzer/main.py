@@ -316,13 +316,28 @@ async def main(
                         console.print("[dim]  Firmware libraries:[/dim]")
                         for lib_id, ver in sorted(library_versions.firmware_libraries.items()):
                             if ver.version:
-                                console.print(f"[dim]    └─ {lib_id}: {ver.version} ({ver.confidence.value} confidence)[/dim]")
+                                source = f" from {ver.source_path}" if ver.source_path else ""
+                                line = f"    └─ {lib_id}: {ver.version} ({ver.confidence.value}){source}"
+                                # Add backend info for curl/libcurl/wget
+                                if ver.backend:
+                                    backend_str = ver.backend.name
+                                    if ver.backend.version:
+                                        backend_str += f" {ver.backend.version}"
+                                    line += f" [backend: {backend_str}]"
+                                console.print(f"[dim]{line}[/dim]")
 
                     if library_versions.libraries:
                         console.print("[dim]  Binary requirements:[/dim]")
                         for lib_id, ver in sorted(library_versions.libraries.items()):
                             if ver.version:
-                                console.print(f"[dim]    └─ {lib_id}: {ver.version} ({ver.confidence.value} confidence)[/dim]")
+                                line = f"    └─ {lib_id}: {ver.version} ({ver.confidence.value})"
+                                # Add backend info for curl/libcurl
+                                if ver.backend:
+                                    backend_str = ver.backend.name
+                                    if ver.backend.version:
+                                        backend_str += f" {ver.backend.version}"
+                                    line += f" [backend: {backend_str}]"
+                                console.print(f"[dim]{line}[/dim]")
 
                     console.print("[green]✓ Library versions loaded[/green]")
                 else:

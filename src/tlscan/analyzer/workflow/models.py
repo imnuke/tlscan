@@ -677,6 +677,17 @@ class LibraryVersions(BaseModel):
 
         # Load firmware-level library versions
         for lib_id, lib_data in cache_data.get("firmware_libraries", {}).items():
+            # Parse backend info if present
+            backend = None
+            backend_data = lib_data.get("backend")
+            if backend_data:
+                backend = SSLBackend(
+                    name=backend_data.get("name", "unknown"),
+                    version=backend_data.get("version"),
+                    confidence=VersionConfidence(backend_data.get("confidence", "none")),
+                    detection_method=BackendDetectionMethod(backend_data.get("detection_method", "dynamic_linking")),
+                )
+
             result.firmware_libraries[lib_id] = LibraryVersion(
                 library=lib_id,
                 version=lib_data.get("version"),
@@ -686,6 +697,7 @@ class LibraryVersions(BaseModel):
                 soname=lib_data.get("soname"),
                 details=lib_data.get("details", ""),
                 required_symbols=lib_data.get("required_symbols", []),
+                backend=backend,
             )
 
         # Load binary-specific versions
@@ -735,11 +747,12 @@ class LibraryVersions(BaseModel):
                 if ver.version:
                     line = f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence, {ver.detection_method.value})"
                     # Include SSL backend info for curl/libcurl
+                    # Use escaped bracket \[ to prevent Rich from interpreting as markup
                     if ver.backend:
                         backend_str = ver.backend.name
                         if ver.backend.version:
                             backend_str += f" {ver.backend.version}"
-                        line += f" [backend: {backend_str}]"
+                        line += f" \\[backend: {backend_str}]"
                     lines.append(line)
 
         # Firmware library versions
@@ -750,7 +763,16 @@ class LibraryVersions(BaseModel):
             for lib_id, ver in sorted(self.firmware_libraries.items()):
                 if ver.version:
                     source = f" from {ver.source_path}" if ver.source_path else ""
-                    lines.append(f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence){source}")
+                    # Build backend string (placed before source path to avoid truncation)
+                    # Use escaped brackets \[ \] to prevent Rich from interpreting as markup
+                    backend_suffix = ""
+                    if ver.backend:
+                        backend_str = ver.backend.name
+                        if ver.backend.version:
+                            backend_str += f" {ver.backend.version}"
+                        backend_suffix = f" \\[backend: {backend_str}]"
+                    line = f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence){backend_suffix}{source}"
+                    lines.append(line)
 
         return "\n".join(lines) if lines else "No library versions detected"
 
