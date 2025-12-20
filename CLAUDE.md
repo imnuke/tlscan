@@ -356,6 +356,7 @@ Use these scopes for conventional commit messages:
 - Rules are bundled with package, override via `SSLENS_RULES_DIR` environment variable
 - **After implementation**: Always present a commit message in Conventional Commits format (see Commit Messages section)
 - When using TodoWrite for multi-step tasks, the final step should be preparing the commit message
+- **No backward compatibility required**: When refactoring, feel free to remove or rename unused code, change APIs, and restructure without maintaining backward compatibility
 
 ### Rich Library Pitfalls
 
