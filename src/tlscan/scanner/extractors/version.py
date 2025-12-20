@@ -1,10 +1,12 @@
 """Version detection for SSL/TLS libraries.
 
 Provides functions to extract library version information from ELF binaries
-using multiple detection methods: version strings, SONAME, VERNEED/VERDEF, and API inference.
+using multiple detection methods: version strings, SONAME, VERNEED/VERDEF,
+and API inference.
 """
 
 import re
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any, Set
 
@@ -16,6 +18,9 @@ except ImportError:
     raise SystemExit("Missing dependency: pyelftools\nInstall with: pip install pyelftools")
 
 from .backend import detect_ssl_backend
+
+logger = logging.getLogger(__name__)
+
 
 # ============================================================================
 # Version Detection Patterns
@@ -88,8 +93,9 @@ LIBRARY_FILE_PATTERNS: List[Tuple[str, str]] = [
 
 
 # ============================================================================
-# Version Detection Functions
+# Helper Functions
 # ============================================================================
+
 
 def extract_soname(path: str) -> Optional[str]:
     """Extract SONAME from ELF dynamic section."""
@@ -99,10 +105,10 @@ def extract_soname(path: str) -> Optional[str]:
             for section in elf.iter_sections():
                 if isinstance(section, DynamicSection):
                     for tag in section.iter_tags():
-                        if tag.entry.d_tag == 'DT_SONAME':
+                        if tag.entry.d_tag == "DT_SONAME":
                             return tag.soname
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Error extracting SONAME from {path}: {e}")
     return None
 
 
@@ -118,8 +124,8 @@ def extract_verneed_versions(path: str) -> Dict[str, List[str]]:
                         lib_name = verneed.name
                         versions = [vernaux.name for vernaux in vernaux_iter]
                         result[lib_name] = versions
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Error extracting VERNEED from {path}: {e}")
     return result
 
 
@@ -134,35 +140,9 @@ def extract_verdef_versions(path: str) -> List[str]:
                     for verdef, verdaux_iter in section.iter_versions():
                         verdaux = next(verdaux_iter)
                         versions.append(verdaux.name)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Error extracting VERDEF from {path}: {e}")
     return versions
-
-
-def extract_version_string(path: str, lib_type: str) -> Optional[Dict[str, Any]]:
-    """Extract version string from binary's string data."""
-    if lib_type not in VERSION_STRING_PATTERNS:
-        return None
-
-    try:
-        with open(path, "rb") as f:
-            data = f.read()
-
-        for pattern, name in VERSION_STRING_PATTERNS[lib_type]:
-            match = pattern.search(data)
-            if match:
-                version_str = match.group(1).decode('ascii', errors='ignore')
-                parsed = parse_version_string(version_str)
-                return {
-                    "version": version_str,
-                    "confidence": "high",
-                    "method": "version_string",
-                    "details": f"Found: {match.group(0).decode('ascii', errors='ignore')}",
-                    **parsed,
-                }
-    except Exception:
-        pass
-    return None
 
 
 def parse_version_string(version: str) -> Dict[str, Any]:
@@ -170,12 +150,12 @@ def parse_version_string(version: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     match = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?([a-z])?", version)
     if match:
-        result['version_major'] = int(match.group(1))
-        result['version_minor'] = int(match.group(2))
+        result["version_major"] = int(match.group(1))
+        result["version_minor"] = int(match.group(2))
         if match.group(3):
-            result['version_patch'] = int(match.group(3))
+            result["version_patch"] = int(match.group(3))
         if match.group(4):
-            result['version_suffix'] = match.group(4)
+            result["version_suffix"] = match.group(4)
     return result
 
 
@@ -207,9 +187,14 @@ def parse_verneed_version(version_tags: List[str], lib_type: str) -> Optional[st
 
 
 def compare_versions(v1: str, v2: str) -> int:
-    """Compare two version strings. Returns >0 if v1 > v2, <0 if v1 < v2, 0 if equal."""
+    """Compare two version strings.
+
+    Returns:
+        >0 if v1 > v2, <0 if v1 < v2, 0 if equal
+    """
+
     def parse(v: str) -> List[int]:
-        parts = re.findall(r'\d+', v)
+        parts = re.findall(r"\d+", v)
         return [int(p) for p in parts] if parts else [0]
 
     p1, p2 = parse(v1), parse(v2)
@@ -233,6 +218,37 @@ def identify_library_type(name: str) -> Optional[str]:
     return None
 
 
+# ============================================================================
+# Version Detection Functions
+# ============================================================================
+
+
+def extract_version_string(path: str, lib_type: str) -> Optional[Dict[str, Any]]:
+    """Extract version string from binary's string data."""
+    if lib_type not in VERSION_STRING_PATTERNS:
+        return None
+
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+
+        for pattern, name in VERSION_STRING_PATTERNS[lib_type]:
+            match = pattern.search(data)
+            if match:
+                version_str = match.group(1).decode("ascii", errors="ignore")
+                parsed = parse_version_string(version_str)
+                return {
+                    "version": version_str,
+                    "confidence": "high",
+                    "method": "version_string",
+                    "details": f"Found: {match.group(0).decode('ascii', errors='ignore')}",
+                    **parsed,
+                }
+    except Exception as e:
+        logger.debug(f"Error extracting version string from {path}: {e}")
+    return None
+
+
 def extract_soname_version(soname: str, lib_type: str) -> Optional[Dict[str, Any]]:
     """Extract version from SONAME."""
     match = re.search(r"\.so\.(\d+)(?:\.(\d+))?(?:\.(\d+))?", soname)
@@ -249,10 +265,20 @@ def extract_soname_version(soname: str, lib_type: str) -> Optional[Dict[str, Any
     return None
 
 
-def detect_library_version(path: str, lib_type: str, symbols: Optional[Set[str]] = None) -> Optional[Dict[str, Any]]:
+def detect_library_version(
+    path: str, lib_type: str, symbols: Optional[Set[str]] = None
+) -> Optional[Dict[str, Any]]:
     """Detect library version using multiple methods.
 
     Priority: version strings (high) > VERNEED (medium) > SONAME (medium) > API inference (low)
+
+    Args:
+        path: Path to the binary file
+        lib_type: Library type (e.g., 'openssl', 'libcurl')
+        symbols: Pre-extracted symbols (optional, for API inference)
+
+    Returns:
+        Dict with version info, or None if not detected
     """
     # Method 1: Version strings (highest confidence)
     version_info = extract_version_string(path, lib_type)
@@ -312,10 +338,18 @@ def detect_library_version(path: str, lib_type: str, symbols: Optional[Set[str]]
 
 
 def scan_firmware_libraries(root: str) -> Dict[str, Dict[str, Any]]:
-    """Scan firmware for library files and extract their versions."""
+    """Scan firmware for library files and extract their versions.
+
+    Args:
+        root: Firmware root directory path
+
+    Returns:
+        Dict mapping library types to version info dicts
+    """
     result: Dict[str, Dict[str, Any]] = {}
     root_path = Path(root)
 
+    # First pass: Find library files and detect versions
     for pattern, lib_type in LIBRARY_FILE_PATTERNS:
         for lib_path in root_path.glob(pattern):
             if lib_path.is_symlink():
@@ -332,11 +366,12 @@ def scan_firmware_libraries(root: str) -> Dict[str, Dict[str, Any]]:
 
                 if lib_type not in result:
                     result[lib_type] = version_info
-                elif confidence_rank(version_info.get("confidence", "none")) > \
-                     confidence_rank(result[lib_type].get("confidence", "none")):
+                elif confidence_rank(version_info.get("confidence", "none")) > confidence_rank(
+                    result[lib_type].get("confidence", "none")
+                ):
                     result[lib_type] = version_info
 
-    # Also check for VERDEF in library files
+    # Second pass: Check VERDEF for libraries not yet found
     for pattern, lib_type in LIBRARY_FILE_PATTERNS:
         if lib_type in result:
             continue
@@ -364,7 +399,7 @@ def scan_firmware_libraries(root: str) -> Dict[str, Dict[str, Any]]:
                     }
                     break
 
-    # Detect SSL backend for libcurl, curl_cli, and wget_cli
+    # Detect SSL backend for curl-related binaries
     for lib_type in ["libcurl", "curl_cli", "wget_cli"]:
         if lib_type in result:
             source_path = result[lib_type].get("source_path", "")
@@ -381,7 +416,6 @@ def scan_firmware_libraries(root: str) -> Dict[str, Dict[str, Any]]:
                         }
 
     # Cross-reference backend versions with detected library versions
-    # If backend was detected but version is missing, try to fill from detected libraries
     backend_to_lib = {
         "OpenSSL": "openssl",
         "GnuTLS": "gnutls",
@@ -394,14 +428,12 @@ def scan_firmware_libraries(root: str) -> Dict[str, Dict[str, Any]]:
         if lib_type in result and "backend" in result[lib_type]:
             backend = result[lib_type]["backend"]
             if not backend.get("version"):
-                # Try to find version from detected libraries
                 backend_name = backend.get("name", "")
                 lib_key = backend_to_lib.get(backend_name)
                 if lib_key and lib_key in result:
                     backend["version"] = result[lib_key].get("version")
 
     # Inherit backend for curl_cli from libcurl if not detected
-    # (curl binary links to libcurl.so, not directly to SSL library)
     if "curl_cli" in result and "backend" not in result["curl_cli"]:
         if "libcurl" in result and "backend" in result["libcurl"]:
             result["curl_cli"]["backend"] = result["libcurl"]["backend"].copy()
