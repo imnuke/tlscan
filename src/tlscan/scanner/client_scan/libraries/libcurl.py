@@ -8,6 +8,9 @@ from .base import (
     MatchType,
 )
 
+# Import backend symbols from lib_scan (single source of truth)
+from ...lib_scan.backends import CURL_BACKEND_SYMBOLS
+
 # Indicator sets for libcurl client detection
 LIBCURL_INDICATORS = [
     IndicatorSet(
@@ -97,76 +100,6 @@ LIBCURL_SCORING_RULES = [
 ]
 
 
-# Backend-specific symbols for SSL backend detection
-LIBCURL_BACKEND_SYMBOLS = {
-    "openssl": {
-        "Curl_ossl_init",
-        "Curl_ossl_cleanup",
-        "Curl_ossl_connect",
-        "Curl_ossl_connect_nonblocking",
-        "Curl_ossl_data_pending",
-        "Curl_ossl_close",
-        "Curl_ossl_shutdown",
-        "Curl_ossl_session_free",
-        "Curl_ossl_set_engine",
-        "Curl_ossl_set_engine_default",
-        "ossl_connect_common",
-        "ossl_connect_step1",
-        "ossl_connect_step2",
-    },
-    "gnutls": {
-        "Curl_gtls_init",
-        "Curl_gtls_cleanup",
-        "Curl_gtls_connect",
-        "Curl_gtls_connect_nonblocking",
-        "Curl_gtls_data_pending",
-        "Curl_gtls_close",
-        "Curl_gtls_shutdown",
-        "Curl_gtls_session_free",
-        "gtls_connect_common",
-        "gtls_connect_step1",
-        "gtls_connect_step2",
-    },
-    "mbedtls": {
-        "Curl_mbedtls_init",
-        "Curl_mbedtls_cleanup",
-        "Curl_mbedtls_connect",
-        "Curl_mbedtls_connect_nonblocking",
-        "Curl_mbedtls_data_pending",
-        "Curl_mbedtls_close",
-        "Curl_mbedtls_shutdown",
-        "mbed_connect_common",
-        "mbed_connect_step1",
-        "mbed_connect_step2",
-    },
-    "nss": {
-        "Curl_nss_init",
-        "Curl_nss_cleanup",
-        "Curl_nss_connect",
-        "Curl_nss_connect_nonblocking",
-        "Curl_nss_data_pending",
-        "Curl_nss_close",
-        "Curl_nss_shutdown",
-        "Curl_nss_session_free",
-        "nss_connect_common",
-        "nss_connect_step1",
-        "nss_connect_step2",
-    },
-    "wolfssl": {
-        "Curl_wolfssl_init",
-        "Curl_wolfssl_cleanup",
-        "Curl_wolfssl_connect",
-        "Curl_wolfssl_connect_nonblocking",
-        "Curl_wolfssl_data_pending",
-        "Curl_wolfssl_close",
-        "Curl_wolfssl_shutdown",
-        "wolfssl_connect_common",
-        "wolfssl_connect_step1",
-        "wolfssl_connect_step2",
-    },
-}
-
-
 LIBCURL = LibraryDefinition(
     id="libcurl",
     name="libcurl",
@@ -175,5 +108,5 @@ LIBCURL = LibraryDefinition(
     applicable_file_types=["elf_binary"],
     indicator_sets=LIBCURL_INDICATORS,
     scoring_rules=LIBCURL_SCORING_RULES,
-    backend_symbols=LIBCURL_BACKEND_SYMBOLS,
+    backend_symbols=CURL_BACKEND_SYMBOLS,  # From lib_scan.backends
 )

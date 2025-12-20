@@ -1,6 +1,7 @@
-"""Main scanning logic for network client detection.
+"""TLS client detection in binaries and scripts.
 
-Provides the core scanning functions with clean separation of concerns:
+Provides the core scanning functions for detecting programs that use TLS
+as clients. Clean separation of concerns:
 - File type detection
 - Data extraction (symbols, strings)
 - Library scoring (data-driven)
@@ -14,12 +15,12 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Set, Tuple, Any
 
-from .config import (
+from ..config import (
     ScannerConfig,
     DEFAULT_CONFIG,
     DEFAULT_IGNORE_FILES,
 )
-from .models import (
+from ..models import (
     ScanResult,
     DetectionResult,
     VersionInfo,
@@ -28,11 +29,12 @@ from .models import (
     ConfidenceLevel,
 )
 from .libraries import get_library, get_libraries_for_file_type, list_library_ids
-from .extractors.elf import extract_symbols, is_probably_elf
-from .extractors.strings import extract_strings
-from .extractors.version import detect_library_version, scan_firmware_libraries
-from .extractors.backend import detect_ssl_backend, BackendInfo
 from .scoring import score_all_libraries
+from ..utils.elf import extract_symbols, is_probably_elf
+from ..utils.strings import extract_strings
+
+# Import version and backend detection from lib_scan
+from ..lib_scan import detect_library_version, detect_ssl_backend
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +117,7 @@ def scan_file(
     libraries: Optional[List[str]] = None,
     config: ScannerConfig = DEFAULT_CONFIG,
 ) -> Optional[ScanResult]:
-    """Scan a single file for network client library usage.
+    """Scan a single file for TLS client library usage.
 
     Clean separation of concerns:
     1. File type detection
@@ -230,12 +232,12 @@ def scan_file(
     )
 
 
-def scan_directory(
+def scan_clients(
     root: str,
     libraries: Optional[List[str]] = None,
     config: ScannerConfig = DEFAULT_CONFIG,
-) -> Tuple[List[ScanResult], Dict[str, Dict[str, Any]]]:
-    """Recursively scan directory for network clients and library versions.
+) -> List[ScanResult]:
+    """Scan directory for programs that use TLS as clients.
 
     Args:
         root: Root directory to scan
@@ -243,12 +245,9 @@ def scan_directory(
         config: Scanner configuration
 
     Returns:
-        Tuple of (list of ScanResults, firmware library versions dict)
+        List of ScanResults for files with detected TLS client usage
     """
     results: List[ScanResult] = []
-
-    # Scan for firmware library files and their versions
-    firmware_versions = scan_firmware_libraries(root)
 
     # Walk directory tree
     for dirpath, dirnames, filenames in os.walk(root):
@@ -258,9 +257,5 @@ def scan_directory(
             if result:
                 results.append(result)
 
-    logger.info(f"Scanned {root}: found {len(results)} files with network clients")
-    return results, firmware_versions
-
-
-# Legacy compatibility alias
-walk_and_scan = scan_directory
+    logger.info(f"Scanned {root}: found {len(results)} files with TLS clients")
+    return results

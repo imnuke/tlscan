@@ -1,4 +1,4 @@
-"""Library registry for network client detection.
+"""Library registry for TLS client detection.
 
 Provides a central registry of all supported library definitions
 and helper functions for library lookup.

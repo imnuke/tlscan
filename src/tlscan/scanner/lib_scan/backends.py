@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, List, Set, Dict
 
-from .elf import extract_needed_libs
+from ..utils.elf import extract_needed_libs
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,6 @@ BACKEND_LIBRARY_PATTERNS: Dict[str, List[str]] = {
 
 # Backend-specific curl internal symbols (SINGLE SOURCE OF TRUTH)
 # These symbols are only present when curl is compiled with that specific backend
-# Previously duplicated in indicators.py and backend.py - now consolidated here
 CURL_BACKEND_SYMBOLS: Dict[str, Set[str]] = {
     "openssl": {
         "Curl_ossl_init",
@@ -111,7 +110,6 @@ CURL_BACKEND_SYMBOLS: Dict[str, Set[str]] = {
 }
 
 # Pattern to extract backend from libcurl version string
-# Matches: "libcurl/7.73.0 OpenSSL/1.1.1w" or "libcurl/7.73.0-DEV GnuTLS/3.6.15"
 CURL_VERSION_BACKEND_PATTERN = re.compile(
     rb"libcurl/[\d.]+(?:-\w+)?\s+(\w+)/(\d+\.\d+\.\d+[a-z]?)"
 )
@@ -149,32 +147,17 @@ class BackendInfo:
 
 
 def detect_backend_from_needed(needed_libs: List[str]) -> Optional[str]:
-    """Detect SSL backend from ELF NEEDED entries.
-
-    Args:
-        needed_libs: List of library names from DT_NEEDED
-
-    Returns:
-        Backend key (e.g., "openssl") if found, None otherwise
-    """
+    """Detect SSL backend from ELF NEEDED entries."""
     for backend, patterns in BACKEND_LIBRARY_PATTERNS.items():
         for pattern in patterns:
             for lib in needed_libs:
-                # Match library name prefix (handles versioned sonames)
                 if lib.startswith(pattern.rstrip(".so")) or lib == pattern:
                     return backend
     return None
 
 
 def detect_backend_from_symbols(symbols: Set[str]) -> Optional[str]:
-    """Detect SSL backend from curl internal symbols.
-
-    Args:
-        symbols: Set of symbol names from the binary
-
-    Returns:
-        Backend key if backend-specific symbols are found, None otherwise
-    """
+    """Detect SSL backend from curl internal symbols."""
     for backend, backend_symbols in CURL_BACKEND_SYMBOLS.items():
         matches = symbols & backend_symbols
         if matches:
@@ -184,38 +167,25 @@ def detect_backend_from_symbols(symbols: Set[str]) -> Optional[str]:
 
 
 def extract_backend_from_version_string(path: str) -> Optional[tuple]:
-    """Extract backend name and version from binary's version strings.
-
-    Args:
-        path: Path to the binary file
-
-    Returns:
-        (backend_key, version) tuple if found, None otherwise
-    """
+    """Extract backend name and version from binary's version strings."""
     try:
         with open(path, "rb") as f:
             data = f.read()
 
-        # First try the combined libcurl + backend pattern
         match = CURL_VERSION_BACKEND_PATTERN.search(data)
         if match:
             backend_name = match.group(1).decode("ascii", errors="ignore").lower()
             version = match.group(2).decode("ascii", errors="ignore")
 
-            # Normalize backend name
             backend_key = None
             for key, display_name in BACKEND_NAMES.items():
-                if (
-                    backend_name.lower() == display_name.lower()
-                    or backend_name.lower() == key
-                ):
+                if backend_name.lower() == display_name.lower() or backend_name.lower() == key:
                     backend_key = key
                     break
 
             if backend_key:
                 return (backend_key, version)
 
-        # Fall back to individual backend version patterns
         for backend_key, pattern in BACKEND_VERSION_PATTERNS.items():
             match = pattern.search(data)
             if match:
@@ -235,19 +205,11 @@ def detect_ssl_backend(
     """Detect SSL backend for a curl/libcurl binary.
 
     Uses multiple detection methods with confidence ranking:
-    1. Version string (high confidence) - explicit backend info in binary
-    2. Dynamic linking (high confidence) - NEEDED entries show linked libraries
-    3. Internal symbols (medium confidence) - curl backend-specific function names
-
-    Args:
-        path: Path to the binary file
-        symbols: Pre-extracted symbols (optional, for efficiency)
-        needed_libs: Pre-extracted NEEDED libraries (optional)
-
-    Returns:
-        BackendInfo if backend is detected, None otherwise
+    1. Version string (high) - explicit backend info in binary
+    2. Dynamic linking (high) - NEEDED entries show linked libraries
+    3. Internal symbols (medium) - curl backend-specific function names
     """
-    # Method 1: Version string (highest confidence, includes version)
+    # Method 1: Version string
     version_result = extract_backend_from_version_string(path)
     if version_result:
         backend_key, version = version_result
@@ -259,7 +221,7 @@ def detect_ssl_backend(
             detection_method="version_string",
         )
 
-    # Method 2: Dynamic linking (high confidence, primary backend)
+    # Method 2: Dynamic linking
     if needed_libs is None:
         needed_libs = extract_needed_libs(path)
 
@@ -273,7 +235,7 @@ def detect_ssl_backend(
             detection_method="dynamic_linking",
         )
 
-    # Method 3: Internal symbols (medium confidence, for static builds)
+    # Method 3: Internal symbols
     if symbols:
         backend_key = detect_backend_from_symbols(symbols)
         if backend_key:
@@ -288,24 +250,8 @@ def detect_ssl_backend(
     return None
 
 
-# ============================================================================
-# Backend Behavior Defaults
-# ============================================================================
-
-
 def get_backend_default_behavior(backend: str, rule: str) -> Optional[dict]:
-    """Get backend-specific default behavior for a rule.
-
-    Provides known defaults for different SSL backends when
-    curl/libcurl doesn't explicitly configure something.
-
-    Args:
-        backend: Backend key (e.g., "openssl", "gnutls")
-        rule: Rule identifier (e.g., "cipher_suite", "revocation")
-
-    Returns:
-        Dict with 'default' and 'notes' fields, or None if unknown
-    """
+    """Get backend-specific default behavior for a rule."""
     defaults = {
         "openssl": {
             "cipher_suite": {
@@ -322,60 +268,24 @@ def get_backend_default_behavior(backend: str, rule: str) -> Optional[dict]:
             },
         },
         "gnutls": {
-            "cipher_suite": {
-                "default": "NORMAL",
-                "notes": "GnuTLS NORMAL priority excludes known weak algorithms",
-            },
-            "revocation": {
-                "default": "disabled",
-                "notes": "GnuTLS requires explicit OCSP stapling enablement",
-            },
-            "min_tls_version": {
-                "default": "1.2",
-                "notes": "GnuTLS 3.6+ defaults to TLS 1.2 minimum",
-            },
+            "cipher_suite": {"default": "NORMAL", "notes": "GnuTLS NORMAL priority"},
+            "revocation": {"default": "disabled", "notes": "Requires explicit OCSP"},
+            "min_tls_version": {"default": "1.2", "notes": "GnuTLS 3.6+"},
         },
         "mbedtls": {
-            "cipher_suite": {
-                "default": "secure defaults",
-                "notes": "mbedTLS defaults exclude deprecated algorithms",
-            },
-            "revocation": {
-                "default": "disabled",
-                "notes": "mbedTLS requires explicit CRL/OCSP configuration",
-            },
-            "min_tls_version": {
-                "default": "1.2",
-                "notes": "mbedTLS 2.x+ defaults to TLS 1.2",
-            },
+            "cipher_suite": {"default": "secure defaults", "notes": "mbedTLS defaults"},
+            "revocation": {"default": "disabled", "notes": "Requires explicit config"},
+            "min_tls_version": {"default": "1.2", "notes": "mbedTLS 2.x+"},
         },
         "nss": {
-            "cipher_suite": {
-                "default": "secure defaults",
-                "notes": "NSS has secure default cipher configuration",
-            },
-            "revocation": {
-                "default": "ocsp_enabled",
-                "notes": "NSS can be configured to enable OCSP by default",
-            },
-            "min_tls_version": {
-                "default": "1.2",
-                "notes": "Modern NSS defaults to TLS 1.2+",
-            },
+            "cipher_suite": {"default": "secure defaults", "notes": "NSS defaults"},
+            "revocation": {"default": "ocsp_enabled", "notes": "NSS OCSP support"},
+            "min_tls_version": {"default": "1.2", "notes": "Modern NSS"},
         },
         "wolfssl": {
-            "cipher_suite": {
-                "default": "secure defaults",
-                "notes": "wolfSSL has secure default cipher configuration",
-            },
-            "revocation": {
-                "default": "disabled",
-                "notes": "wolfSSL requires explicit OCSP/CRL configuration",
-            },
-            "min_tls_version": {
-                "default": "1.2",
-                "notes": "wolfSSL defaults to TLS 1.2+ in recent versions",
-            },
+            "cipher_suite": {"default": "secure defaults", "notes": "wolfSSL defaults"},
+            "revocation": {"default": "disabled", "notes": "Requires explicit config"},
+            "min_tls_version": {"default": "1.2", "notes": "wolfSSL recent versions"},
         },
     }
 

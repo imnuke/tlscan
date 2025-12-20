@@ -1,15 +1,15 @@
-"""Command-line interface for network client scanner.
+"""Command-line interface for TLS scanner.
 
 Provides the CLI entry point (tlscan-detect) for scanning firmware
-directories for network client library usage.
+directories for TLS libraries and client programs.
 """
 
 import argparse
 import logging
 
 from .config import ScannerConfig, ExtractionConfig, TOOL_VERSION
-from .libraries import list_library_ids, get_library_info
-from .scanner import scan_directory
+from .client_scan import list_library_ids, get_library_info, scan_clients
+from .lib_scan import scan_libraries
 from .output import (
     format_human_readable,
     format_firmware_versions,
@@ -30,10 +30,10 @@ def main() -> None:
     )
 
     ap = argparse.ArgumentParser(
-        description="Network client scanner - detects TLS/HTTP client library usage in ELF binaries and scripts.",
+        description="TLS scanner - detects TLS libraries and client programs in firmware.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
-Available libraries:
+Available libraries (for client detection):
 {lib_help}
   all        - Scan for all libraries (default)
 
@@ -99,8 +99,11 @@ Examples:
         extraction=ExtractionConfig(min_string_length=args.min_strlen),
     )
 
-    # Scan
-    results, firmware_versions = scan_directory(args.root, libraries, config)
+    # Scan firmware for TLS libraries (versions, backends)
+    firmware_versions = scan_libraries(args.root)
+
+    # Scan for TLS client programs
+    results = scan_clients(args.root, libraries, config)
 
     # Output
     if args.json:
@@ -112,9 +115,9 @@ Examples:
             print(version_output)
 
         if not results:
-            print(f"No network clients detected in {args.root}")
+            print(f"No TLS clients detected in {args.root}")
         else:
-            print(f"Found {len(results)} file(s) with network client usage:")
+            print(f"Found {len(results)} file(s) with TLS client usage:")
             print(format_human_readable(results))
 
     # Save to cache if requested

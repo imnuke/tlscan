@@ -122,7 +122,7 @@ def save_to_cache(
 
     Creates .tlscan/ directory in firmware root and saves:
     - library_versions.json: Library version information
-    - network_clients.json: Network client findings
+    - network_clients.json: TLS client findings (legacy filename kept for compatibility)
 
     Args:
         root: Firmware root directory
@@ -190,7 +190,7 @@ def save_to_cache(
             pass
         findings_relative.append(finding)
 
-    # Save network clients findings
+    # Save TLS client findings
     clients_data = {
         "scan_timestamp": datetime.utcnow().isoformat() + "Z",
         "tool_version": TOOL_VERSION,

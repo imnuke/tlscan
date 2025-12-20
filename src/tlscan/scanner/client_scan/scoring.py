@@ -7,7 +7,7 @@ with a single data-driven implementation that works with any LibraryDefinition.
 import logging
 from typing import Set, Dict, List
 
-from .models import ConfidenceLevel, DetectionResult, DetectionMethod
+from ..models import ConfidenceLevel, DetectionResult, DetectionMethod
 from .libraries.base import LibraryDefinition, IndicatorSet, MatchType
 
 logger = logging.getLogger(__name__)
