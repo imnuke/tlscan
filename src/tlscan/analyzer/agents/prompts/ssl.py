@@ -81,8 +81,8 @@ Analyze the code for SSL/TLS client security compliance and output JSON matching
   "client_type": "OpenSSL|libcurl|mbedTLS|GnuTLS|etc",
   "rules": [
     {{
-      "rule_id": "R2",
-      "rule_name": "Certificate Chain Verification",
+      "rule_id": "Rn",
+      "rule_name": "<exact name from rule heading>",
       "result": "pass|fail|conditional|undetermined",
       "evidence": "detailed evidence with function names and addresses",
       "conditions": []  // for conditional, list variables to trace
@@ -92,6 +92,11 @@ Analyze the code for SSL/TLS client security compliance and output JSON matching
   "applicable": true|false,
   "reason": null|"why not applicable"
 }}
+
+RULE NAME EXTRACTION:
+- Extract rule_name from the rule section heading in the security rules
+- Example: "## R2: Certificate & Hostname Verification (Combined)" → rule_name = "Certificate & Hostname Verification (Combined)"
+- DO NOT use generic names - use the EXACT name from the rules document
 
 For conditional result, include conditions array with:
 {{
