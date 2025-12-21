@@ -147,11 +147,6 @@ CURL_WGET_SCORING_RULES = [
         condition=lambda h: _has_tool(h),
         rationale_template="Tool command strings found: {tools}",
     ),
-    ScoringRule(
-        confidence="low",
-        condition=lambda h: _has_url(h),
-        rationale_template="URL schemes found but no tool commands",
-    ),
 ]
 
 
