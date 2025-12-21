@@ -158,28 +158,68 @@ This document defines security rules for curl command-line tool usage in scripts
 | `--sslv2` | SSL 2.0 | INSECURE (refused since 7.77.0) |
 | (none) | curl version dependent | See table below |
 
-**Default Behavior (Version-Dependent)**:
+**curl Version Defaults (when no explicit --tlsv* flag)**:
 | curl Version | Default Minimum | Security |
 |--------------|-----------------|----------|
 | < 7.39.0 | SSLv3 allowed | INSECURE |
 | 7.39.0 - 8.15.x | TLS 1.0 | INSECURE |
 | ≥ 8.16.0 | TLS 1.2 | SECURE |
 
+**Backend Minimum (HARD FLOOR - applies regardless of curl version)**:
+| Backend | Version Range | Library Default | With Config |
+|---------|---------------|-----------------|-------------|
+| OpenSSL | 3.0+ | TLS 1.2 | Use MinProtocol from openssl.cnf |
+| OpenSSL | 1.1.1+ | TLS 1.0 | Use MinProtocol from openssl.cnf |
+| OpenSSL | 1.0.x | TLS 1.0 | Use MinProtocol from openssl.cnf |
+| GnuTLS | 3.6+ | TLS 1.2 | Use priority from gnutls config |
+| GnuTLS | < 3.6 | TLS 1.0 | Use priority from gnutls config |
+| mbedTLS | 2.x+ | TLS 1.2 | Compile-time only |
+| wolfSSL | 4.x+ | TLS 1.2 | Compile-time only |
+
+**IMPORTANT**: The backend's minimum is a hard floor that curl cannot go below.
+If the backend config (e.g., openssl.cnf) sets MinProtocol=TLSv1.2, the backend
+will refuse connections below TLS 1.2 even if curl's default would allow TLS 1.0.
+
+**TLS Version Resolution (when no --tlsv* flag specified)**:
+
+The effective minimum TLS version = max(curl_default, backend_minimum)
+
+| curl Version | Backend | Config MinProtocol | Effective Min | Result |
+|--------------|---------|-------------------|---------------|--------|
+| 8.0.1 | OpenSSL 1.1.1 | TLSv1.2 | TLS 1.2 | PASS |
+| 8.0.1 | OpenSSL 1.1.1 | (none) | TLS 1.0 | FAIL |
+| 8.16.0 | OpenSSL 1.1.1 | (none) | TLS 1.2 | PASS |
+| 7.50.0 | GnuTLS 3.7.0 | - | TLS 1.2 | PASS |
+| Any | OpenSSL 3.0+ | (none) | TLS 1.2 | PASS |
+
+**Resolution logic**:
+1. If explicit --tlsv1.2 or --tlsv1.3 → PASS
+2. If explicit --tlsv1.0 or --tlsv1.1:
+   - Check backend config MinProtocol: if ≥ TLS 1.2 → PASS (backend refuses lower)
+   - Otherwise → FAIL (insecure negotiation possible)
+3. If no flag, both curl and backend versions known → Use max(curl_default, backend_minimum)
+4. If backend config MinProtocol found → Use that as backend_minimum
+5. If no config but backend version known → Use Library Default from table
+6. If neither curl nor backend known → UNDETERMINED
+
 **Detection Patterns**:
 - `curl --tlsv1.2 https://...` → PASS (TLS 1.2 minimum)
 - `curl --tlsv1.3 https://...` → PASS (TLS 1.3 minimum)
-- `curl --tlsv1 https://...` → FAIL (allows TLS 1.0)
-- `curl --tlsv1.0 https://...` → FAIL (TLS 1.0)
-- `curl --tlsv1.1 https://...` → FAIL (TLS 1.1)
-- `curl https://...` (no TLS option) → UNDETERMINED (version-dependent default)
+- `curl --tlsv1 https://...` → Check backend config/version for effective minimum
+- `curl --tlsv1.0 https://...` → Check backend config/version for effective minimum
+- `curl --tlsv1.1 https://...` → Check backend config/version for effective minimum
+- `curl https://...` (no TLS option) → Use resolution logic above
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `--tlsv1.2` or `--tlsv1.3` used | PASS | Secure minimum enforced |
-| `--tlsv1`, `--tlsv1.0`, `--tlsv1.1` | FAIL | Allows insecure protocols |
+| `--tlsv1.*` with backend min ≥ TLS 1.2 | PASS | Backend refuses insecure protocols |
+| `--tlsv1.*` with backend min < TLS 1.2 | FAIL | Insecure negotiation possible |
 | `--sslv2`, `--sslv3` | FAIL | Insecure protocols |
-| No TLS version flag | UNDETERMINED | Depends on curl version (not traceable) |
+| No flag, effective min ≥ TLS 1.2 | PASS | Resolution yields secure minimum |
+| No flag, effective min < TLS 1.2 | FAIL | Resolution yields insecure minimum |
+| No flag, cannot determine effective min | UNDETERMINED | Insufficient version info |
 | TLS option from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -220,17 +260,31 @@ This document defines security rules for curl command-line tool usage in scripts
 HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 ```
 
+**Backend Cipher Suite Defaults (when no --ciphers specified)**:
+| Backend | Version | Default Config | Security |
+|---------|---------|----------------|----------|
+| OpenSSL | 3.0+ | TLS_AES_* + ECDHE preferred | PASS |
+| OpenSSL | 1.1.1+ | DEFAULT:!aNULL:!eNULL (ECDHE) | PASS |
+| OpenSSL | 1.0.x | DEFAULT (may include weak) | CONDITIONAL |
+| GnuTLS | 3.6+ | NORMAL priority | PASS |
+| mbedTLS | 2.x+ | Secure defaults | PASS |
+| wolfSSL | 4.x+ | Secure defaults | PASS |
+
+**Resolution**: When no --ciphers specified and backend is detected, use Security column.
+
 **Detection Patterns**:
 - `--ciphers 'HIGH:!aNULL:!eNULL'` → PASS (strong ciphers)
 - `--ciphers` containing `NULL`, `EXPORT`, `RC4` → FAIL
-- No `--ciphers` option → CONDITIONAL (uses backend default)
+- No `--ciphers`, backend PASS in table → PASS (secure backend default)
+- No `--ciphers`, backend unknown → CONDITIONAL (cannot verify default)
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Strong cipher string configured | PASS | Weak ciphers excluded |
 | Cipher string contains weak ciphers | FAIL | Insecure ciphers allowed |
-| No `--ciphers` specified | CONDITIONAL | Uses backend default |
+| No `--ciphers`, backend detected as PASS | PASS | Uses secure backend default |
+| No `--ciphers`, backend unknown | CONDITIONAL | Cannot verify backend default |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -261,17 +315,31 @@ HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 | Linux (OpenSSL) | No automatic revocation checking |
 | macOS (SecureTransport) | May use system OCSP |
 
+**Backend Revocation Defaults (when no revocation option specified)**:
+| Backend | Default Behavior | Verdict |
+|---------|-----------------|---------|
+| OpenSSL | DISABLED (no CRL/OCSP) | CONDITIONAL |
+| GnuTLS | DISABLED | CONDITIONAL |
+| mbedTLS | DISABLED | CONDITIONAL |
+| Schannel (Windows) | CRL enabled | PASS |
+| SecureTransport (macOS) | May use system OCSP | CONDITIONAL |
+| wolfSSL | DISABLED | CONDITIONAL |
+
+**Resolution**: When no revocation option specified and backend is detected, use Verdict column.
+**Note**: CONDITIONAL (not FAIL) because S1 is a SHOULD requirement, not MUST.
+
 **Detection Patterns**:
 - `--ssl-revoke-best-effort` → PASS (revocation enabled)
-- `--ssl-no-revoke` → FAIL (revocation disabled)
-- No revocation option → UNDETERMINED (SHOULD requirement)
+- `--ssl-no-revoke` → CONDITIONAL (explicit disable of SHOULD)
+- No revocation option, backend known → use Verdict from table
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `--ssl-revoke-best-effort` used | PASS | Revocation checking enabled |
-| `--ssl-no-revoke` used | FAIL | Revocation checking disabled |
-| No revocation option | UNDETERMINED | SHOULD requirement, backend-dependent |
+| `--ssl-no-revoke` used | CONDITIONAL | Explicit disable of SHOULD requirement |
+| No option, Schannel backend | PASS | Schannel enables CRL by default |
+| No option, other backend | CONDITIONAL | SHOULD requirement not satisfied |
 
 ---
 

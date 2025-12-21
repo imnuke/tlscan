@@ -15,6 +15,7 @@ from .versions import (
     confidence_rank,
 )
 from .backends import detect_ssl_backend
+from .configs import extract_backend_config
 
 logger = logging.getLogger(__name__)
 
@@ -149,12 +150,21 @@ def scan_libraries(root: str) -> Dict[str, Dict[str, Any]]:
                 if lib_path.exists():
                     backend = detect_ssl_backend(str(lib_path))
                     if backend:
-                        result[lib_type]["backend"] = {
+                        backend_data: Dict[str, Any] = {
                             "name": backend.name,
                             "version": backend.version,
                             "confidence": backend.confidence,
                             "detection_method": backend.detection_method,
                         }
+                        # Extract backend config from firmware
+                        backend_config = extract_backend_config(root, backend.name)
+                        if backend_config:
+                            backend_data["config"] = {
+                                "min_protocol": backend_config.min_protocol,
+                                "max_protocol": backend_config.max_protocol,
+                                "config_source": backend_config.config_source,
+                            }
+                        result[lib_type]["backend"] = backend_data
 
     # Cross-reference backend versions with detected library versions
     backend_to_lib = {
