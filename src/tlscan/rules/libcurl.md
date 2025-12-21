@@ -208,37 +208,66 @@ This document defines library-specific security rules for libcurl-based TLS clie
 | 6 | `CURL_SSLVERSION_TLSv1_2` | TLS 1.2 | SECURE |
 | 7 | `CURL_SSLVERSION_TLSv1_3` | TLS 1.3 | SECURE |
 
-**Default Behavior (Version-Dependent)**:
+**libcurl Version Defaults (when CURLOPT_SSLVERSION=0 or not set)**:
 | libcurl Version | Default Min | Security |
 |-----------------|-------------|----------|
 | < 7.39.0 | SSL 3.0 allowed | INSECURE |
 | 7.39.0 - 8.15.x | TLS 1.0 | INSECURE |
 | ≥ 8.16.0 | TLS 1.2 | SECURE |
 
-**Backend TLS Version Defaults (when CURLOPT_SSLVERSION=0 or not set and libcurl version unknown)**:
-| Backend | Version Range | Minimum TLS | Security |
-|---------|--------------|-------------|----------|
-| OpenSSL | 3.0+ | TLS 1.2 | PASS |
-| OpenSSL | 1.1.1+ | TLS 1.2 | PASS |
-| OpenSSL | 1.0.x | TLS 1.0 | FAIL |
-| GnuTLS | 3.6+ | TLS 1.2 | PASS |
-| mbedTLS | 2.x+ | TLS 1.2 | PASS |
-| wolfSSL | 4.x+ | TLS 1.2 | PASS |
+**Backend Minimum (HARD FLOOR - applies regardless of libcurl version)**:
+| Backend | Version Range | Library Default | With Config |
+|---------|---------------|-----------------|-------------|
+| OpenSSL | 3.0+ | TLS 1.2 | Use MinProtocol from openssl.cnf |
+| OpenSSL | 1.1.1+ | TLS 1.0 | Use MinProtocol from openssl.cnf |
+| OpenSSL | 1.0.x | TLS 1.0 | Use MinProtocol from openssl.cnf |
+| GnuTLS | 3.6+ | TLS 1.2 | Use priority from gnutls config |
+| GnuTLS | < 3.6 | TLS 1.0 | Use priority from gnutls config |
+| mbedTLS | 2.x+ | TLS 1.2 | Compile-time only |
+| wolfSSL | 4.x+ | TLS 1.2 | Compile-time only |
 
-**Resolution**: If SSLVERSION=0 (or not set) and libcurl version unknown, use detected backend version.
+**IMPORTANT**: The backend's minimum is a hard floor that libcurl cannot go below.
+If the backend config (e.g., openssl.cnf) sets MinProtocol=TLSv1.2, the backend
+will refuse connections below TLS 1.2 even if libcurl's default would allow TLS 1.0.
+
+**TLS Version Resolution (when CURLOPT_SSLVERSION=0 or not set)**:
+
+The effective minimum TLS version = max(libcurl_default, backend_minimum)
+
+| libcurl Version | Backend | Config MinProtocol | Effective Min | Result |
+|-----------------|---------|-------------------|---------------|--------|
+| 8.0.1 | OpenSSL 1.1.1 | TLSv1.2 | TLS 1.2 | PASS |
+| 8.0.1 | OpenSSL 1.1.1 | (none) | TLS 1.0 | FAIL |
+| 8.16.0 | OpenSSL 1.1.1 | (none) | TLS 1.2 | PASS |
+| 7.50.0 | GnuTLS 3.7.0 | - | TLS 1.2 | PASS |
+| Any | OpenSSL 3.0+ | (none) | TLS 1.2 | PASS |
+
+**Resolution logic**:
+1. If CURLOPT_SSLVERSION ≥ 6 (TLS 1.2+) → PASS
+2. If CURLOPT_SSLVERSION > 0 and < 6 (explicit insecure):
+   - Check backend config MinProtocol: if ≥ TLS 1.2 → PASS (backend refuses lower)
+   - Otherwise → FAIL (insecure negotiation possible)
+3. If CURLOPT_SSLVERSION = 0 or not set:
+   - Use max(libcurl_default, backend_minimum) as effective minimum
+4. If backend config MinProtocol found → Use that as backend_minimum
+5. If no config but backend version known → Use Library Default from table
+6. If neither libcurl nor backend known → UNDETERMINED
 
 **Detection Patterns**:
 - `curl_easy_setopt(handle, 32, 6)` → PASS (TLS 1.2 minimum)
 - `curl_easy_setopt(handle, 32, 7)` → PASS (TLS 1.3 minimum)
-- `curl_easy_setopt(handle, 32, value < 6)` → FAIL (allows insecure versions)
-- No call to option 32 → UNDETERMINED (version-dependent default)
+- `curl_easy_setopt(handle, 32, 1-5)` → Check backend config/version for effective minimum
+- No call to option 32 → Use resolution logic above
 
 **PASS/FAIL/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `CURLOPT_SSLVERSION` ≥ 6 | PASS | TLS 1.2+ enforced |
-| `CURLOPT_SSLVERSION` < 6 and > 0 | FAIL | Allows insecure protocols |
-| `CURLOPT_SSLVERSION` = 0 or not set | UNDETERMINED | Depends on libcurl version (not traceable) |
+| `CURLOPT_SSLVERSION` 1-5 with backend min ≥ TLS 1.2 | PASS | Backend refuses insecure protocols |
+| `CURLOPT_SSLVERSION` 1-5 with backend min < TLS 1.2 | FAIL | Insecure negotiation possible |
+| SSLVERSION=0/not set, effective min ≥ TLS 1.2 | PASS | Resolution yields secure minimum |
+| SSLVERSION=0/not set, effective min < TLS 1.2 | FAIL | Resolution yields insecure minimum |
+| SSLVERSION=0/not set, cannot determine effective min | UNDETERMINED | Insufficient version info |
 | `curl_easy_setopt(h, 32, var)` | CONDITIONAL | Trace variable |
 
 ---

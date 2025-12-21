@@ -39,17 +39,37 @@ RESOLVING BACKEND-DEPENDENT RULES:
 
 When a rule's criteria says "uses backend default" or would be UNDETERMINED/CONDITIONAL:
 1. Check the DETECTED LIBRARY VERSIONS section for backend info (e.g., "[backend: OpenSSL 1.1.1w]")
-2. Find the rule's "Backend Default Behavior" or "Backend * Defaults" table in the security rules
-3. Match the backend name and version range to find the corresponding row
-4. Use the Security/Verdict column as the result
+2. Check for backend config info (e.g., "[min: TLSv1.2]") which indicates system-configured minimum
+3. Find the rule's "Backend Minimum" or "Backend * Defaults" table in the security rules
+4. Apply the resolution logic from the rule
 
-Example resolution:
-- Rule: Cipher Suite Selection - No --ciphers option found
-- Backend detected: OpenSSL 1.1.1w
-- Table lookup: "OpenSSL 1.1.1+" row → Security = PASS
-- Result: PASS with evidence citing secure backend default
+**For TLS Version Rules (R3/R4 for curl/libcurl)**:
+The effective minimum = max(tool_default, backend_minimum)
+The backend minimum is a HARD FLOOR that the tool cannot go below.
 
-Important: Always include the backend version in your evidence when using backend defaults to determine results.
+1. If backend config MinProtocol is shown (e.g., "[min: TLSv1.2]"):
+   - Use that as the backend minimum (system has configured a floor)
+2. If only backend version is shown (no config):
+   - Use the "Library Default" column from the Backend Minimum table
+3. Calculate: effective_min = max(tool_version_default, backend_minimum)
+4. If effective_min >= TLS 1.2 → PASS, else → FAIL
+
+Example resolution with config:
+- curl 8.0.1 (default: TLS 1.0) + OpenSSL 1.1.1w [min: TLSv1.2]
+- Backend config sets MinProtocol=TLSv1.2
+- Effective minimum = max(TLS 1.0, TLS 1.2) = TLS 1.2
+- Result: PASS (backend enforces TLS 1.2 floor)
+
+Example resolution without config:
+- curl 8.0.1 (default: TLS 1.0) + OpenSSL 1.1.1w (no config)
+- OpenSSL 1.1.1 Library Default = TLS 1.0
+- Effective minimum = max(TLS 1.0, TLS 1.0) = TLS 1.0
+- Result: FAIL (no floor enforces TLS 1.2)
+
+**For Cipher Suites and Revocation Rules**:
+Use the backend table directly - match backend name/version to Security/Verdict column.
+
+Important: Always include the backend version AND config (if present) in your evidence.
 
 """
 

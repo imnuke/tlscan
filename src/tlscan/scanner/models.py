@@ -35,6 +35,20 @@ class DetectionMethod(str, Enum):
     BOTH = "both"
 
 
+class BackendConfig(BaseModel):
+    """Extracted backend TLS configuration from firmware config files."""
+
+    min_protocol: Optional[str] = Field(
+        default=None, description="Minimum TLS protocol (e.g., 'TLSv1.2')"
+    )
+    max_protocol: Optional[str] = Field(
+        default=None, description="Maximum TLS protocol (e.g., 'TLSv1.3')"
+    )
+    config_source: Optional[str] = Field(
+        default=None, description="Path to config file (relative to firmware root)"
+    )
+
+
 class BackendInfo(BaseModel):
     """SSL/TLS backend information for curl/libcurl."""
 
@@ -46,6 +60,9 @@ class BackendInfo(BaseModel):
     detection_method: str = Field(
         default="dynamic_linking",
         description="How backend was detected (dynamic_linking, symbols, version_string)",
+    )
+    config: Optional[BackendConfig] = Field(
+        default=None, description="Extracted TLS config from firmware config files"
     )
 
 
@@ -114,12 +131,19 @@ class ScanResult(BaseModel):
                 if ver.source_path:
                     ver_data["source_path"] = ver.source_path
                 if ver.backend:
-                    ver_data["backend"] = {
+                    backend_data: Dict[str, Any] = {
                         "name": ver.backend.name,
                         "version": ver.backend.version,
                         "confidence": ver.backend.confidence.value,
                         "detection_method": ver.backend.detection_method,
                     }
+                    if ver.backend.config:
+                        backend_data["config"] = {
+                            "min_protocol": ver.backend.config.min_protocol,
+                            "max_protocol": ver.backend.config.max_protocol,
+                            "config_source": ver.backend.config.config_source,
+                        }
+                    ver_data["backend"] = backend_data
                 version_dict[lib_id] = ver_data
 
         return {
