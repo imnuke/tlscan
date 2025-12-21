@@ -182,7 +182,7 @@ def save_to_cache(
             binary_versions[rel_path] = version_dict
 
     versions_data = {
-        "scan_timestamp": datetime.utcnow().isoformat() + "Z",
+        "scan_timestamp": datetime.now().astimezone().isoformat(),
         "tool_version": TOOL_VERSION,
         "firmware_libraries": firmware_versions,
         "binary_versions": binary_versions,
@@ -204,7 +204,7 @@ def save_to_cache(
 
     # Save TLS client findings
     clients_data = {
-        "scan_timestamp": datetime.utcnow().isoformat() + "Z",
+        "scan_timestamp": datetime.now().astimezone().isoformat(),
         "tool_version": TOOL_VERSION,
         "findings": findings_relative,
     }
