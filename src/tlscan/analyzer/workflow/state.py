@@ -223,10 +223,10 @@ def resolve_trace_tree(
     Args:
         traces: Dict of all traces
         trace_id: Root trace ID to start from
-        security_mapping: Mapping of values to outcomes (e.g., {'0': 'FAIL', '1': 'PASS'})
+        security_mapping: Mapping of values to outcomes (e.g., {'0': 'UNSATISFIED', '1': 'SATISFIED'})
 
     Returns:
-        List of outcome strings (e.g., ["cross_binary:/usr/bin/upsc: PASS"])
+        List of outcome strings (e.g., ["cross_binary:/usr/bin/upsc: SATISFIED"])
     """
     trace = traces.get(trace_id)
     if not trace:
@@ -457,7 +457,7 @@ class AnalysisState(TypedDict, total=False):
                     variable="mode",
                     function="SSL_CTX_set_verify",
                     function_address="0x401234",
-                    security_mapping={"0": "FAIL", "1": "PASS"}
+                    security_mapping={"0": "UNSATISFIED", "1": "SATISFIED"}
                 )
             ]
         )
@@ -533,7 +533,7 @@ class AnalysisState(TypedDict, total=False):
         "upscli_sslinit:a2": RuleTraceLink(
             condition_key="upscli_sslinit:a2",
             root_trace_ids=["trace-001"],
-            security_mapping={"0": "FAIL", "1": "PASS"}
+            security_mapping={"0": "UNSATISFIED", "1": "SATISFIED"}
         )
     }
     """
@@ -573,7 +573,7 @@ class AnalysisState(TypedDict, total=False):
     - Library files in firmware (via version strings, SONAME, VERDEF)
 
     Used by SSL agent to resolve version-dependent rules from UNDETERMINED
-    to PASS/FAIL when defaults are known for the detected version.
+    to SATISFIED/UNSATISFIED when defaults are known for the detected version.
 
     Loaded from firmware cache (.tlscan/library_versions.json) or
     detected at startup if cache is not available.

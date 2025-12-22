@@ -83,14 +83,14 @@ This document defines library-specific security rules for mbedTLS-based TLS clie
 - Conditional patterns: TLS setup inside conditional branches
 - Config-based: SSL enabled via configuration flags
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `mbedtls_ssl_handshake()` always called | PASS | TLS connection established |
-| mbedTLS functions linked but not called | FAIL | No TLS implementation |
-| Plain socket without mbedTLS wrapper | FAIL | Plaintext connection |
+| `mbedtls_ssl_handshake()` always called | SATISFIED | TLS connection established |
+| mbedTLS functions linked but not called | UNSATISFIED | No TLS implementation |
+| Plain socket without mbedTLS wrapper | UNSATISFIED | Plaintext connection |
 | TLS usage depends on config | CONDITIONAL | Trace variable |
-| Fallback to plaintext on error | FAIL | Downgrade attack possible |
+| Fallback to plaintext on error | UNSATISFIED | Downgrade attack possible |
 
 ---
 
@@ -138,7 +138,7 @@ mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
 // After mbedtls_ssl_handshake() succeeds:
 uint32_t flags = mbedtls_ssl_get_verify_result(&ssl);
 if (flags != 0) {
-    // FAIL - certificate verification failed
+    // UNSATISFIED - certificate verification failed
     char buf[512];
     mbedtls_x509_crt_verify_info(buf, sizeof(buf), "", flags);
     // Log/handle error: buf contains human-readable error
@@ -161,12 +161,12 @@ if (flags != 0) {
 
 **Incorrect Patterns (Vulnerabilities)**:
 ```c
-// FAIL: OPTIONAL without checking result
+// UNSATISFIED: OPTIONAL without checking result
 mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
 mbedtls_ssl_handshake(&ssl);
 // Proceeding without calling mbedtls_ssl_get_verify_result()
 
-// FAIL: Checking result but not handling failure
+// UNSATISFIED: Checking result but not handling failure
 flags = mbedtls_ssl_get_verify_result(&ssl);
 // flags not checked - proceeding regardless
 ```
@@ -179,29 +179,29 @@ Unlike OpenSSL, mbedTLS sets `MBEDTLS_X509_BADCERT_MISSING` flag when no certifi
 // With VERIFY_NONE, you must get the peer certificate manually
 const mbedtls_x509_crt *peer_cert = mbedtls_ssl_get_peer_cert(&ssl);
 if (peer_cert == NULL) {
-    // FAIL - no certificate provided
+    // UNSATISFIED - no certificate provided
     return error;
 }
 ```
 
 **Detection Patterns**:
-- `mbedtls_ssl_conf_authmode(conf, 2)` → PASS (REQUIRED)
-- `mbedtls_ssl_conf_authmode(conf, 0)` → FAIL (NONE)
-- `mbedtls_ssl_conf_authmode(conf, 1)` + `mbedtls_ssl_get_verify_result()` checked → PASS
-- `mbedtls_ssl_conf_authmode(conf, 1)` without result check → FAIL
-- `mbedtls_ssl_conf_authmode` not called → PASS (default is REQUIRED for clients)
+- `mbedtls_ssl_conf_authmode(conf, 2)` → SATISFIED (REQUIRED)
+- `mbedtls_ssl_conf_authmode(conf, 0)` → UNSATISFIED (NONE)
+- `mbedtls_ssl_conf_authmode(conf, 1)` + `mbedtls_ssl_get_verify_result()` checked → SATISFIED
+- `mbedtls_ssl_conf_authmode(conf, 1)` without result check → UNSATISFIED
+- `mbedtls_ssl_conf_authmode` not called → SATISFIED (default is REQUIRED for clients)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Authmode set to `REQUIRED` (2) | PASS | Verification enabled |
-| Authmode not set (client) | PASS | Default is REQUIRED |
-| Authmode set to `NONE` (0) | FAIL | Verification disabled |
-| `OPTIONAL` (1) without `mbedtls_ssl_get_verify_result()` check | FAIL | Errors ignored |
-| `OPTIONAL` (1) + `mbedtls_ssl_get_verify_result()` checked for 0 | PASS | Manual verification |
+| Authmode set to `REQUIRED` (2) | SATISFIED | Verification enabled |
+| Authmode not set (client) | SATISFIED | Default is REQUIRED |
+| Authmode set to `NONE` (0) | UNSATISFIED | Verification disabled |
+| `OPTIONAL` (1) without `mbedtls_ssl_get_verify_result()` check | UNSATISFIED | Errors ignored |
+| `OPTIONAL` (1) + `mbedtls_ssl_get_verify_result()` checked for 0 | SATISFIED | Manual verification |
 | `NONE` (0) + `mbedtls_ssl_get_peer_cert()` + manual verification | CONDITIONAL | Check implementation |
 | Authmode from variable | CONDITIONAL | Trace variable |
-| No CA chain loaded | FAIL | Chain cannot be verified |
+| No CA chain loaded | UNSATISFIED | Chain cannot be verified |
 
 ---
 
@@ -228,16 +228,16 @@ if (peer_cert == NULL) {
 | All versions | No hostname verification | INSECURE |
 
 **Detection Patterns**:
-- `mbedtls_ssl_set_hostname(ssl, hostname)` called → PASS (automatic)
-- `mbedtls_ssl_set_hostname` not called → FAIL (no hostname verification)
-- `mbedtls_ssl_set_hostname(ssl, NULL)` → FAIL (disabled)
+- `mbedtls_ssl_set_hostname(ssl, hostname)` called → SATISFIED (automatic)
+- `mbedtls_ssl_set_hostname` not called → UNSATISFIED (no hostname verification)
+- `mbedtls_ssl_set_hostname(ssl, NULL)` → UNSATISFIED (disabled)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `mbedtls_ssl_set_hostname()` called with hostname | PASS | Hostname verified |
-| `mbedtls_ssl_set_hostname()` not called | FAIL | Hostname not verified |
-| `mbedtls_ssl_set_hostname(ssl, NULL)` | FAIL | Hostname verification disabled |
+| `mbedtls_ssl_set_hostname()` called with hostname | SATISFIED | Hostname verified |
+| `mbedtls_ssl_set_hostname()` not called | UNSATISFIED | Hostname not verified |
+| `mbedtls_ssl_set_hostname(ssl, NULL)` | UNSATISFIED | Hostname verification disabled |
 | Hostname from variable | CONDITIONAL | Verify hostname source |
 
 ---
@@ -275,16 +275,16 @@ if (peer_cert == NULL) {
 | `MBEDTLS_SSL_VERSION_TLS1_3` | 0x0304 | SECURE |
 
 **Detection Patterns**:
-- mbedTLS 2.x: `mbedtls_ssl_conf_min_version(conf, 3, 3)` → PASS (TLS 1.2)
-- mbedTLS 3.x: `mbedtls_ssl_conf_min_tls_version(conf, 0x0303)` → PASS (TLS 1.2)
-- `mbedtls_ssl_conf_min_version(conf, 3, 1)` → FAIL (allows TLS 1.0)
+- mbedTLS 2.x: `mbedtls_ssl_conf_min_version(conf, 3, 3)` → SATISFIED (TLS 1.2)
+- mbedTLS 3.x: `mbedtls_ssl_conf_min_tls_version(conf, 0x0303)` → SATISFIED (TLS 1.2)
+- `mbedtls_ssl_conf_min_version(conf, 3, 1)` → UNSATISFIED (allows TLS 1.0)
 - No version restriction → CONDITIONAL (depends on build config)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Min version set to TLS 1.2 (3,3) or higher | PASS | Secure versions only |
-| Min version allows TLS 1.0/1.1 | FAIL | Insecure protocols allowed |
+| Min version set to TLS 1.2 (3,3) or higher | SATISFIED | Secure versions only |
+| Min version allows TLS 1.0/1.1 | UNSATISFIED | Insecure protocols allowed |
 | No version restriction set | CONDITIONAL | Depends on build configuration |
 | Version from variable | CONDITIONAL | Trace variable |
 
@@ -319,15 +319,15 @@ if (peer_cert == NULL) {
 | `*_AES_*_CCM_*` | SECURE (AEAD) |
 
 **Detection Patterns**:
-- Cipher array includes only AEAD suites → PASS
-- Cipher array includes NULL/EXPORT/RC4 → FAIL
+- Cipher array includes only AEAD suites → SATISFIED
+- Cipher array includes NULL/EXPORT/RC4 → UNSATISFIED
 - No cipher restriction → CONDITIONAL (uses build default)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Only strong ciphers (GCM, CCM, ChaCha) | PASS | Weak ciphers excluded |
-| NULL/EXPORT/RC4/DES ciphers allowed | FAIL | Insecure ciphers |
+| Only strong ciphers (GCM, CCM, ChaCha) | SATISFIED | Weak ciphers excluded |
+| NULL/EXPORT/RC4/DES ciphers allowed | UNSATISFIED | Insecure ciphers |
 | No cipher configuration | CONDITIONAL | Uses compile-time default |
 | Cipher list from variable | CONDITIONAL | Trace variable |
 
@@ -353,13 +353,13 @@ if (peer_cert == NULL) {
 | `mbedtls_ssl_conf_ca_chain` | Set CA chain with CRL |
 
 **Detection Patterns**:
-- CRL loaded and passed to verification → PASS
+- CRL loaded and passed to verification → SATISFIED
 - No CRL checking → UNDETERMINED (SHOULD requirement)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| CRL checking implemented | PASS | Revocation verified |
+| CRL checking implemented | SATISFIED | Revocation verified |
 | No CRL checking | UNDETERMINED | SHOULD requirement |
 | CRL path from config | CONDITIONAL | Trace configuration |
 
@@ -406,21 +406,21 @@ mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
 | RTOS | Platform-dependent | Check implementation |
 
 **Detection Patterns**:
-- All four functions called in sequence → PASS
-- Missing `mbedtls_entropy_init` → FAIL
-- Missing `mbedtls_ctr_drbg_seed` → FAIL
-- Missing `mbedtls_ssl_conf_rng` → FAIL
+- All four functions called in sequence → SATISFIED
+- Missing `mbedtls_entropy_init` → UNSATISFIED
+- Missing `mbedtls_ctr_drbg_seed` → UNSATISFIED
+- Missing `mbedtls_ssl_conf_rng` → UNSATISFIED
 - On embedded: check for `mbedtls_entropy_add_source` or `mbedtls_hardware_poll`
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Full entropy/DRBG initialization sequence | PASS | Proper RNG setup |
-| Missing any initialization step | FAIL | Weak or no randomness |
-| `mbedtls_ctr_drbg_seed` with predictable data | FAIL | Predictable RNG |
-| Platform has /dev/urandom or equivalent | PASS | System entropy available |
-| Embedded without hardware RNG | FAIL | No entropy source |
-| Hardware RNG callback implemented | PASS | Good entropy source |
+| Full entropy/DRBG initialization sequence | SATISFIED | Proper RNG setup |
+| Missing any initialization step | UNSATISFIED | Weak or no randomness |
+| `mbedtls_ctr_drbg_seed` with predictable data | UNSATISFIED | Predictable RNG |
+| Platform has /dev/urandom or equivalent | SATISFIED | System entropy available |
+| Embedded without hardware RNG | UNSATISFIED | No entropy source |
+| Hardware RNG callback implemented | SATISFIED | Good entropy source |
 
 **Vulnerability Indicators**:
 - Using `rand()` or `srand()` instead of mbedTLS RNG
@@ -451,13 +451,13 @@ mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
 | `mbedtls_x509_crt_get_pk` | Get public key from cert |
 
 **Detection Patterns**:
-- Custom verify callback with pin comparison → PASS
-- Hardcoded SHA-256 hashes (32 bytes or 64 hex chars) → PASS
-- No pinning → FAIL (pinning not implemented)
+- Custom verify callback with pin comparison → SATISFIED
+- Hardcoded SHA-256 hashes (32 bytes or 64 hex chars) → SATISFIED
+- No pinning → UNSATISFIED (pinning not implemented)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Certificate/key pinning implemented | PASS | Defense-in-depth |
-| No pinning | FAIL | Pinning not implemented |
+| Certificate/key pinning implemented | SATISFIED | Defense-in-depth |
+| No pinning | UNSATISFIED | Pinning not implemented |
 | Pin values from variable | CONDITIONAL | Trace pin source |

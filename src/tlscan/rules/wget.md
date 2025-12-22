@@ -71,13 +71,13 @@ This document defines security rules for wget command-line tool usage in scripts
 - Recursive downloads that may follow HTTP links
 - Fallback to HTTP in error handling: `wget https://... || wget http://...`
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| URL starts with `https://` | PASS | TLS connection |
-| `--https-only` used | PASS | Only HTTPS allowed |
-| URL starts with `http://` | FAIL | Plaintext connection |
-| Fallback to HTTP on error | FAIL | Downgrade possible |
+| URL starts with `https://` | SATISFIED | TLS connection |
+| `--https-only` used | SATISFIED | Only HTTPS allowed |
+| URL starts with `http://` | UNSATISFIED | Plaintext connection |
+| Fallback to HTTP on error | UNSATISFIED | Downgrade possible |
 | URL from variable | CONDITIONAL | Trace variable source |
 | Recursive without `--https-only` | CONDITIONAL | May follow HTTP links |
 
@@ -119,9 +119,9 @@ This document defines security rules for wget command-line tool usage in scripts
 | ≥ 1.10 | Enabled | SECURE |
 
 **Detection Patterns**:
-- `wget ... --no-check-certificate` → FAIL (disables M3 AND M4)
-- `wget https://...` (no --no-check-certificate) → PASS (uses defaults)
-- `wget ... --ca-certificate=/path/to/ca.crt` → PASS (custom CA, verification enabled)
+- `wget ... --no-check-certificate` → UNSATISFIED (disables M3 AND M4)
+- `wget https://...` (no --no-check-certificate) → SATISFIED (uses defaults)
+- `wget ... --ca-certificate=/path/to/ca.crt` → SATISFIED (custom CA, verification enabled)
 - Script variable: `wget $WGET_OPTS` where WGET_OPTS may contain `--no-check-certificate` → CONDITIONAL
 
 **Vulnerability Indicators**:
@@ -130,13 +130,13 @@ This document defines security rules for wget command-line tool usage in scripts
 - Alias definitions: `alias wget='wget --no-check-certificate'`
 - Config file containing `check_certificate = off`
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| No `--no-check-certificate` flag | PASS | Default verification enabled (M3+M4) |
-| `--ca-certificate` or `--ca-directory` specified | PASS | Custom CA, verification enabled |
-| `--no-check-certificate` present | FAIL | Both M3 and M4 disabled |
-| `check_certificate = off` in wgetrc | FAIL | Both M3 and M4 disabled |
+| No `--no-check-certificate` flag | SATISFIED | Default verification enabled (M3+M4) |
+| `--ca-certificate` or `--ca-directory` specified | SATISFIED | Custom CA, verification enabled |
+| `--no-check-certificate` present | UNSATISFIED | Both M3 and M4 disabled |
+| `check_certificate = off` in wgetrc | UNSATISFIED | Both M3 and M4 disabled |
 | Options from variable/config | CONDITIONAL | Trace option source |
 | wgetrc file exists | CONDITIONAL | Check for insecure settings |
 
@@ -180,20 +180,20 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | Older systems | May allow TLS 1.0/1.1 | CONDITIONAL |
 
 **Detection Patterns**:
-- `wget --secure-protocol=TLSv1_2 https://...` → PASS
-- `wget --secure-protocol=TLSv1_3 https://...` → PASS
-- `wget --secure-protocol=PFS https://...` → PASS (if OpenSSL supports TLS 1.2+)
-- `wget --secure-protocol=TLSv1 https://...` → FAIL
-- `wget --secure-protocol=SSLv3 https://...` → FAIL
+- `wget --secure-protocol=TLSv1_2 https://...` → SATISFIED
+- `wget --secure-protocol=TLSv1_3 https://...` → SATISFIED
+- `wget --secure-protocol=PFS https://...` → SATISFIED (if OpenSSL supports TLS 1.2+)
+- `wget --secure-protocol=TLSv1 https://...` → UNSATISFIED
+- `wget --secure-protocol=SSLv3 https://...` → UNSATISFIED
 - `wget https://...` (no protocol option) → UNDETERMINED (system-dependent default)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `--secure-protocol=TLSv1_2` or `TLSv1_3` | PASS | Secure protocol enforced |
-| `--secure-protocol=PFS` | PASS | Forward secrecy enforced |
-| `--secure-protocol=TLSv1`, `TLSv1_1` | FAIL | Insecure protocol |
-| `--secure-protocol=SSLv2`, `SSLv3` | FAIL | Insecure protocol |
+| `--secure-protocol=TLSv1_2` or `TLSv1_3` | SATISFIED | Secure protocol enforced |
+| `--secure-protocol=PFS` | SATISFIED | Forward secrecy enforced |
+| `--secure-protocol=TLSv1`, `TLSv1_1` | UNSATISFIED | Insecure protocol |
+| `--secure-protocol=SSLv2`, `SSLv3` | UNSATISFIED | Insecure protocol |
 | `--secure-protocol=auto` or not set | UNDETERMINED | Depends on system (not traceable) |
 | Protocol option from variable | CONDITIONAL | Trace variable |
 
@@ -232,17 +232,17 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | `eNULL` | No encryption |
 
 **Detection Patterns**:
-- `--ciphers 'HIGH:!aNULL:!eNULL'` → PASS (strong ciphers)
-- `--secure-protocol=PFS` → PASS (forward secrecy)
-- `--ciphers` containing `NULL`, `EXPORT`, `RC4` → FAIL
+- `--ciphers 'HIGH:!aNULL:!eNULL'` → SATISFIED (strong ciphers)
+- `--secure-protocol=PFS` → SATISFIED (forward secrecy)
+- `--ciphers` containing `NULL`, `EXPORT`, `RC4` → UNSATISFIED
 - No cipher option → CONDITIONAL (uses backend default)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Strong cipher string configured | PASS | Weak ciphers excluded |
-| `--secure-protocol=PFS` | PASS | Forward secrecy enforced |
-| Cipher string contains weak ciphers | FAIL | Insecure ciphers allowed |
+| Strong cipher string configured | SATISFIED | Weak ciphers excluded |
+| `--secure-protocol=PFS` | SATISFIED | Forward secrecy enforced |
+| Cipher string contains weak ciphers | UNSATISFIED | Insecure ciphers allowed |
 | No cipher configuration | CONDITIONAL | Uses backend default |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
@@ -307,16 +307,16 @@ ca_certificate = /etc/ssl/certs/ca-certificates.crt
 ```
 
 **Detection Patterns**:
-- Presence of `check_certificate = off` in any wgetrc → FAIL for R2
-- Presence of `secure_protocol = SSLv*` or `TLSv1` or `TLSv1_1` → FAIL for R3
+- Presence of `check_certificate = off` in any wgetrc → UNSATISFIED for R2
+- Presence of `secure_protocol = SSLv*` or `TLSv1` or `TLSv1_1` → UNSATISFIED for R3
 - Presence of custom wgetrc via `--config` or `WGETRC` → CONDITIONAL
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| No wgetrc files or all settings secure | PASS | Safe configuration |
-| `check_certificate = off` found | FAIL | Disables verification |
-| Insecure `secure_protocol` found | FAIL | Allows weak protocols |
+| No wgetrc files or all settings secure | SATISFIED | Safe configuration |
+| `check_certificate = off` found | UNSATISFIED | Disables verification |
+| Insecure `secure_protocol` found | UNSATISFIED | Allows weak protocols |
 | Custom wgetrc specified | CONDITIONAL | Must analyze file contents |
 | `WGETRC` environment variable set | CONDITIONAL | Trace variable |
 
@@ -337,13 +337,13 @@ When analyzing shell scripts that use wget, look for these patterns:
 ### Script Patterns to Flag
 
 ```bash
-# FAIL: Hardcoded insecure
+# UNSATISFIED: Hardcoded insecure
 wget --no-check-certificate https://...
 
-# FAIL: HTTP for sensitive data
+# UNSATISFIED: HTTP for sensitive data
 wget http://api.example.com/secrets
 
-# FAIL: Insecure protocol
+# UNSATISFIED: Insecure protocol
 wget --secure-protocol=SSLv3 https://...
 wget --secure-protocol=TLSv1 https://...
 
@@ -354,10 +354,10 @@ wget ${WGET_FLAGS} https://...
 # CONDITIONAL: Constructed URL
 wget "${PROTOCOL}://example.com"
 
-# FAIL: HTTP fallback
+# UNSATISFIED: HTTP fallback
 wget https://... || wget http://...
 
-# PASS: Secure configuration
+# SATISFIED: Secure configuration
 wget --https-only --secure-protocol=TLSv1_2 https://...
 
 # CONDITIONAL: Custom config
@@ -372,7 +372,7 @@ When using recursive downloads (`-r`), consider:
 # CONDITIONAL: May follow HTTP links from HTTPS page
 wget -r https://example.com/
 
-# PASS: Enforces HTTPS for recursive downloads
+# SATISFIED: Enforces HTTPS for recursive downloads
 wget -r --https-only https://example.com/
 ```
 
@@ -396,11 +396,11 @@ For applications requiring these features, consider using curl or a custom TLS c
 
 | Priority | Scenario | Result |
 |----------|----------|--------|
-| MUST | Option explicitly secure | PASS |
-| MUST | Option explicitly insecure | FAIL |
-| MUST | No option, secure default (wget ≥1.10) | PASS |
+| MUST | Option explicitly secure | SATISFIED |
+| MUST | Option explicitly insecure | UNSATISFIED |
+| MUST | No option, secure default (wget ≥1.10) | SATISFIED |
 | MUST | No option, version-dependent default | CONDITIONAL |
-| SHOULD | Feature enabled | PASS |
-| SHOULD | Feature explicitly disabled | FAIL |
+| SHOULD | Feature enabled | SATISFIED |
+| SHOULD | Feature explicitly disabled | UNSATISFIED |
 | SHOULD | Feature not configured | CONDITIONAL |
 | MAY | Feature not supported | N/A |

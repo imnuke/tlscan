@@ -31,6 +31,48 @@ Use these patterns to identify OpenSSL version in binaries:
 
 ---
 
+## OpenSSL Version Defaults
+
+When code does NOT explicitly configure an option, OpenSSL uses these version-specific defaults:
+
+### Default Cipher Suites (R5)
+
+| Version | Default String | Excludes | Security |
+|---------|---------------|----------|----------|
+| All | `ALL:!COMPLEMENTOFDEFAULT:!eNULL` | RC4, aNULL, eNULL, EXPORT, DES, LOW | SECURE |
+
+**Resolution**: No `SSL_CTX_set_cipher_list()` or `SSL_CTX_set_ciphersuites()` → **SATISFIED** (defaults are secure)
+
+### Default Minimum Protocol (R4)
+
+| Version | Default Min TLS | Security |
+|---------|----------------|----------|
+| < 3.0 | TLS 1.0 | INSECURE |
+| 3.0+ | TLS 1.2 (via security level 1) | SECURE |
+
+**Resolution**: No protocol version set → Check OpenSSL version to determine result
+
+### Default Cryptographic Strength (R7)
+
+| Version | Default Security Level | Min RSA | Min Hash | Security |
+|---------|----------------------|---------|----------|----------|
+| 1.1.x | Level 1 | 1024-bit | SHA-1 allowed | INSECURE |
+| 3.0+ | Level 2 | 2048-bit | SHA-256+ | SECURE |
+
+**Resolution**:
+- No strength checking + OpenSSL 3.0+ → **SATISFIED** (security level 2 by default)
+- No strength checking + OpenSSL < 3.0 → **UNSATISFIED** (security level 1 allows weak crypto)
+
+### Default Revocation Checking (R6)
+
+| Version | Default | Security |
+|---------|---------|----------|
+| All | Disabled | N/A (SHOULD requirement) |
+
+**Resolution**: No revocation checking → **UNSATISFIED** (revocation checking not implemented)
+
+---
+
 ## R1: TLS Usage Detection
 
 **Meta-Rule(s)**: M1  |  **Priority**: MUST
@@ -65,14 +107,14 @@ Use these patterns to identify OpenSSL version in binaries:
   - Error recovery that falls back to plaintext connection
   - Opportunistic STARTTLS without enforcement
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `SSL_connect()` always called | PASS | TLS connection established |
-| SSL functions not found/linked | FAIL | No TLS implementation |
-| `connect()` without SSL wrapper | FAIL | Plaintext connection |
+| `SSL_connect()` always called | SATISFIED | TLS connection established |
+| SSL functions not found/linked | UNSATISFIED | No TLS implementation |
+| `connect()` without SSL wrapper | UNSATISFIED | Plaintext connection |
 | SSL usage depends on config/env | CONDITIONAL | Trace variable to determine |
-| STARTTLS with fallback to plaintext | FAIL | Downgrade attack possible |
+| STARTTLS with fallback to plaintext | UNSATISFIED | Downgrade attack possible |
 | STARTTLS with mandatory enforcement | CONDITIONAL | Depends on server response handling |
 
 ---
@@ -164,19 +206,19 @@ int callback(int preverify_ok, X509_STORE_CTX *ctx) {
 - Constants: `SSL_VERIFY_PEER`, `SSL_VERIFY_NONE`, `X509_V_OK`
 - CA loading: `SSL_CTX_load_verify_locations`, `SSL_CTX_set_default_verify_paths`
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL)` | PASS | Verification enabled |
-| `SSL_set_verify(ssl, SSL_VERIFY_PEER, callback)` with proper callback | PASS | Verification with custom logic |
-| `SSL_VERIFY_NONE` + `SSL_get_peer_certificate()` + `SSL_get_verify_result()` | PASS | Manual verification (both checks) |
-| `SSL_VERIFY_NONE` + only `SSL_get_verify_result()` | FAIL | Missing peer certificate check (bug) |
-| `SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, ...)` without manual check | FAIL | Verification disabled |
-| `SSL_CTX_set_verify` not called | FAIL | Default is `SSL_VERIFY_NONE` |
+| `SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL)` | SATISFIED | Verification enabled |
+| `SSL_set_verify(ssl, SSL_VERIFY_PEER, callback)` with proper callback | SATISFIED | Verification with custom logic |
+| `SSL_VERIFY_NONE` + `SSL_get_peer_certificate()` + `SSL_get_verify_result()` | SATISFIED | Manual verification (both checks) |
+| `SSL_VERIFY_NONE` + only `SSL_get_verify_result()` | UNSATISFIED | Missing peer certificate check (bug) |
+| `SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, ...)` without manual check | UNSATISFIED | Verification disabled |
+| `SSL_CTX_set_verify` not called | UNSATISFIED | Default is `SSL_VERIFY_NONE` |
 | Verification mode from runtime variable | CONDITIONAL | Trace variable |
-| Callback always returns 1 | FAIL | Bypasses all verification |
-| Callback ignores `preverify_ok` | FAIL | Ignores OpenSSL's verification |
-| No CA certificates loaded | FAIL | Chain cannot be verified |
+| Callback always returns 1 | UNSATISFIED | Bypasses all verification |
+| Callback ignores `preverify_ok` | UNSATISFIED | Ignores OpenSSL's verification |
+| No CA certificates loaded | UNSATISFIED | Chain cannot be verified |
 
 ---
 
@@ -255,18 +297,18 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 - Constants: `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`, `X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS`, `NID_subject_alt_name`, `NID_commonName`
 - Vulnerability: Certificate chain verified (R2 passes) but hostname not checked
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `SSL_set1_host(ssl, hostname)` called | PASS | Automatic hostname verification |
-| `X509_check_host()` called after handshake | PASS | Manual verification (1.0.2+) |
-| `X509_VERIFY_PARAM_set1_host()` called | PASS | Alternative API (1.0.2+) |
-| Legacy code with SAN + CN check + proper wildcard handling | PASS | Manual verification (pre-1.0.2) |
+| `SSL_set1_host(ssl, hostname)` called | SATISFIED | Automatic hostname verification |
+| `X509_check_host()` called after handshake | SATISFIED | Manual verification (1.0.2+) |
+| `X509_VERIFY_PARAM_set1_host()` called | SATISFIED | Alternative API (1.0.2+) |
+| Legacy code with SAN + CN check + proper wildcard handling | SATISFIED | Manual verification (pre-1.0.2) |
 | Legacy code with only CN check | CONDITIONAL | Vulnerable if cert has SAN |
-| Legacy code with incorrect wildcard matching | FAIL | Bypass possible |
-| No hostname verification function called | FAIL | Hostname not verified |
+| Legacy code with incorrect wildcard matching | UNSATISFIED | Bypass possible |
+| No hostname verification function called | UNSATISFIED | Hostname not verified |
 | Hostname from runtime variable | CONDITIONAL | Verify hostname source is correct |
-| `SSL_set1_host(ssl, NULL)` | FAIL | Disables hostname checking |
+| `SSL_set1_host(ssl, NULL)` | UNSATISFIED | Disables hostname checking |
 
 ---
 
@@ -311,14 +353,17 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 - Method selection: `TLS_client_method()` (preferred), `SSLv23_client_method()` (deprecated)
 - Vulnerability: Missing version restrictions or using deprecated methods
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION)` | PASS | TLS 1.2+ enforced |
-| `SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3\|SSL_OP_NO_TLSv1\|SSL_OP_NO_TLSv1_1)` | PASS | Legacy disabling method |
-| No protocol restrictions set | CONDITIONAL | Depends on OpenSSL version/config |
-| `SSL_CTX_set_min_proto_version(ctx, TLS1_VERSION)` | FAIL | Allows TLS 1.0 |
-| `SSLv3_client_method()` used | FAIL | Forces SSL 3.0 only |
+| `SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION)` | SATISFIED | TLS 1.2+ enforced |
+| `SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3\|SSL_OP_NO_TLSv1\|SSL_OP_NO_TLSv1_1)` | SATISFIED | Legacy disabling method |
+| `SSL_CTX_set_options` without disabling TLS 1.0/1.1 | UNSATISFIED | Incomplete protocol restriction |
+| No protocol restrictions + OpenSSL 3.0+ | SATISFIED | TLS 1.2 enforced by default (security level 1) |
+| No protocol restrictions + OpenSSL < 3.0 | UNSATISFIED | Allows TLS 1.0/1.1 by default |
+| No protocol restrictions + version unknown | UNDETERMINED | Cannot determine without version |
+| `SSL_CTX_set_min_proto_version(ctx, TLS1_VERSION)` | UNSATISFIED | Allows TLS 1.0 |
+| `SSLv3_client_method()` used | UNSATISFIED | Forces SSL 3.0 only |
 
 ---
 
@@ -350,14 +395,14 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 - Functions: `SSL_CTX_set_cipher_list`, `SSL_CTX_set_ciphersuites`, `SSL_get_cipher_name`
 - Vulnerability: No cipher restriction or weak cipher string
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Cipher string excludes NULL, EXPORT, RC4, weak ciphers | PASS | Strong ciphers only |
-| `SSL_CTX_set_cipher_list(ctx, "ALL")` | FAIL | Allows weak ciphers |
-| No cipher restrictions set | CONDITIONAL | Uses system default |
+| Cipher string excludes NULL, EXPORT, RC4, weak ciphers | SATISFIED | Strong ciphers only |
+| `SSL_CTX_set_cipher_list(ctx, "ALL")` | UNSATISFIED | Allows weak ciphers |
+| No cipher restrictions set | SATISFIED | OpenSSL default excludes weak ciphers (see Version Defaults) |
 | Cipher string from config/env | CONDITIONAL | Trace the value |
-| TLS 1.3 only (OpenSSL 1.1.1+) | PASS | TLS 1.3 has no weak ciphers |
+| TLS 1.3 only (OpenSSL 1.1.1+) | SATISFIED | TLS 1.3 has no weak ciphers |
 
 ---
 
@@ -384,12 +429,12 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 - CRL loading: `X509_STORE_add_crl`, `X509_load_crl_file`
 - Vulnerability: No revocation checking implemented
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| CRL or OCSP checking implemented | PASS | Revocation verified |
-| OCSP stapling enabled | PASS | Server provides OCSP response |
-| No revocation checking | UNDETERMINED | Not a hard requirement (SHOULD) |
+| CRL or OCSP checking implemented | SATISFIED | Revocation verified |
+| OCSP stapling enabled | SATISFIED | Server provides OCSP response |
+| No revocation checking | UNSATISFIED | Revocation checking not implemented |
 | Revocation check from config | CONDITIONAL | Trace configuration |
 
 ---
@@ -425,12 +470,14 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 - Functions: `X509_get_signature_nid`, `EVP_PKEY_bits`, `X509_get_pubkey`
 - Vulnerability: No strength validation or accepting weak signatures
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Certificate strength validation implemented | PASS | Strong crypto enforced |
-| No strength checking | UNDETERMINED | Relies on CA issuance practices |
-| MD5/SHA-1 signatures explicitly rejected | PASS | Weak algorithms blocked |
+| Certificate strength validation implemented | SATISFIED | Strong crypto enforced |
+| No strength checking + OpenSSL 3.0+ | SATISFIED | Security level 2 by default (see Version Defaults) |
+| No strength checking + OpenSSL < 3.0 | UNSATISFIED | Security level 1 allows weak crypto |
+| No strength checking + version unknown | UNDETERMINED | Cannot determine without version |
+| MD5/SHA-1 signatures explicitly rejected | SATISFIED | Weak algorithms blocked |
 
 ---
 
@@ -469,13 +516,13 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
   - No entropy initialization on embedded systems
   - `rand()` or `srand()` used instead of RAND_* functions
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `RAND_poll()` called or system has /dev/urandom | PASS | Proper entropy |
-| `RAND_seed()` with hardware RNG data | PASS | Good entropy source |
-| `RAND_seed(time(NULL), sizeof(time_t))` | FAIL | Predictable seed |
-| No RNG initialization on embedded system | FAIL | Weak randomness |
+| `RAND_poll()` called or system has /dev/urandom | SATISFIED | Proper entropy |
+| `RAND_seed()` with hardware RNG data | SATISFIED | Good entropy source |
+| `RAND_seed(time(NULL), sizeof(time_t))` | UNSATISFIED | Predictable seed |
+| No RNG initialization on embedded system | UNSATISFIED | Weak randomness |
 | System entropy availability unknown | CONDITIONAL | Check platform |
 
 ---
@@ -506,10 +553,10 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 - Hardcoded hashes: Look for 32-byte (SHA-256) or 64-character hex strings
 - Vulnerability: Pinning without backup pins (lockout risk)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Certificate/public key pinning implemented | PASS | Defense-in-depth |
-| No pinning implemented | FAIL | Pinning not implemented |
-| Pinning with no backup pins | PASS (with warning) | Lockout risk noted |
+| Certificate/public key pinning implemented | SATISFIED | Defense-in-depth |
+| No pinning implemented | UNSATISFIED | Pinning not implemented |
+| Pinning with no backup pins | SATISFIED (with warning) | Lockout risk noted |
 | Pin values from external source | CONDITIONAL | Trace pin source |

@@ -58,14 +58,14 @@ This document defines library-specific security rules for GnuTLS-based TLS clien
   - Conditional TLS defaulting to disabled
   - Plaintext fallback on handshake error
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `gnutls_handshake()` always called | PASS | TLS connection established |
-| GnuTLS functions not called | FAIL | No TLS implementation |
-| Plain socket without TLS wrapper | FAIL | Plaintext connection |
+| `gnutls_handshake()` always called | SATISFIED | TLS connection established |
+| GnuTLS functions not called | UNSATISFIED | No TLS implementation |
+| Plain socket without TLS wrapper | UNSATISFIED | Plaintext connection |
 | TLS usage depends on config | CONDITIONAL | Trace variable |
-| Fallback to plaintext on error | FAIL | Downgrade attack possible |
+| Fallback to plaintext on error | UNSATISFIED | Downgrade attack possible |
 
 ---
 
@@ -114,13 +114,13 @@ int ret;
 // After gnutls_handshake() succeeds:
 ret = gnutls_certificate_verify_peers2(session, &status);
 if (ret < 0) {
-    // FAIL - verification function failed
+    // UNSATISFIED - verification function failed
     gnutls_perror(ret);
     return error;
 }
 
 if (status != 0) {
-    // FAIL - certificate verification failed
+    // UNSATISFIED - certificate verification failed
     // Check specific flags for details:
     if (status & GNUTLS_CERT_INVALID) {
         // Certificate is invalid
@@ -138,16 +138,16 @@ if (status != 0) {
 
 **Incorrect Verification Patterns (Vulnerabilities)**:
 ```c
-// FAIL: Only checking return value, ignoring status flags
+// UNSATISFIED: Only checking return value, ignoring status flags
 ret = gnutls_certificate_verify_peers2(session, &status);
 if (ret < 0) { handle_error(); }
 // Missing: check for status != 0
 
-// FAIL: Not calling verification at all
+// UNSATISFIED: Not calling verification at all
 gnutls_handshake(session);
 // Proceeding without calling gnutls_certificate_verify_peers2/3()
 
-// FAIL: Ignoring the status variable entirely
+// UNSATISFIED: Ignoring the status variable entirely
 gnutls_certificate_verify_peers2(session, &status);
 // status not checked - all certificates accepted
 ```
@@ -160,7 +160,7 @@ However, you should still check for this error:
 ```c
 ret = gnutls_certificate_verify_peers2(session, &status);
 if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
-    // FAIL - server provided no certificate
+    // UNSATISFIED - server provided no certificate
     return error;
 }
 ```
@@ -171,15 +171,15 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 - Vulnerability: Status flags not checked (status != 0)
 - Vulnerability: No CA certificates loaded
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `gnutls_certificate_verify_peers2/3()` called, ret and status checked | PASS | Full verification |
-| Verification function not called | FAIL | No certificate validation |
-| Return value (ret) not checked | FAIL | Function errors ignored |
-| Status flags not checked | FAIL | Verification result ignored |
-| Only checks `ret < 0`, not `status != 0` | FAIL | Accepts invalid certificates |
-| No CA certificates loaded | FAIL | Chain cannot be verified |
+| `gnutls_certificate_verify_peers2/3()` called, ret and status checked | SATISFIED | Full verification |
+| Verification function not called | UNSATISFIED | No certificate validation |
+| Return value (ret) not checked | UNSATISFIED | Function errors ignored |
+| Status flags not checked | UNSATISFIED | Verification result ignored |
+| Only checks `ret < 0`, not `status != 0` | UNSATISFIED | Accepts invalid certificates |
+| No CA certificates loaded | UNSATISFIED | Chain cannot be verified |
 | Verification depends on config | CONDITIONAL | Trace variable |
 
 ---
@@ -209,18 +209,18 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 | All versions | No hostname verification | INSECURE |
 
 **Detection Patterns**:
-- `gnutls_certificate_verify_peers3(session, hostname, &status)` → PASS (automatic)
-- `gnutls_x509_crt_check_hostname()` called after handshake → PASS (manual)
-- Only `gnutls_certificate_verify_peers2()` without hostname check → FAIL
-- No hostname verification function called → FAIL
+- `gnutls_certificate_verify_peers3(session, hostname, &status)` → SATISFIED (automatic)
+- `gnutls_x509_crt_check_hostname()` called after handshake → SATISFIED (manual)
+- Only `gnutls_certificate_verify_peers2()` without hostname check → UNSATISFIED
+- No hostname verification function called → UNSATISFIED
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `gnutls_certificate_verify_peers3()` with hostname | PASS | Automatic hostname check |
-| `gnutls_x509_crt_check_hostname()` called | PASS | Manual hostname check |
-| Only `gnutls_certificate_verify_peers2()` | FAIL | No hostname verification |
-| No hostname verification | FAIL | Identity not verified |
+| `gnutls_certificate_verify_peers3()` with hostname | SATISFIED | Automatic hostname check |
+| `gnutls_x509_crt_check_hostname()` called | SATISFIED | Manual hostname check |
+| Only `gnutls_certificate_verify_peers2()` | UNSATISFIED | No hostname verification |
+| No hostname verification | UNSATISFIED | Identity not verified |
 | Hostname from variable | CONDITIONAL | Verify hostname source |
 
 ---
@@ -280,13 +280,13 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 | < 3.6.0 | TLS 1.0, 1.1, 1.2 | INSECURE |
 | ≥ 3.6.0 | Vendor-configurable | Check config |
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Priority disables TLS 1.0/1.1 | PASS | Only secure versions |
-| `"SECURE128/192/256"` without TLS 1.0/1.1 | PASS | Strong configuration |
-| `"NORMAL"` without version restrictions | FAIL | Allows TLS 1.0/1.1 |
-| Priority allows NULL/EXPORT ciphers | FAIL | Weak ciphers enabled |
+| Priority disables TLS 1.0/1.1 | SATISFIED | Only secure versions |
+| `"SECURE128/192/256"` without TLS 1.0/1.1 | SATISFIED | Strong configuration |
+| `"NORMAL"` without version restrictions | UNSATISFIED | Allows TLS 1.0/1.1 |
+| Priority allows NULL/EXPORT ciphers | UNSATISFIED | Weak ciphers enabled |
 | No priority set | CONDITIONAL | Uses system default |
 | Priority string from variable | CONDITIONAL | Trace variable |
 
@@ -312,14 +312,14 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 | `gnutls_certificate_set_x509_crl` | Set CRL from memory |
 
 **Detection Patterns**:
-- OCSP stapling enabled → PASS
-- CRL loaded → PASS
+- OCSP stapling enabled → SATISFIED
+- CRL loaded → SATISFIED
 - No revocation checking → UNDETERMINED (SHOULD requirement)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| OCSP or CRL checking enabled | PASS | Revocation verified |
+| OCSP or CRL checking enabled | SATISFIED | Revocation verified |
 | No revocation checking | UNDETERMINED | SHOULD requirement |
 | Revocation check from config | CONDITIONAL | Trace configuration |
 
@@ -349,12 +349,12 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 | Linux/macOS | /dev/urandom | SECURE |
 | Embedded | May need configuration | Check platform |
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| System has /dev/urandom | PASS | Automatic entropy |
-| Custom RNG with good entropy | PASS | Properly configured |
-| No entropy source (embedded) | FAIL | Weak randomness |
+| System has /dev/urandom | SATISFIED | Automatic entropy |
+| Custom RNG with good entropy | SATISFIED | Properly configured |
+| No entropy source (embedded) | UNSATISFIED | Weak randomness |
 | Platform unknown | CONDITIONAL | Check system |
 
 ---
@@ -380,13 +380,13 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 | `gnutls_certificate_set_verify_function` | Custom verification |
 
 **Detection Patterns**:
-- Fingerprint comparison in verify callback → PASS
-- Hardcoded certificate hashes → PASS (look for 32-byte or 64-char hex)
-- No pinning implemented → FAIL (pinning not implemented)
+- Fingerprint comparison in verify callback → SATISFIED
+- Hardcoded certificate hashes → SATISFIED (look for 32-byte or 64-char hex)
+- No pinning implemented → UNSATISFIED (pinning not implemented)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Certificate/key pinning implemented | PASS | Defense-in-depth |
-| No pinning | FAIL | Pinning not implemented |
+| Certificate/key pinning implemented | SATISFIED | Defense-in-depth |
+| No pinning | UNSATISFIED | Pinning not implemented |
 | Pin values from variable | CONDITIONAL | Trace pin source |

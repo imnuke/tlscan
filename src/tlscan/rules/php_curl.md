@@ -69,17 +69,17 @@ This document defines security rules for PHP cURL extension usage. Each rule ref
 
 **Detection Patterns**:
 ```php
-// PASS: HTTPS URL
+// SATISFIED: HTTPS URL
 curl_setopt($ch, CURLOPT_URL, "https://api.example.com");
 
-// FAIL: HTTP URL
+// UNSATISFIED: HTTP URL
 curl_setopt($ch, CURLOPT_URL, "http://api.example.com");
 
 // CONDITIONAL: Variable URL
 curl_setopt($ch, CURLOPT_URL, $url);
 curl_setopt($ch, CURLOPT_URL, $config['api_url']);
 
-// FAIL: Protocol fallback
+// UNSATISFIED: Protocol fallback
 $url = $ssl ? "https://..." : "http://...";
 ```
 
@@ -90,13 +90,13 @@ $url = $ssl ? "https://..." : "http://...";
 - Default to HTTP with optional HTTPS
 - Environment variable controlling protocol: `getenv('USE_SSL')`
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| URL starts with `https://` | PASS | TLS connection |
-| URL starts with `http://` | FAIL | Plaintext connection |
+| URL starts with `https://` | SATISFIED | TLS connection |
+| URL starts with `http://` | UNSATISFIED | Plaintext connection |
 | URL from variable | CONDITIONAL | Trace variable source |
-| Protocol fallback logic | FAIL | Downgrade possible |
+| Protocol fallback logic | UNSATISFIED | Downgrade possible |
 
 ---
 
@@ -125,33 +125,33 @@ $url = $ssl ? "https://..." : "http://...";
 
 **Detection Patterns**:
 ```php
-// FAIL: Disables certificate verification
+// UNSATISFIED: Disables certificate verification
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
 
-// PASS: Explicit enable (redundant but safe)
+// SATISFIED: Explicit enable (redundant but safe)
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 1);
 
-// PASS: Not setting (uses secure default)
+// SATISFIED: Not setting (uses secure default)
 // No CURLOPT_SSL_VERIFYPEER call
 
-// PASS: Custom CA bundle
+// SATISFIED: Custom CA bundle
 curl_setopt($ch, CURLOPT_CAINFO, '/path/to/cacert.pem');
 
 // CONDITIONAL: Variable value
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $config['verify']);
 ```
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `CURLOPT_SSL_VERIFYPEER` = `true` | PASS | Verification enabled |
-| `CURLOPT_SSL_VERIFYPEER` not set | PASS | Default is `true` |
-| `CURLOPT_SSL_VERIFYPEER` = `false` | FAIL | Verification disabled |
+| `CURLOPT_SSL_VERIFYPEER` = `true` | SATISFIED | Verification enabled |
+| `CURLOPT_SSL_VERIFYPEER` not set | SATISFIED | Default is `true` |
+| `CURLOPT_SSL_VERIFYPEER` = `false` | UNSATISFIED | Verification disabled |
 | Value from variable | CONDITIONAL | Trace variable |
-| `CURLOPT_CAINFO` not set, no system CA | CONDITIONAL | May fail silently |
+| `CURLOPT_CAINFO` not set, no system CA | CONDITIONAL | May unsatisfied silently |
 
 ---
 
@@ -186,18 +186,18 @@ curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $config['verify']);
 
 **Detection Patterns**:
 ```php
-// FAIL: Disables hostname verification
+// UNSATISFIED: Disables hostname verification
 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, FALSE);
 
-// FAIL: Deprecated value (unreliable in older versions)
+// UNSATISFIED: Deprecated value (unreliable in older versions)
 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 1);
 
-// PASS: Full hostname check
+// SATISFIED: Full hostname check
 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 
-// PASS: Not setting (uses secure default)
+// SATISFIED: Not setting (uses secure default)
 // No CURLOPT_SSL_VERIFYHOST call
 
 // CONDITIONAL: Variable value
@@ -206,13 +206,13 @@ curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $config['verify_host']);
 
 **Security Note**: CURLOPT_SSL_VERIFYHOST operates independently of CURLOPT_SSL_VERIFYPEER per libcurl documentation. Evaluate R3 based solely on VERIFYHOST setting. If R2 fails, note the combined security impact in evidence but do NOT change R3's result.
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `CURLOPT_SSL_VERIFYHOST` = `2` | PASS | Full hostname check |
-| `CURLOPT_SSL_VERIFYHOST` not set | PASS | Default is `2` |
-| `CURLOPT_SSL_VERIFYHOST` = `0` | FAIL | Hostname check disabled |
-| `CURLOPT_SSL_VERIFYHOST` = `1` | FAIL | Deprecated/unreliable |
+| `CURLOPT_SSL_VERIFYHOST` = `2` | SATISFIED | Full hostname check |
+| `CURLOPT_SSL_VERIFYHOST` not set | SATISFIED | Default is `2` |
+| `CURLOPT_SSL_VERIFYHOST` = `0` | UNSATISFIED | Hostname check disabled |
+| `CURLOPT_SSL_VERIFYHOST` = `1` | UNSATISFIED | Deprecated/unreliable |
 | Value from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -241,19 +241,19 @@ curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $config['verify_host']);
 
 **Detection Patterns**:
 ```php
-// PASS: TLS 1.2 minimum
+// SATISFIED: TLS 1.2 minimum
 curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
 curl_setopt($ch, CURLOPT_SSLVERSION, 6);
 
-// PASS: TLS 1.3 minimum
+// SATISFIED: TLS 1.3 minimum
 curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_3);
 curl_setopt($ch, CURLOPT_SSLVERSION, 7);
 
-// FAIL: Allows TLS 1.0
+// UNSATISFIED: Allows TLS 1.0
 curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1);
 curl_setopt($ch, CURLOPT_SSLVERSION, 1);
 
-// FAIL: Insecure protocols
+// UNSATISFIED: Insecure protocols
 curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_SSLv3);
 
 // CONDITIONAL: Uses default
@@ -262,11 +262,11 @@ curl_setopt($ch, CURLOPT_SSLVERSION, 0);
 // Or not setting CURLOPT_SSLVERSION at all
 ```
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `CURLOPT_SSLVERSION` ≥ 6 | PASS | TLS 1.2+ enforced |
-| `CURLOPT_SSLVERSION` 1-5 | FAIL | Allows insecure protocols |
+| `CURLOPT_SSLVERSION` ≥ 6 | SATISFIED | TLS 1.2+ enforced |
+| `CURLOPT_SSLVERSION` 1-5 | UNSATISFIED | Allows insecure protocols |
 | `CURLOPT_SSLVERSION` = 0 or not set | UNDETERMINED | Depends on libcurl version (not traceable) |
 | Value from variable | CONDITIONAL | Trace variable |
 
@@ -301,10 +301,10 @@ curl_setopt($ch, CURLOPT_SSLVERSION, 0);
 
 **Detection Patterns**:
 ```php
-// PASS: Strong ciphers
+// SATISFIED: Strong ciphers
 curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4');
 
-// FAIL: Allows weak ciphers
+// UNSATISFIED: Allows weak ciphers
 curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'ALL');
 curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:+RC4');
 
@@ -312,11 +312,11 @@ curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:+RC4');
 // Not setting CURLOPT_SSL_CIPHER_LIST
 ```
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Strong cipher string | PASS | Weak ciphers excluded |
-| Weak ciphers in string | FAIL | Insecure ciphers allowed |
+| Strong cipher string | SATISFIED | Weak ciphers excluded |
+| Weak ciphers in string | UNSATISFIED | Insecure ciphers allowed |
 | No cipher configuration | CONDITIONAL | Uses backend default |
 
 ---
@@ -339,18 +339,18 @@ curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:+RC4');
 
 **Detection Patterns**:
 ```php
-// PASS: Enable revocation checking
+// SATISFIED: Enable revocation checking
 curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_REVOKE_BEST_EFFORT);
 
-// FAIL: Disable revocation checking
+// UNSATISFIED: Disable revocation checking
 curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE);
 ```
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Revocation checking enabled | PASS | CRL/OCSP check performed |
-| `CURLSSLOPT_NO_REVOKE` used | FAIL | Revocation check disabled |
+| Revocation checking enabled | SATISFIED | CRL/OCSP check performed |
+| `CURLSSLOPT_NO_REVOKE` used | UNSATISFIED | Revocation check disabled |
 | No configuration | UNDETERMINED | SHOULD requirement |
 
 ---
@@ -368,18 +368,18 @@ curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE);
 
 **Detection Patterns**:
 ```php
-// PASS: Pinning enabled
+// SATISFIED: Pinning enabled
 curl_setopt($ch, CURLOPT_PINNEDPUBLICKEY, 'sha256//hash1;sha256//hash2');
 
-// FAIL: No pinning
+// UNSATISFIED: No pinning
 // Not setting CURLOPT_PINNEDPUBLICKEY
 ```
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `CURLOPT_PINNEDPUBLICKEY` set | PASS | Pinning enabled |
-| Pinning not configured | FAIL | Pinning not implemented |
+| `CURLOPT_PINNEDPUBLICKEY` set | SATISFIED | Pinning enabled |
+| Pinning not configured | UNSATISFIED | Pinning not implemented |
 | Pin value from variable | CONDITIONAL | Trace pin source |
 
 ---
@@ -445,7 +445,7 @@ Search for these patterns in PHP code:
 Watch for insecure wrapper functions/classes:
 
 ```php
-// FAIL: Wrapper that disables verification
+// UNSATISFIED: Wrapper that disables verification
 function makeRequest($url) {
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);  // Hidden insecurity
@@ -453,7 +453,7 @@ function makeRequest($url) {
     return curl_exec($ch);
 }
 
-// FAIL: Class with insecure defaults
+// UNSATISFIED: Class with insecure defaults
 class HttpClient {
     private $verifySSL = false;  // Insecure default
 }
@@ -463,29 +463,29 @@ class HttpClient {
 
 **Laravel/Guzzle**:
 ```php
-// FAIL: Guzzle with verify disabled
+// UNSATISFIED: Guzzle with verify disabled
 $client = new \GuzzleHttp\Client(['verify' => false]);
 
-// PASS: Guzzle with verification
+// SATISFIED: Guzzle with verification
 $client = new \GuzzleHttp\Client(['verify' => true]);
 $client = new \GuzzleHttp\Client(['verify' => '/path/to/cacert.pem']);
 ```
 
 **Symfony HttpClient**:
 ```php
-// FAIL: Disabled verification
+// UNSATISFIED: Disabled verification
 $client = HttpClient::create(['verify_peer' => false]);
 ```
 
-### PASS/FAIL/CONDITIONAL Criteria
+### SATISFIED/UNSATISFIED/CONDITIONAL Criteria
 
 | Pattern | Result | Reason |
 |---------|--------|--------|
-| `VERIFYPEER = false` anywhere | FAIL | Verification disabled |
-| `VERIFYHOST = 0` or `false` | FAIL | Hostname check disabled |
+| `VERIFYPEER = false` anywhere | UNSATISFIED | Verification disabled |
+| `VERIFYHOST = 0` or `false` | UNSATISFIED | Hostname check disabled |
 | Conditional disable (debug mode) | CONDITIONAL | May be disabled in production |
-| Framework `verify => false` | FAIL | Framework-level insecurity |
-| No insecure patterns found | PASS | Secure implementation |
+| Framework `verify => false` | UNSATISFIED | Framework-level insecurity |
+| No insecure patterns found | SATISFIED | Secure implementation |
 
 ---
 
@@ -529,13 +529,13 @@ if ($result === false) {
 
 | Priority | Scenario | Result |
 |----------|----------|--------|
-| MUST | Option explicitly secure | PASS |
-| MUST | Option explicitly insecure | FAIL |
-| MUST | No option, secure default | PASS |
+| MUST | Option explicitly secure | SATISFIED |
+| MUST | Option explicitly insecure | UNSATISFIED |
+| MUST | No option, secure default | SATISFIED |
 | MUST | No option, version-dependent default | CONDITIONAL |
-| SHOULD | Feature enabled | PASS |
-| SHOULD | Feature explicitly disabled | FAIL |
+| SHOULD | Feature enabled | SATISFIED |
+| SHOULD | Feature explicitly disabled | UNSATISFIED |
 | SHOULD | Feature not configured | UNDETERMINED |
-| MAY | Feature implemented | PASS |
+| MAY | Feature implemented | SATISFIED |
 | MAY | Feature not implemented | UNDETERMINED |
-| CRITICAL | Insecure PHP patterns found | FAIL |
+| CRITICAL | Insecure PHP patterns found | UNSATISFIED |
