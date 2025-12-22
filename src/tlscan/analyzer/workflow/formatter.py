@@ -34,8 +34,8 @@ from tlscan.analyzer.utils.formatting import format_duration
 def format_status_badge(status: RuleResultStatus) -> str:
     """Format status with color markup for Rich."""
     badges = {
-        RuleResultStatus.PASS: "[green]✅ PASS[/green]",
-        RuleResultStatus.FAIL: "[red]❌ FAIL[/red]",
+        RuleResultStatus.SATISFIED: "[green]✅ SATISFIED[/green]",
+        RuleResultStatus.UNSATISFIED: "[red]❌ UNSATISFIED[/red]",
         RuleResultStatus.CONDITIONAL: "[yellow]⚠️ CONDITIONAL[/yellow]",
         RuleResultStatus.UNDETERMINED: "[dim]❓ UNDETERMINED[/dim]",
     }
@@ -68,8 +68,8 @@ def format_source_kind_badge(source_kind: str) -> str:
 def get_border_color(status: RuleResultStatus) -> str:
     """Get border color based on rule status."""
     colors = {
-        RuleResultStatus.PASS: "green",
-        RuleResultStatus.FAIL: "red",
+        RuleResultStatus.SATISFIED: "green",
+        RuleResultStatus.UNSATISFIED: "red",
         RuleResultStatus.CONDITIONAL: "yellow",
         RuleResultStatus.UNDETERMINED: "dim",
     }
@@ -146,8 +146,8 @@ def display_summary(console: Console, stats: Dict[str, int], statistics: Dict[st
 
     # Add rows with color coding
     table.add_row("Total Rules", str(stats.get("total", 0)))
-    table.add_row("[green]✅ Passed[/green]", f"[green]{stats.get('pass', 0)}[/green]")
-    table.add_row("[red]❌ Failed[/red]", f"[red]{stats.get('fail', 0)}[/red]")
+    table.add_row("[green]✅ Satisfied[/green]", f"[green]{stats.get('satisfied', 0)}[/green]")
+    table.add_row("[red]❌ Unsatisfied[/red]", f"[red]{stats.get('unsatisfied', 0)}[/red]")
     table.add_row("[yellow]⚠️ Conditional[/yellow]", f"[yellow]{stats.get('conditional', 0)}[/yellow]")
     table.add_row("[dim]❓ Undetermined[/dim]", f"[dim]{stats.get('undetermined', 0)}[/dim]")
     table.add_row("Variables Traced", str(stats.get("trace_count", 0)))
@@ -464,7 +464,7 @@ def format_trace_from_graph(
     lines.append(f"{prefix}   Status: {res_badge}")
 
     if trace.outcome:
-        emoji = "✅" if "pass" in trace.outcome.lower() else "❌"
+        emoji = "✅" if "satisfied" in trace.outcome.lower() else "❌"
         outcome = escape_rich_markup(trace.outcome)
         lines.append(f"{prefix}   Outcome: {emoji} {outcome}")
 
@@ -533,7 +533,7 @@ def create_condition_panel_from_graph(
             lines.append("[bold]Resolution Outcomes:[/bold]")
             for outcome in link.resolution_outcomes:
                 escaped_outcome = escape_rich_markup(outcome)
-                emoji = "✅" if "pass" in outcome.lower() else "❌" if "fail" in outcome.lower() else "•"
+                emoji = "✅" if "satisfied" in outcome.lower() else "❌" if "unsatisfied" in outcome.lower() else "•"
                 lines.append(f"  {emoji} {escaped_outcome}")
 
         lines.append("")

@@ -166,21 +166,21 @@ For [library] versions prior to [version], applications must use:
 2. [Vulnerability 2]
 
 **Detection Patterns**:
-- `[code pattern]` → PASS/FAIL ([reason])
+- `[code pattern]` → SATISFIED/UNSATISFIED ([reason])
 - `[code pattern]` → CONDITIONAL ([reason])
 
 **Vulnerability Indicators** (optional):
 - [Common mistake or insecure pattern]
 - [Common mistake or insecure pattern]
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| [Explicit secure configuration] | PASS | [Why it's secure] |
-| [Default when secure] | PASS | [Why default is secure] |
-| [Explicit insecure configuration] | FAIL | [Why it's insecure] |
-| [Alternative pattern with all checks] | PASS | Manual verification complete |
-| [Alternative pattern missing checks] | FAIL | [Which check is missing] |
+| [Explicit secure configuration] | SATISFIED | [Why it's secure] |
+| [Default when secure] | SATISFIED | [Why default is secure] |
+| [Explicit insecure configuration] | UNSATISFIED | [Why it's insecure] |
+| [Alternative pattern with all checks] | SATISFIED | Manual verification complete |
+| [Alternative pattern missing checks] | UNSATISFIED | [Which check is missing] |
 | [Value from variable/config] | CONDITIONAL | Trace variable |
 | [Version-dependent default] | UNDETERMINED | Depends on [library] version (not traceable) |
 | [Cannot determine] | UNDETERMINED | [Why undetermined] |
@@ -207,7 +207,7 @@ For rules that don't map to meta-rules but are important for the specific librar
 **Detection Patterns**:
 - [Patterns specific to this library]
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 ```
@@ -229,15 +229,15 @@ For rules that don't map to meta-rules but are important for the specific librar
 
 | Priority | Scenario | Result |
 |----------|----------|--------|
-| MUST | Option explicitly set to secure value | PASS |
-| MUST | Option NOT set, default is secure | PASS |
-| MUST | Option explicitly set to insecure value | FAIL |
+| MUST | Option explicitly set to secure value | SATISFIED |
+| MUST | Option NOT set, default is secure | SATISFIED |
+| MUST | Option explicitly set to insecure value | UNSATISFIED |
 | MUST | Option NOT set, default is version-dependent | UNDETERMINED |
 | MUST | Option set to runtime variable | CONDITIONAL |
-| SHOULD | Feature enabled | PASS |
-| SHOULD | Feature explicitly disabled | FAIL |
+| SHOULD | Feature enabled | SATISFIED |
+| SHOULD | Feature explicitly disabled | UNSATISFIED |
 | SHOULD | Feature not configured | UNDETERMINED |
-| MAY | Feature implemented | PASS |
+| MAY | Feature implemented | SATISFIED |
 | MAY | Feature not implemented | UNDETERMINED |
 ```
 
@@ -274,7 +274,7 @@ Add LS rules for:
 1. **Document version history** in a table showing when defaults changed
 2. **Mark as UNDETERMINED** when relying on default that varies by version (not traceable)
 3. **Mark as CONDITIONAL** only when a traceable code variable controls the behavior
-4. **PASS only** when explicitly set to secure value (version-independent)
+4. **SATISFIED only** when explicitly set to secure value (version-independent)
 5. **Include version detection hints** for informational purposes
 6. **Document version requirements** in the evidence field
 
@@ -389,11 +389,11 @@ from `metarule.md`.
 - `example_ssl_connect()`: Establishes TLS connection
 - Default: No TLS unless explicitly called
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `example_ssl_connect()` called | PASS | TLS enabled |
-| Plain socket without SSL wrapper | FAIL | No TLS |
+| `example_ssl_connect()` called | SATISFIED | TLS enabled |
+| Plain socket without SSL wrapper | UNSATISFIED | No TLS |
 
 ---
 
@@ -401,6 +401,6 @@ from `metarule.md`.
 
 | Priority | Scenario | Result |
 |----------|----------|--------|
-| MUST | Option explicitly secure | PASS |
-| MUST | Option explicitly insecure | FAIL |
+| MUST | Option explicitly secure | SATISFIED |
+| MUST | Option explicitly insecure | UNSATISFIED |
 ```

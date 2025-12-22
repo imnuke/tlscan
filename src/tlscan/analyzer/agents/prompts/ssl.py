@@ -32,7 +32,7 @@ DETECTED LIBRARY VERSIONS:
 USE THIS VERSION INFORMATION TO RESOLVE VERSION-DEPENDENT RULES:
 - When a rule depends on library version defaults (e.g., minimum TLS version),
   use the detected version to determine if the default is secure or insecure
-- If version is detected, you can resolve UNDETERMINED to PASS/FAIL for version-dependent defaults
+- If version is detected, you can resolve UNDETERMINED to SATISFIED/UNSATISFIED for version-dependent defaults
 - Include the detected version in your evidence when relevant
 
 RESOLVING BACKEND-DEPENDENT RULES:
@@ -52,19 +52,19 @@ The backend minimum is a HARD FLOOR that the tool cannot go below.
 2. If only backend version is shown (no config):
    - Use the "Library Default" column from the Backend Minimum table
 3. Calculate: effective_min = max(tool_version_default, backend_minimum)
-4. If effective_min >= TLS 1.2 → PASS, else → FAIL
+4. If effective_min >= TLS 1.2 → SATISFIED, else → UNSATISFIED
 
 Example resolution with config:
 - curl 8.0.1 (default: TLS 1.0) + OpenSSL 1.1.1w [min: TLSv1.2]
 - Backend config sets MinProtocol=TLSv1.2
 - Effective minimum = max(TLS 1.0, TLS 1.2) = TLS 1.2
-- Result: PASS (backend enforces TLS 1.2 floor)
+- Result: SATISFIED (backend enforces TLS 1.2 floor)
 
 Example resolution without config:
 - curl 8.0.1 (default: TLS 1.0) + OpenSSL 1.1.1w (no config)
 - OpenSSL 1.1.1 Library Default = TLS 1.0
 - Effective minimum = max(TLS 1.0, TLS 1.0) = TLS 1.0
-- Result: FAIL (no floor enforces TLS 1.2)
+- Result: UNSATISFIED (no floor enforces TLS 1.2)
 
 **For Cipher Suites and Revocation Rules**:
 Use the backend table directly - match backend name/version to Security/Verdict column.
@@ -83,7 +83,7 @@ Analyze the code for SSL/TLS client security compliance and output JSON matching
     {{
       "rule_id": "Rn",
       "rule_name": "<exact name from rule heading>",
-      "result": "pass|fail|conditional|undetermined",
+      "result": "satisfied|unsatisfied|conditional|undetermined",
       "evidence": "detailed evidence with function names and addresses",
       "conditions": []  // for conditional, list variables to trace
     }}
@@ -103,7 +103,7 @@ For conditional result, include conditions array with:
   "variable": "v20",  // ACTUAL variable name from pseudocode, NOT descriptive names
   "function": "upscli_init",
   "function_address": "0x5be7",
-  "security_mapping": {{"0": "fail", "1": "pass"}}
+  "security_mapping": {{"0": "unsatisfied", "1": "satisfied"}}
 }}
 
 CRITICAL for conditions:
@@ -113,8 +113,8 @@ CRITICAL for conditions:
 - Example: If code shows "if (v20 != 0)" or "if [ $SSL_VERIFY ]", use the actual variable name
 
 RESULT TYPE RULES:
-- PASS: Option set to secure value, OR option not set and default is secure
-- FAIL: Option set to insecure value, OR option not set and default is insecure
+- SATISFIED: Option set to secure value, OR option not set and default is secure
+- UNSATISFIED: Option set to insecure value, OR option not set and default is insecure
 - CONDITIONAL: Option value is a RUNTIME VARIABLE that needs tracing
   - MUST have non-empty conditions array with actual variable names
   - Do NOT use for cross-rule dependencies or "effectively disabled" scenarios

@@ -100,7 +100,7 @@ Look for these function call sequences:
 | `socket` → `connect` → `SSL_*` | Check library rules | SSL wrapper present |
 | `socket` → `connect` → `gnutls_*` | Check library rules | SSL wrapper present |
 | `socket` → `connect` → `mbedtls_*` | Check library rules | SSL wrapper present |
-| `socket` → `connect` → `send`/`recv` | FAIL | No SSL wrapper |
+| `socket` → `connect` → `send`/`recv` | UNSATISFIED | No SSL wrapper |
 | `socket` → `connect` → conditional | CONDITIONAL | May have plaintext path |
 
 **Port-Based Detection**:
@@ -108,11 +108,11 @@ Look for these function call sequences:
 - Port 80: Expected plaintext HTTP (may be vulnerability if sensitive data)
 - Port 8443, 8080, etc.: Context-dependent
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| SSL library wrapper functions called | PASS (proceed to library rules) | SSL/TLS applied |
-| Direct `send()`/`recv()` on network socket | FAIL | Plaintext transmission |
+| SSL library wrapper functions called | SATISFIED (proceed to library rules) | SSL/TLS applied |
+| Direct `send()`/`recv()` on network socket | UNSATISFIED | Plaintext transmission |
 | Conditional SSL/plaintext paths | CONDITIONAL | Trace control flow |
 | Only local/Unix sockets | N/A | Not network traffic |
 | Cannot determine socket usage | UNDETERMINED | Insufficient evidence |
@@ -236,7 +236,7 @@ Once R1 confirms SSL wrapper is present, identify the specific library to apply 
 | wolfSSL | `wolfSSL_*` | libwolfssl |
 | NSS | `SSL_*`, `NSS_*`, `PR_*` | libnss3, libnspr4 |
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Next Step |
 |----------|--------|-----------|
 | OpenSSL functions detected | IDENTIFIED | Apply `rule_openssl.md` |
@@ -244,7 +244,7 @@ Once R1 confirms SSL wrapper is present, identify the specific library to apply 
 | mbedTLS functions detected | IDENTIFIED | Apply `rule_mbedtls.md` |
 | wolfSSL functions detected | IDENTIFIED | Apply `rule_openssl.md` (compatible) |
 | Multiple libraries detected | CONDITIONAL | Analyze separately |
-| No SSL library identified | FAIL | No SSL/TLS implementation |
+| No SSL library identified | UNSATISFIED | No SSL/TLS implementation |
 
 ---
 
@@ -254,7 +254,7 @@ Once R1 confirms SSL wrapper is present, identify the specific library to apply 
 
 **1. No SSL Wrapper** (M1 violation):
 ```c
-// FAIL: Plaintext transmission
+// UNSATISFIED: Plaintext transmission
 fd = socket(AF_INET, SOCK_STREAM, 0);
 connect(fd, ...);
 send(fd, sensitive_data, len, 0);  // PLAINTEXT!
@@ -262,7 +262,7 @@ send(fd, sensitive_data, len, 0);  // PLAINTEXT!
 
 **2. Conditional SSL with Plaintext Fallback**:
 ```c
-// FAIL: Downgrade attack possible
+// UNSATISFIED: Downgrade attack possible
 if (ssl_available && use_ssl) {
     SSL_connect(ssl);
 } else {
@@ -273,7 +273,7 @@ send(...);
 
 **3. Error Handling Falls Back to Plaintext**:
 ```c
-// FAIL: Error fallback to plaintext
+// UNSATISFIED: Error fallback to plaintext
 if (SSL_connect(ssl) != 1) {
     // Instead of failing, continues without SSL
     use_plaintext = true;
@@ -324,7 +324,7 @@ SSL wrapper  No wrapper
 present      detected
    │           │
    ↓           ↓
-4. Identify    FAIL for M1
+4. Identify    UNSATISFIED for M1
 library (R2)   (plaintext)
    │
    ↓
@@ -341,8 +341,8 @@ library (R2)   (plaintext)
 
 | Priority | Scenario | Result |
 |----------|----------|--------|
-| MUST | SSL wrapper detected | PASS (proceed to library rules) |
-| MUST | No SSL wrapper, direct socket I/O | FAIL |
+| MUST | SSL wrapper detected | SATISFIED (proceed to library rules) |
+| MUST | No SSL wrapper, direct socket I/O | UNSATISFIED |
 | MUST | Conditional SSL/plaintext | CONDITIONAL |
 | MUST | Library identified | Proceed to library rules |
 | MUST | No library identified but SSL present | UNDETERMINED |

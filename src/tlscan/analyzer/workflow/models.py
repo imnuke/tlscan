@@ -17,8 +17,8 @@ class RuleResultStatus(str, Enum):
     """Result status of a security rule after analysis."""
 
     UNDETERMINED = "undetermined"
-    PASS = "pass"
-    FAIL = "fail"
+    SATISFIED = "satisfied"
+    UNSATISFIED = "unsatisfied"
     CONDITIONAL = "conditional"
 
 class SourceKind(str, Enum):
@@ -104,7 +104,7 @@ class VariableSpec(BaseModel):
         None,
         description=(
             "Optional mapping of variable values to security outcomes. "
-            "Example: {'0': 'FAIL - disables verification', '1': 'PASS - enables verification'}"
+            "Example: {'0': 'UNSATISFIED - disables verification', '1': 'SATISFIED - enables verification'}"
         )
     )
 
@@ -202,7 +202,7 @@ class RuleCondition(BaseModel):
     security_mapping: Dict[str, str] = Field(
         description=(
             "Mapping of values to security outcomes. "
-            "Example: {'0': 'FAIL - disables verification', '1': 'PASS - enables verification'}"
+            "Example: {'0': 'UNSATISFIED - disables verification', '1': 'SATISFIED - enables verification'}"
         )
     )
 
@@ -211,7 +211,7 @@ class RuleResult(BaseModel):
     """
     Result for a single security rule.
 
-    Contains the rule's status (PASS/FAIL/CONDITIONAL/UNDETERMINED),
+    Contains the rule's status (SATISFIED/UNSATISFIED/CONDITIONAL/UNDETERMINED),
     supporting evidence, and any conditions it depends on.
     """
 
@@ -225,7 +225,7 @@ class RuleResult(BaseModel):
 
     result: RuleResultStatus = Field(
         default=RuleResultStatus.UNDETERMINED,
-        description="Rule status: pass/fail/conditional/undetermined"
+        description="Rule status: satisfied/unsatisfied/conditional/undetermined"
     )
 
     evidence: str = Field(
@@ -442,7 +442,7 @@ class VariableTrace(BaseModel):
 
     outcome: Optional[str] = Field(
         None,
-        description="Security outcome when resolved (e.g., 'PASS - enables verification')"
+        description="Security outcome when resolved (e.g., 'SATISFIED - enables verification')"
     )
 
     resolution_reason: Optional[str] = Field(
@@ -476,7 +476,7 @@ class RuleTraceLink(BaseModel):
             "upscli_sslinit:a2": RuleTraceLink(
                 condition_key="upscli_sslinit:a2",
                 root_trace_ids=["trace-001"],
-                security_mapping={"0": "FAIL", "1": "PASS"}
+                security_mapping={"0": "UNSATISFIED", "1": "SATISFIED"}
             )
         }
     """
@@ -492,7 +492,7 @@ class RuleTraceLink(BaseModel):
 
     security_mapping: Optional[Dict[str, str]] = Field(
         None,
-        description="Mapping of values to security outcomes (e.g., {'0': 'FAIL', '1': 'PASS'})"
+        description="Mapping of values to security outcomes (e.g., {'0': 'UNSATISFIED', '1': 'SATISFIED'})"
     )
 
     # === Computed Resolution (set by synthesis_node) ===

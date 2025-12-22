@@ -130,7 +130,7 @@ async def ssl_analysis_node(
     6. Creates dataflow tasks for conditional rules
 
     The SSL agent runs ONCE and returns complete analysis with:
-    - Rules marked as PASS/FAIL/CONDITIONAL/UNDETERMINED
+    - Rules marked as SATISFIED/UNSATISFIED/CONDITIONAL/UNDETERMINED
     - For CONDITIONAL: conditions list with variables to trace
     - Summary text for final report
 
@@ -1380,8 +1380,8 @@ async def binary_analysis_sequential(
 def format_status_badge(status: RuleResultStatus) -> str:
     """Format rule status with emoji and markdown bold."""
     badges = {
-        RuleResultStatus.PASS: "**✅ PASS**",
-        RuleResultStatus.FAIL: "**❌ FAIL**",
+        RuleResultStatus.SATISFIED: "**✅ SATISFIED**",
+        RuleResultStatus.UNSATISFIED: "**❌ UNSATISFIED**",
         RuleResultStatus.CONDITIONAL: "**⚠️ CONDITIONAL**",
         RuleResultStatus.UNDETERMINED: "**❓ UNDETERMINED**",
     }
@@ -1416,16 +1416,16 @@ def calculate_rule_statistics(rules: Dict[str, RuleResult]) -> Dict[str, int]:
     """Calculate counts for each rule status."""
     stats = {
         "total": len(rules),
-        "pass": 0,
-        "fail": 0,
+        "satisfied": 0,
+        "unsatisfied": 0,
         "conditional": 0,
         "undetermined": 0,
     }
     for rule in rules.values():
-        if rule.result == RuleResultStatus.PASS:
-            stats["pass"] += 1
-        elif rule.result == RuleResultStatus.FAIL:
-            stats["fail"] += 1
+        if rule.result == RuleResultStatus.SATISFIED:
+            stats["satisfied"] += 1
+        elif rule.result == RuleResultStatus.UNSATISFIED:
+            stats["unsatisfied"] += 1
         elif rule.result == RuleResultStatus.CONDITIONAL:
             stats["conditional"] += 1
         elif rule.result == RuleResultStatus.UNDETERMINED:
@@ -1439,8 +1439,8 @@ def format_summary_table(stats: Dict[str, int], trace_count: int, cross_binary_c
         "| Metric | Count |",
         "|--------|-------|",
         f"| Total Rules | {stats['total']} |",
-        f"| ✅ Passed | {stats['pass']} |",
-        f"| ❌ Failed | {stats['fail']} |",
+        f"| ✅ Satisfied | {stats['satisfied']} |",
+        f"| ❌ Unsatisfied | {stats['unsatisfied']} |",
         f"| ⚠️ Conditional | {stats['conditional']} |",
         f"| ❓ Undetermined | {stats['undetermined']} |",
         f"| Variables Traced | {trace_count} |",

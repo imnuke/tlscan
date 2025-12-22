@@ -70,13 +70,13 @@ This document defines security rules for curl command-line tool usage in scripts
 - No `--proto-redir` allowing HTTP redirect after HTTPS start
 - Fallback to HTTP in error handling: `curl https://... || curl http://...`
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| URL starts with `https://` | PASS | TLS connection |
-| `--proto =https` used | PASS | Only HTTPS allowed |
-| URL starts with `http://` | FAIL | Plaintext connection |
-| Fallback to HTTP on error | FAIL | Downgrade possible |
+| URL starts with `https://` | SATISFIED | TLS connection |
+| `--proto =https` used | SATISFIED | Only HTTPS allowed |
+| URL starts with `http://` | UNSATISFIED | Plaintext connection |
+| Fallback to HTTP on error | UNSATISFIED | Downgrade possible |
 | URL from variable | CONDITIONAL | Trace variable source |
 | No `--proto-redir` with HTTPS URL | CONDITIONAL | Redirect may downgrade |
 
@@ -111,10 +111,10 @@ This document defines security rules for curl command-line tool usage in scripts
 | Hostname verification | Enabled | SECURE |
 
 **Detection Patterns**:
-- `curl ... --insecure` → FAIL (disables M3 AND M4)
-- `curl ... -k` → FAIL (same as --insecure)
-- `curl https://...` (no -k) → PASS (uses defaults)
-- `curl ... --cacert /path/to/ca.crt` → PASS (custom CA, verification enabled)
+- `curl ... --insecure` → UNSATISFIED (disables M3 AND M4)
+- `curl ... -k` → UNSATISFIED (same as --insecure)
+- `curl https://...` (no -k) → SATISFIED (uses defaults)
+- `curl ... --cacert /path/to/ca.crt` → SATISFIED (custom CA, verification enabled)
 - Script variable: `curl $CURL_OPTS` where CURL_OPTS may contain `-k` → CONDITIONAL
 
 **Vulnerability Indicators**:
@@ -123,12 +123,12 @@ This document defines security rules for curl command-line tool usage in scripts
 - Alias definitions: `alias curl='curl -k'`
 - Config file `.curlrc` containing `insecure` option
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| No `--insecure`/`-k` flag | PASS | Default verification enabled (M3+M4) |
-| `--cacert` or `--capath` specified | PASS | Custom CA, verification enabled |
-| `--insecure` or `-k` present | FAIL | Both M3 and M4 disabled |
+| No `--insecure`/`-k` flag | SATISFIED | Default verification enabled (M3+M4) |
+| `--cacert` or `--capath` specified | SATISFIED | Custom CA, verification enabled |
+| `--insecure` or `-k` present | UNSATISFIED | Both M3 and M4 disabled |
 | Options from variable/config | CONDITIONAL | Trace option source |
 | `.curlrc` file exists | CONDITIONAL | Check for `insecure` setting |
 
@@ -186,39 +186,39 @@ The effective minimum TLS version = max(curl_default, backend_minimum)
 
 | curl Version | Backend | Config MinProtocol | Effective Min | Result |
 |--------------|---------|-------------------|---------------|--------|
-| 8.0.1 | OpenSSL 1.1.1 | TLSv1.2 | TLS 1.2 | PASS |
-| 8.0.1 | OpenSSL 1.1.1 | (none) | TLS 1.0 | FAIL |
-| 8.16.0 | OpenSSL 1.1.1 | (none) | TLS 1.2 | PASS |
-| 7.50.0 | GnuTLS 3.7.0 | - | TLS 1.2 | PASS |
-| Any | OpenSSL 3.0+ | (none) | TLS 1.2 | PASS |
+| 8.0.1 | OpenSSL 1.1.1 | TLSv1.2 | TLS 1.2 | SATISFIED |
+| 8.0.1 | OpenSSL 1.1.1 | (none) | TLS 1.0 | UNSATISFIED |
+| 8.16.0 | OpenSSL 1.1.1 | (none) | TLS 1.2 | SATISFIED |
+| 7.50.0 | GnuTLS 3.7.0 | - | TLS 1.2 | SATISFIED |
+| Any | OpenSSL 3.0+ | (none) | TLS 1.2 | SATISFIED |
 
 **Resolution logic**:
-1. If explicit --tlsv1.2 or --tlsv1.3 → PASS
+1. If explicit --tlsv1.2 or --tlsv1.3 → SATISFIED
 2. If explicit --tlsv1.0 or --tlsv1.1:
-   - Check backend config MinProtocol: if ≥ TLS 1.2 → PASS (backend refuses lower)
-   - Otherwise → FAIL (insecure negotiation possible)
+   - Check backend config MinProtocol: if ≥ TLS 1.2 → SATISFIED (backend refuses lower)
+   - Otherwise → UNSATISFIED (insecure negotiation possible)
 3. If no flag, both curl and backend versions known → Use max(curl_default, backend_minimum)
 4. If backend config MinProtocol found → Use that as backend_minimum
 5. If no config but backend version known → Use Library Default from table
 6. If neither curl nor backend known → UNDETERMINED
 
 **Detection Patterns**:
-- `curl --tlsv1.2 https://...` → PASS (TLS 1.2 minimum)
-- `curl --tlsv1.3 https://...` → PASS (TLS 1.3 minimum)
+- `curl --tlsv1.2 https://...` → SATISFIED (TLS 1.2 minimum)
+- `curl --tlsv1.3 https://...` → SATISFIED (TLS 1.3 minimum)
 - `curl --tlsv1 https://...` → Check backend config/version for effective minimum
 - `curl --tlsv1.0 https://...` → Check backend config/version for effective minimum
 - `curl --tlsv1.1 https://...` → Check backend config/version for effective minimum
 - `curl https://...` (no TLS option) → Use resolution logic above
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `--tlsv1.2` or `--tlsv1.3` used | PASS | Secure minimum enforced |
-| `--tlsv1.*` with backend min ≥ TLS 1.2 | PASS | Backend refuses insecure protocols |
-| `--tlsv1.*` with backend min < TLS 1.2 | FAIL | Insecure negotiation possible |
-| `--sslv2`, `--sslv3` | FAIL | Insecure protocols |
-| No flag, effective min ≥ TLS 1.2 | PASS | Resolution yields secure minimum |
-| No flag, effective min < TLS 1.2 | FAIL | Resolution yields insecure minimum |
+| `--tlsv1.2` or `--tlsv1.3` used | SATISFIED | Secure minimum enforced |
+| `--tlsv1.*` with backend min ≥ TLS 1.2 | SATISFIED | Backend refuses insecure protocols |
+| `--tlsv1.*` with backend min < TLS 1.2 | UNSATISFIED | Insecure negotiation possible |
+| `--sslv2`, `--sslv3` | UNSATISFIED | Insecure protocols |
+| No flag, effective min ≥ TLS 1.2 | SATISFIED | Resolution yields secure minimum |
+| No flag, effective min < TLS 1.2 | UNSATISFIED | Resolution yields insecure minimum |
 | No flag, cannot determine effective min | UNDETERMINED | Insufficient version info |
 | TLS option from variable | CONDITIONAL | Trace variable |
 
@@ -263,27 +263,27 @@ HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 **Backend Cipher Suite Defaults (when no --ciphers specified)**:
 | Backend | Version | Default Config | Security |
 |---------|---------|----------------|----------|
-| OpenSSL | 3.0+ | TLS_AES_* + ECDHE preferred | PASS |
-| OpenSSL | 1.1.1+ | DEFAULT:!aNULL:!eNULL (ECDHE) | PASS |
+| OpenSSL | 3.0+ | TLS_AES_* + ECDHE preferred | SATISFIED |
+| OpenSSL | 1.1.1+ | DEFAULT:!aNULL:!eNULL (ECDHE) | SATISFIED |
 | OpenSSL | 1.0.x | DEFAULT (may include weak) | CONDITIONAL |
-| GnuTLS | 3.6+ | NORMAL priority | PASS |
-| mbedTLS | 2.x+ | Secure defaults | PASS |
-| wolfSSL | 4.x+ | Secure defaults | PASS |
+| GnuTLS | 3.6+ | NORMAL priority | SATISFIED |
+| mbedTLS | 2.x+ | Secure defaults | SATISFIED |
+| wolfSSL | 4.x+ | Secure defaults | SATISFIED |
 
 **Resolution**: When no --ciphers specified and backend is detected, use Security column.
 
 **Detection Patterns**:
-- `--ciphers 'HIGH:!aNULL:!eNULL'` → PASS (strong ciphers)
-- `--ciphers` containing `NULL`, `EXPORT`, `RC4` → FAIL
-- No `--ciphers`, backend PASS in table → PASS (secure backend default)
+- `--ciphers 'HIGH:!aNULL:!eNULL'` → SATISFIED (strong ciphers)
+- `--ciphers` containing `NULL`, `EXPORT`, `RC4` → UNSATISFIED
+- No `--ciphers`, backend SATISFIED in table → SATISFIED (secure backend default)
 - No `--ciphers`, backend unknown → CONDITIONAL (cannot verify default)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Strong cipher string configured | PASS | Weak ciphers excluded |
-| Cipher string contains weak ciphers | FAIL | Insecure ciphers allowed |
-| No `--ciphers`, backend detected as PASS | PASS | Uses secure backend default |
+| Strong cipher string configured | SATISFIED | Weak ciphers excluded |
+| Cipher string contains weak ciphers | UNSATISFIED | Insecure ciphers allowed |
+| No `--ciphers`, backend detected as SATISFIED | SATISFIED | Uses secure backend default |
 | No `--ciphers`, backend unknown | CONDITIONAL | Cannot verify backend default |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
@@ -321,24 +321,24 @@ HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 | OpenSSL | DISABLED (no CRL/OCSP) | CONDITIONAL |
 | GnuTLS | DISABLED | CONDITIONAL |
 | mbedTLS | DISABLED | CONDITIONAL |
-| Schannel (Windows) | CRL enabled | PASS |
+| Schannel (Windows) | CRL enabled | SATISFIED |
 | SecureTransport (macOS) | May use system OCSP | CONDITIONAL |
 | wolfSSL | DISABLED | CONDITIONAL |
 
 **Resolution**: When no revocation option specified and backend is detected, use Verdict column.
-**Note**: CONDITIONAL (not FAIL) because S1 is a SHOULD requirement, not MUST.
+**Note**: CONDITIONAL (not UNSATISFIED) because S1 is a SHOULD requirement, not MUST.
 
 **Detection Patterns**:
-- `--ssl-revoke-best-effort` → PASS (revocation enabled)
+- `--ssl-revoke-best-effort` → SATISFIED (revocation enabled)
 - `--ssl-no-revoke` → CONDITIONAL (explicit disable of SHOULD)
 - No revocation option, backend known → use Verdict from table
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `--ssl-revoke-best-effort` used | PASS | Revocation checking enabled |
+| `--ssl-revoke-best-effort` used | SATISFIED | Revocation checking enabled |
 | `--ssl-no-revoke` used | CONDITIONAL | Explicit disable of SHOULD requirement |
-| No option, Schannel backend | PASS | Schannel enables CRL by default |
+| No option, Schannel backend | SATISFIED | Schannel enables CRL by default |
 | No option, other backend | CONDITIONAL | SHOULD requirement not satisfied |
 
 ---
@@ -373,15 +373,15 @@ curl --pinnedpubkey /path/to/pubkey.pem https://example.com
 ```
 
 **Detection Patterns**:
-- `--pinnedpubkey` option present → PASS (pinning enabled)
-- `--pinnedpubkey` not used → FAIL (pinning not implemented)
+- `--pinnedpubkey` option present → SATISFIED (pinning enabled)
+- `--pinnedpubkey` not used → UNSATISFIED (pinning not implemented)
 - Pin value from variable → CONDITIONAL (trace pin source)
 
-**PASS/FAIL/CONDITIONAL Criteria**:
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| `--pinnedpubkey` with hash | PASS | Pinning enabled |
-| `--pinnedpubkey` not used | FAIL | Pinning not implemented |
+| `--pinnedpubkey` with hash | SATISFIED | Pinning enabled |
+| `--pinnedpubkey` not used | UNSATISFIED | Pinning not implemented |
 | Pin value from variable | CONDITIONAL | Trace pin source |
 
 ---
@@ -415,11 +415,11 @@ insecure
 ### Script Patterns to Flag
 
 ```bash
-# FAIL: Hardcoded insecure
+# UNSATISFIED: Hardcoded insecure
 curl -k https://...
 curl --insecure https://...
 
-# FAIL: HTTP for sensitive data
+# UNSATISFIED: HTTP for sensitive data
 curl http://api.example.com/secrets
 
 # CONDITIONAL: Variable options
@@ -429,7 +429,7 @@ curl ${CURL_FLAGS} https://...
 # CONDITIONAL: Constructed URL
 curl "${PROTOCOL}://example.com"
 
-# FAIL: HTTP fallback
+# UNSATISFIED: HTTP fallback
 curl https://... || curl http://...
 
 # CONDITIONAL: Check .curlrc
@@ -442,12 +442,12 @@ if [ -f ~/.curlrc ]; then ...
 
 | Priority | Scenario | Result |
 |----------|----------|--------|
-| MUST | Option explicitly secure | PASS |
-| MUST | Option explicitly insecure | FAIL |
-| MUST | No option, secure default | PASS |
+| MUST | Option explicitly secure | SATISFIED |
+| MUST | Option explicitly insecure | UNSATISFIED |
+| MUST | No option, secure default | SATISFIED |
 | MUST | No option, version-dependent default | UNDETERMINED |
-| SHOULD | Feature enabled | PASS |
-| SHOULD | Feature explicitly disabled | FAIL |
+| SHOULD | Feature enabled | SATISFIED |
+| SHOULD | Feature explicitly disabled | UNSATISFIED |
 | SHOULD | Feature not configured | UNDETERMINED |
-| MAY | Feature implemented | PASS |
+| MAY | Feature implemented | SATISFIED |
 | MAY | Feature not implemented | UNDETERMINED |

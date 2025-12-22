@@ -217,7 +217,7 @@ When revocation information indicates a certificate is revoked, the client MUST 
 
 **Rationale**: Certificates may be revoked before expiration due to key compromise or CA errors. Without revocation checking, clients may accept compromised certificates.
 
-**Note**: Specific mechanism is not mandated. OCSP was made optional by CA/Browser Forum (July 2023). This is SHOULD rather than MUST because enforcement varies and soft-fail behavior is common.
+**Note**: Specific mechanism is not mandated. OCSP was made optional by CA/Browser Forum (July 2023). This is SHOULD rather than MUST because enforcement varies and soft-unsatisfied behavior is common.
 
 ---
 
