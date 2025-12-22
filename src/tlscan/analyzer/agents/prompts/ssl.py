@@ -32,7 +32,10 @@ DETECTED LIBRARY VERSIONS:
 USE THIS VERSION INFORMATION TO RESOLVE VERSION-DEPENDENT RULES:
 - When a rule depends on library version defaults (e.g., minimum TLS version),
   use the detected version to determine if the default is secure or insecure
-- If version is detected, you can resolve UNDETERMINED to SATISFIED/UNSATISFIED for version-dependent defaults
+- If version is detected, you MUST resolve version-dependent rules to SATISFIED/UNSATISFIED
+  based on the version defaults - NEVER use UNDETERMINED when version is known
+- For version-dependent rules, check the "Version Defaults" section in the security rules
+  to determine SATISFIED/UNSATISFIED based on the detected version
 - Include the detected version in your evidence when relevant
 
 RESOLVING BACKEND-DEPENDENT RULES:
@@ -118,7 +121,10 @@ RESULT TYPE RULES:
 - CONDITIONAL: Option value is a RUNTIME VARIABLE that needs tracing
   - MUST have non-empty conditions array with actual variable names
   - Do NOT use for cross-rule dependencies or "effectively disabled" scenarios
-- UNDETERMINED: Cannot locate relevant code
+- UNDETERMINED: ONLY when BOTH conditions are true:
+  1. Cannot locate relevant code (option not explicitly set), AND
+  2. Library version is unknown (cannot determine if default is secure/insecure)
+  - NEVER use UNDETERMINED when version IS detected - use the version defaults table instead
 
 IMPORTANT: Evaluate each rule INDEPENDENTLY. If one rule's failure affects another's
 effectiveness, note it in evidence, do NOT use CONDITIONAL for this relationship.
