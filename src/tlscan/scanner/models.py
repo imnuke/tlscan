@@ -117,40 +117,12 @@ class ScanResult(BaseModel):
                 "hits": detection.hits,
             }
 
-        version_dict = None
-        if self.versions:
-            version_dict = {}
-            for lib_id, ver in self.versions.items():
-                ver_data: Dict[str, Any] = {
-                    "version": ver.version,
-                    "confidence": ver.confidence.value,
-                    "method": ver.method,
-                }
-                if ver.details:
-                    ver_data["details"] = ver.details
-                if ver.source_path:
-                    ver_data["source_path"] = ver.source_path
-                if ver.backend:
-                    backend_data: Dict[str, Any] = {
-                        "name": ver.backend.name,
-                        "version": ver.backend.version,
-                        "confidence": ver.backend.confidence.value,
-                        "detection_method": ver.backend.detection_method,
-                    }
-                    if ver.backend.config:
-                        backend_data["config"] = {
-                            "min_protocol": ver.backend.config.min_protocol,
-                            "max_protocol": ver.backend.config.max_protocol,
-                            "config_source": ver.backend.config.config_source,
-                        }
-                    ver_data["backend"] = backend_data
-                version_dict[lib_id] = ver_data
+        # versions field removed - redundant with library_versions.json
 
         return {
             "path": self.path,
             "file_type": self.file_type.value,
             "libraries": libraries,
-            "versions": version_dict,
         }
 
 

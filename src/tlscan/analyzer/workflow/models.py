@@ -533,6 +533,7 @@ class VersionDetectionMethod(str, Enum):
     VERDEF = "verdef"                    # Symbol versioning VERDEF section
     VERNEED = "verneed"                  # Symbol versioning VERNEED section
     API_INFERENCE = "api_inference"      # Based on presence of version-specific APIs
+    NONE = "none"                        # No specific detection method
 
 
 class BackendDetectionMethod(str, Enum):
@@ -688,11 +689,18 @@ class LibraryVersions(BaseModel):
                     detection_method=BackendDetectionMethod(backend_data.get("detection_method", "dynamic_linking")),
                 )
 
+            # Parse detection method with fallback for unrecognized values
+            method_str = lib_data.get("method", "api_inference")
+            try:
+                detection_method = VersionDetectionMethod(method_str)
+            except ValueError:
+                detection_method = VersionDetectionMethod.NONE
+
             result.firmware_libraries[lib_id] = LibraryVersion(
                 library=lib_id,
                 version=lib_data.get("version"),
                 confidence=VersionConfidence(lib_data.get("confidence", "none")),
-                detection_method=VersionDetectionMethod(lib_data.get("method", "api_inference")),
+                detection_method=detection_method,
                 source_path=lib_data.get("source_path"),
                 soname=lib_data.get("soname"),
                 details=lib_data.get("details", ""),
@@ -700,35 +708,34 @@ class LibraryVersions(BaseModel):
                 backend=backend,
             )
 
-        # Load binary-specific versions
-        # Try to find matching binary in cache (use relative path)
-        binary_versions = cache_data.get("binary_versions", {})
-        for cached_path, libs in binary_versions.items():
-            # Match by basename or full path
-            if binary_path.endswith(cached_path) or cached_path.endswith(Path(binary_path).name):
-                for lib_id, lib_data in libs.items():
-                    # Parse backend info if present
-                    backend = None
-                    backend_data = lib_data.get("backend")
-                    if backend_data:
-                        backend = SSLBackend(
-                            name=backend_data.get("name", "unknown"),
-                            version=backend_data.get("version"),
-                            confidence=VersionConfidence(backend_data.get("confidence", "none")),
-                            detection_method=BackendDetectionMethod(backend_data.get("detection_method", "dynamic_linking")),
-                        )
-
-                    result.libraries[lib_id] = LibraryVersion(
-                        library=lib_id,
-                        version=lib_data.get("version"),
-                        confidence=VersionConfidence(lib_data.get("confidence", "none")),
-                        detection_method=VersionDetectionMethod(lib_data.get("method", "api_inference")),
-                        soname=lib_data.get("soname"),
-                        details=lib_data.get("details", ""),
-                        required_symbols=lib_data.get("required_symbols", []),
-                        backend=backend,
-                    )
-                break
+        # binary_versions loading disabled - using firmware_libraries only
+        # binary_versions = cache_data.get("binary_versions", {})
+        # for cached_path, libs in binary_versions.items():
+        #     # Match by basename or full path
+        #     if binary_path.endswith(cached_path) or cached_path.endswith(Path(binary_path).name):
+        #         for lib_id, lib_data in libs.items():
+        #             # Parse backend info if present
+        #             backend = None
+        #             backend_data = lib_data.get("backend")
+        #             if backend_data:
+        #                 backend = SSLBackend(
+        #                     name=backend_data.get("name", "unknown"),
+        #                     version=backend_data.get("version"),
+        #                     confidence=VersionConfidence(backend_data.get("confidence", "none")),
+        #                     detection_method=BackendDetectionMethod(backend_data.get("detection_method", "dynamic_linking")),
+        #                 )
+        #
+        #             result.libraries[lib_id] = LibraryVersion(
+        #                 library=lib_id,
+        #                 version=lib_data.get("version"),
+        #                 confidence=VersionConfidence(lib_data.get("confidence", "none")),
+        #                 detection_method=VersionDetectionMethod(lib_data.get("method", "api_inference")),
+        #                 soname=lib_data.get("soname"),
+        #                 details=lib_data.get("details", ""),
+        #                 required_symbols=lib_data.get("required_symbols", []),
+        #                 backend=backend,
+        #             )
+        #         break
 
         return result
 
