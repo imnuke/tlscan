@@ -201,8 +201,62 @@ int callback(int preverify_ok, X509_STORE_CTX *ctx) {
 }
 ```
 
+### SSL_CTX_set_cert_verify_callback (Complete Override)
+
+`SSL_CTX_set_cert_verify_callback()` sets a callback that **completely replaces** OpenSSL's built-in verification. Unlike `SSL_CTX_set_verify()` callbacks which receive `preverify_ok`, this callback receives no indication of prior verification - it must perform ALL verification itself.
+
+**Critical Difference**:
+| API | Callback Signature | Verification |
+|-----|-------------------|--------------|
+| `SSL_CTX_set_verify` | `callback(int preverify_ok, X509_STORE_CTX *ctx)` | OpenSSL verifies first |
+| `SSL_CTX_set_cert_verify_callback` | `callback(X509_STORE_CTX *ctx, void *arg)` | Callback does ALL verification |
+
+**Secure Callback Requirements**:
+1. MUST call `X509_verify_cert()` to verify the certificate chain
+2. MUST check the return value of `X509_verify_cert()` (1 = success, <=0 = failure)
+3. MUST return 0 on verification failure
+4. MAY implement additional checks (e.g., pinning) AFTER successful chain verification
+
+**Insecure Patterns**:
+```c
+// UNSATISFIED: Calls X509_verify_cert() but ignores return value
+int callback(X509_STORE_CTX *ctx, void *arg) {
+    X509_verify_cert(ctx);  // Return value ignored!
+    return my_pinning_check(ctx);  // Only pinning is enforced
+}
+
+// UNSATISFIED: Never calls X509_verify_cert()
+int callback(X509_STORE_CTX *ctx, void *arg) {
+    return my_custom_check(ctx);  // No chain verification
+}
+
+// UNSATISFIED: Returns 1 unconditionally
+int callback(X509_STORE_CTX *ctx, void *arg) {
+    return 1;  // Bypasses all verification
+}
+```
+
+**Secure Pattern**:
+```c
+// SATISFIED: Verifies chain AND checks result before custom logic
+int callback(X509_STORE_CTX *ctx, void *arg) {
+    int ret = X509_verify_cert(ctx);
+    if (ret <= 0) {
+        return 0;  // Chain verification failed
+    }
+    // Additional checks (e.g., pinning) only after chain is verified
+    return my_pinning_check(ctx);
+}
+```
+
+**Important**: The callback parameters (`X509_STORE_CTX *ctx`, `void *arg`) are always provided by OpenSSL during the handshake. These are NOT conditions that require dataflow analysis. The security determination is based solely on:
+1. Whether `X509_verify_cert()` is called
+2. Whether its return value is checked and used to determine the callback's return value
+3. If the return value is ignored, result is **UNSATISFIED** (not CONDITIONAL)
+
 **Detection Patterns**:
 - Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`
+- Complete override: `SSL_CTX_set_cert_verify_callback`, `X509_verify_cert`
 - Constants: `SSL_VERIFY_PEER`, `SSL_VERIFY_NONE`, `X509_V_OK`
 - CA loading: `SSL_CTX_load_verify_locations`, `SSL_CTX_set_default_verify_paths`
 
@@ -219,6 +273,9 @@ int callback(int preverify_ok, X509_STORE_CTX *ctx) {
 | Callback always returns 1 | UNSATISFIED | Bypasses all verification |
 | Callback ignores `preverify_ok` | UNSATISFIED | Ignores OpenSSL's verification |
 | No CA certificates loaded | UNSATISFIED | Chain cannot be verified |
+| `SSL_CTX_set_cert_verify_callback` with proper `X509_verify_cert()` check | SATISFIED | Chain verified before custom logic |
+| `SSL_CTX_set_cert_verify_callback` ignoring `X509_verify_cert()` result | UNSATISFIED | Chain verification bypassed |
+| `SSL_CTX_set_cert_verify_callback` not calling `X509_verify_cert()` | UNSATISFIED | No chain verification |
 
 ---
 
