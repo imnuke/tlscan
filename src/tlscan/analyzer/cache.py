@@ -162,12 +162,10 @@ class FirmwareCache:
     ) -> Optional[Dict[str, Any]]:
         """Get version info for specific binary and library.
 
-        Looks up version info in the following order:
-        1. Binary-specific version requirements (from VERNEED)
-        2. Firmware-level library version (from .so files)
+        Uses firmware-level library version from .so files.
 
         Args:
-            binary_path: Path to binary being analyzed
+            binary_path: Path to binary being analyzed (unused, kept for API compat)
             library: Library identifier (e.g., 'openssl', 'libcurl')
 
         Returns:
@@ -177,22 +175,7 @@ class FirmwareCache:
         if not versions:
             return None
 
-        # Try to match binary path (handle both absolute and relative paths)
-        binary_versions = versions.get("binary_versions", {})
-
-        # Normalize binary path for matching
-        binary_name = Path(binary_path).name
-        for cached_path, libs in binary_versions.items():
-            # Match by basename or by path suffix
-            if (
-                binary_path.endswith(cached_path)
-                or cached_path.endswith(binary_name)
-                or Path(cached_path).name == binary_name
-            ):
-                if library in libs:
-                    return libs[library]
-
-        # Fall back to firmware-level library version
+        # binary_versions lookup disabled - using firmware_libraries only
         return versions.get("firmware_libraries", {}).get(library)
 
     def get_firmware_library_version(self, library: str) -> Optional[Dict[str, Any]]:

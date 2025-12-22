@@ -185,7 +185,7 @@ def save_to_cache(
         "scan_timestamp": datetime.now().astimezone().isoformat(),
         "tool_version": TOOL_VERSION,
         "firmware_libraries": firmware_versions,
-        "binary_versions": binary_versions,
+        # binary_versions disabled - using firmware_libraries only
     }
 
     # Save library versions
