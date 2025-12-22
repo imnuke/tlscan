@@ -335,7 +335,7 @@ Use these scopes for conventional commit messages:
 | `scanner` | Network client scanner | `feat(scanner): add version detection` |
 | `rulegen` | Rule generator | `fix(rulegen): improve prompt builder` |
 | `cli` | Command-line interface, argument parsing | `feat(cli): add --list-threads flag` |
-| `rules` | Security rule definitions | `docs(rules): update openssl rule` |
+| `rules` | Security rule definitions | `refactor(rules): update openssl defaults` |
 | `config` | Configuration loading, llm_config | `fix(config): validate api keys` |
 | `paper` | Academic paper materials (figures, writing) | `docs(paper): add threat model figure` |
 | `logging` | Logging, output formatting, reporting | `refactor(logging): improve state diffs` |
@@ -344,6 +344,7 @@ Use these scopes for conventional commit messages:
 - Use the most specific scope that applies
 - Omit scope for cross-cutting changes affecting multiple areas
 - When in doubt, use the directory name of the primary file changed
+- Rules are functional components, not documentation - use `refactor`/`fix` instead of `docs`
 
 ## Development Notes
 
