@@ -9,7 +9,8 @@ This document defines security rules for wget command-line tool usage in scripts
 | R1 | M1 | MUST | TLS Usage Detection |
 | R2 | M3, M4 | MUST | Certificate & Hostname Verification (Combined) |
 | R3 | M2 | MUST | Protocol Version Enforcement |
-| R4 | M5 | SHOULD | Cipher Suite Selection (Limited) |
+| R4 | M5 | MUST | Cipher Suite Selection (Limited) |
+| R5 | S2 | SHOULD | Cryptographic Strength (Backend-Dependent) |
 | LS1 | N/A | SHOULD | Configuration File Analysis |
 
 **Notes**:
@@ -17,6 +18,7 @@ This document defines security rules for wget command-line tool usage in scripts
 - Certificate revocation (S1) checking is not directly supported by wget.
 - Certificate pinning (O1) is not supported by wget.
 - R2 combines M3 and M4 because `--no-check-certificate` disables both certificate chain verification AND hostname verification simultaneously.
+- R5 (S2) is backend-dependent - wget relies on the SSL backend for cryptographic strength enforcement.
 
 ## Version Detection Hints
 
@@ -201,7 +203,7 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 
 ## R4: Cipher Suite Selection (Limited)
 
-**Meta-Rule(s)**: M5  |  **Priority**: SHOULD
+**Meta-Rule(s)**: M5  |  **Priority**: MUST
 
 **What to Verify**: Strong cipher suites are used if cipher selection is available.
 
@@ -248,77 +250,73 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 
 ---
 
-## LS1: Configuration File Analysis
+## R5: Cryptographic Strength (Backend-Dependent)
+
+**Meta-Rule(s)**: S2  |  **Priority**: SHOULD
+
+**What to Verify**: Certificates use strong signature algorithms (SHA-256+) and adequate key sizes (RSA 2048+).
+
+**Implementation**:
+- wget relies on the underlying SSL backend for cryptographic strength enforcement
+- Check the backend version to determine default security level
+- wget has no direct option to configure cryptographic strength requirements
+
+**Backend Cryptographic Strength Defaults**:
+| Backend | Version | Default Security Level | Verdict |
+|---------|---------|----------------------|---------|
+| OpenSSL | 3.0+ | Level 2 (SHA-256+, RSA 2048+) | SATISFIED |
+| OpenSSL | 1.1.x | Level 1 (SHA-1 allowed, RSA 1024+) | UNSATISFIED |
+| OpenSSL | 1.0.x | Level 0 (weak algorithms allowed) | UNSATISFIED |
+| GnuTLS | 3.6+ | NORMAL priority (secure defaults) | SATISFIED |
+| GnuTLS | < 3.6 | May allow weak algorithms | UNSATISFIED |
+
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Backend version with secure defaults (see table) | SATISFIED | Backend enforces strong crypto |
+| Backend version with weak defaults (see table) | UNSATISFIED | Backend allows weak crypto |
+| Backend version unknown | UNDETERMINED | Cannot determine backend security |
+
+---
+
+## LS1: Explicit Configuration File Analysis
 
 **Meta-Rule(s)**: N/A (library-specific)  |  **Priority**: SHOULD
 
-**What to Verify**: wgetrc configuration files do not contain insecure settings.
+**What to Verify**: When code explicitly references a wgetrc configuration file, verify it does not contain insecure settings.
 
-**Implementation**:
-wget reads configuration from multiple locations in order:
+**Important**: This rule ONLY applies when the code explicitly references configuration files. Do NOT scan implicit config file locations (like `~/.wgetrc` or `/etc/wgetrc`) unless the code explicitly mentions them.
 
-1. System-wide: `/etc/wgetrc` or `/usr/local/etc/wgetrc`
-2. User-specific: `~/.wgetrc`
-3. Specified: `--config=<file>`
-4. Environment: `WGETRC` variable
+**When This Rule Applies**:
+- Code uses `--config=<file>` option
+- Code explicitly references `WGETRC` environment variable
+- Code explicitly reads/mentions a wgetrc file path
 
-**Configuration File Locations**:
-| Location | Scope | Priority |
-|----------|-------|----------|
-| `/etc/wgetrc` | System | Lowest |
-| `/usr/local/etc/wgetrc` | System | Low |
-| `~/.wgetrc` | User | Medium |
-| `--config=FILE` | Command | High |
-| `WGETRC` env var | Session | Highest |
+**When This Rule Does NOT Apply**:
+- Implicit default config file loading (wget's automatic wgetrc search)
+- No explicit config file reference in the analyzed code
 
-**Security-Critical Settings**:
+**Security-Critical Settings** (when config file IS analyzed):
 | Setting | Secure Value | Insecure Value |
 |---------|--------------|----------------|
 | `check_certificate` | `on` | `off` |
 | `secure_protocol` | `TLSv1_2`, `TLSv1_3`, `PFS` | `SSLv2`, `SSLv3`, `TLSv1` |
 | `https_only` | `on` | `off` |
 
-**Dangerous wgetrc Contents**:
-```
-# INSECURE - disables certificate verification
-check_certificate = off
-
-# INSECURE - allows weak protocols
-secure_protocol = SSLv3
-secure_protocol = TLSv1
-
-# Not necessarily insecure but should verify
-https_only = off
-```
-
-**Safe wgetrc Example**:
-```
-# Enable certificate verification (default, but explicit is good)
-check_certificate = on
-
-# Enforce TLS 1.2 minimum
-secure_protocol = TLSv1_2
-
-# Enforce HTTPS only
-https_only = on
-
-# Custom CA bundle (if needed)
-ca_certificate = /etc/ssl/certs/ca-certificates.crt
-```
-
 **Detection Patterns**:
-- Presence of `check_certificate = off` in any wgetrc → UNSATISFIED for R2
-- Presence of `secure_protocol = SSLv*` or `TLSv1` or `TLSv1_1` → UNSATISFIED for R3
-- Presence of custom wgetrc via `--config` or `WGETRC` → CONDITIONAL
+- `wget --config=/path/to/file` → Analyze the specified config file
+- `WGETRC=/path/to/file wget ...` → Analyze the specified config file
+- `wget https://...` (no --config) → LS1 does NOT apply
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| No wgetrc files or all settings secure | SATISFIED | Safe configuration |
-| `check_certificate = off` found | UNSATISFIED | Disables verification |
-| Insecure `secure_protocol` found | UNSATISFIED | Allows weak protocols |
-| Custom wgetrc specified | CONDITIONAL | Must analyze file contents |
-| `WGETRC` environment variable set | CONDITIONAL | Trace variable |
+| No explicit config file reference | N/A | Rule does not apply |
+| `--config=<file>` with secure settings | SATISFIED | Explicit config is safe |
+| `--config=<file>` with `check_certificate = off` | UNSATISFIED | Disables verification |
+| `--config=<file>` with insecure `secure_protocol` | UNSATISFIED | Allows weak protocols |
+| `WGETRC` from variable | CONDITIONAL | Trace variable to find config path |
+| Config file path from variable | CONDITIONAL | Trace variable to find config path |
 
 ---
 
@@ -399,8 +397,8 @@ For applications requiring these features, consider using curl or a custom TLS c
 | MUST | Option explicitly secure | SATISFIED |
 | MUST | Option explicitly insecure | UNSATISFIED |
 | MUST | No option, secure default (wget ≥1.10) | SATISFIED |
-| MUST | No option, version-dependent default | CONDITIONAL |
+| MUST | No option, version-dependent default | UNDETERMINED |
 | SHOULD | Feature enabled | SATISFIED |
 | SHOULD | Feature explicitly disabled | UNSATISFIED |
-| SHOULD | Feature not configured | CONDITIONAL |
+| SHOULD | Feature not configured | UNDETERMINED |
 | MAY | Feature not supported | N/A |
