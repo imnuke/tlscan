@@ -160,5 +160,35 @@ KEY INSTRUCTIONS:
 9. Output ONLY valid JSON matching the schema above
 10. If library version is detected, use it to resolve version-dependent default behaviors
 
+{'=' * 60}
+GLOBAL VARIABLE TOOL USAGE:
+{'=' * 60}
+
+The tools `get_global_variable_value_by_name` and `get_global_variable_value_at_address`
+return INITIAL VALUES ONLY (from the binary's data section), NOT runtime values.
+
+CRITICAL: Before trusting the returned value, you MUST:
+1. Use `get_xrefs_to` to find ALL code locations that write to the variable
+2. If NO writes found → the initial value is reliable, use it
+3. If writes found but value can be determined statically → use that value
+4. If writes found but value is runtime-dependent → use CONDITIONAL result
+
+Example - WRONG approach:
+  Tool returns: dword_423550 = 0x1
+  Agent concludes: "dword_423550 is 1, so callback is secure"
+  This is WRONG because the variable might be set to 0 by configuration parsing code.
+
+Example - CORRECT approach:
+  1. Tool returns: dword_423550 = 0x1 (initial value)
+  2. Use get_xrefs_to(address_of_dword_423550) to find writes
+  3. If write found in main(): "dword_423550 = parse_config(...)"
+     → Result is CONDITIONAL, need to trace parse_config result
+  4. If no writes found → initial value 0x1 is reliable
+
+When the initial value is 0 (zero):
+- This often means uninitialized (.bss section) OR explicitly set to 0
+- MUST check for writes - if found, the 0 is likely overwritten at runtime
+- If no writes found, 0 is the actual value (disabled by default)
+
 Use the available tools to explore the code structure, find function calls, and trace variable values.
 """
