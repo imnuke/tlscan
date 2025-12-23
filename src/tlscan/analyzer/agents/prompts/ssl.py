@@ -40,39 +40,9 @@ USE THIS VERSION INFORMATION TO RESOLVE VERSION-DEPENDENT RULES:
 
 RESOLVING BACKEND-DEPENDENT RULES:
 
-When a rule's criteria says "uses backend default" or would be UNDETERMINED/CONDITIONAL:
-1. Check the DETECTED LIBRARY VERSIONS section for backend info (e.g., "[backend: OpenSSL 1.1.1w]")
-2. Check for backend config info (e.g., "[min: TLSv1.2]") which indicates system-configured minimum
-3. Find the rule's "Backend Minimum" or "Backend * Defaults" table in the security rules
-4. Apply the resolution logic from the rule
-
-**For TLS Version Rules (R3/R4 for curl/libcurl)**:
-The effective minimum = max(tool_default, backend_minimum)
-The backend minimum is a HARD FLOOR that the tool cannot go below.
-
-1. If backend config MinProtocol is shown (e.g., "[min: TLSv1.2]"):
-   - Use that as the backend minimum (system has configured a floor)
-2. If only backend version is shown (no config):
-   - Use the "Library Default" column from the Backend Minimum table
-3. Calculate: effective_min = max(tool_version_default, backend_minimum)
-4. If effective_min >= TLS 1.2 → SATISFIED, else → UNSATISFIED
-
-Example resolution with config:
-- curl 8.0.1 (default: TLS 1.0) + OpenSSL 1.1.1w [min: TLSv1.2]
-- Backend config sets MinProtocol=TLSv1.2
-- Effective minimum = max(TLS 1.0, TLS 1.2) = TLS 1.2
-- Result: SATISFIED (backend enforces TLS 1.2 floor)
-
-Example resolution without config:
-- curl 8.0.1 (default: TLS 1.0) + OpenSSL 1.1.1w (no config)
-- OpenSSL 1.1.1 Library Default = TLS 1.0
-- Effective minimum = max(TLS 1.0, TLS 1.0) = TLS 1.0
-- Result: UNSATISFIED (no floor enforces TLS 1.2)
-
-**For Cipher Suites and Revocation Rules**:
-Use the backend table directly - match backend name/version to Security/Verdict column.
-
-Important: Always include the backend version AND config (if present) in your evidence.
+When a rule depends on backend defaults, refer to the "Backend Minimum" or "Backend Defaults" tables
+in the security rules document. The rules contain the resolution logic and version-specific defaults.
+Include the backend version in your evidence when resolving these rules.
 
 """
 
@@ -149,7 +119,7 @@ SECURITY RULES TO CHECK:
 KEY INSTRUCTIONS:
 {'=' * 60}
 
-1. Verify the code has SSL/TLS CLIENT functionality (SSL_connect, curl_easy_perform, wget, curl commands, etc.)
+1. Verify the code has SSL/TLS CLIENT functionality as defined in the TLS Usage Detection rule (R1)
 2. If not applicable, set applicable=false with reason
 3. Check ALL rules from the security rules above
 4. Use available tools to analyze the code and find SSL/TLS settings

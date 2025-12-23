@@ -10,11 +10,14 @@ This document defines library-specific security rules for libcurl-based TLS clie
 | R2 | M3 | MUST | Certificate Chain Verification |
 | R3 | M4 | MUST | Hostname Verification |
 | R4 | M2 | MUST | Protocol Version Enforcement |
-| R5 | M5 | SHOULD | Cipher Suite Selection |
+| R5 | M5 | MUST | Cipher Suite Selection |
 | R6 | S1 | SHOULD | Certificate Revocation Checking |
-| R7 | O1 | MAY | Certificate Pinning |
+| R7 | S2 | SHOULD | Cryptographic Strength (Backend-Dependent) |
+| R8 | O1 | MAY | Certificate Pinning |
 
-**Note**: Entropy/RNG (S3) is not applicable to libcurl as it relies on the underlying SSL backend (OpenSSL, NSS, etc.).
+**Notes**:
+- Entropy/RNG (S3) is not applicable to libcurl as it relies on the underlying SSL backend (OpenSSL, NSS, etc.).
+- R7 (S2) is backend-dependent - libcurl relies on the SSL backend for cryptographic strength enforcement.
 
 ## Binary Analysis Reference
 
@@ -274,7 +277,7 @@ The effective minimum TLS version = max(libcurl_default, backend_minimum)
 
 ## R5: Cipher Suite Selection
 
-**Meta-Rule(s)**: M5  |  **Priority**: SHOULD
+**Meta-Rule(s)**: M5  |  **Priority**: MUST
 
 **What to Verify**: Strong cipher suites are configured, weak ciphers excluded.
 
@@ -362,13 +365,44 @@ The effective minimum TLS version = max(libcurl_default, backend_minimum)
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Revocation checking enabled | SATISFIED | CRL/OCSP check performed |
-| `CURLSSLOPT_NO_REVOKE` used | CONDITIONAL | Explicit disable of SHOULD requirement |
+| `CURLSSLOPT_NO_REVOKE` used | UNSATISFIED | Revocation checking explicitly disabled |
 | No config, Schannel backend | SATISFIED | Schannel enables CRL by default |
 | No config, other backend | CONDITIONAL | SHOULD requirement not satisfied |
 
 ---
 
-## R7: Certificate Pinning
+## R7: Cryptographic Strength (Backend-Dependent)
+
+**Meta-Rule(s)**: S2  |  **Priority**: SHOULD
+
+**What to Verify**: Certificates use strong signature algorithms (SHA-256+) and adequate key sizes (RSA 2048+).
+
+**Implementation**:
+- libcurl relies on the underlying SSL backend for cryptographic strength enforcement
+- Check the backend version to determine default security level
+- libcurl has no direct option to configure cryptographic strength requirements
+
+**Backend Cryptographic Strength Defaults**:
+| Backend | Version | Default Security Level | Verdict |
+|---------|---------|----------------------|---------|
+| OpenSSL | 3.0+ | Level 2 (SHA-256+, RSA 2048+) | SATISFIED |
+| OpenSSL | 1.1.x | Level 1 (SHA-1 allowed, RSA 1024+) | UNSATISFIED |
+| OpenSSL | 1.0.x | Level 0 (weak algorithms allowed) | UNSATISFIED |
+| GnuTLS | 3.6+ | NORMAL priority (secure defaults) | SATISFIED |
+| GnuTLS | < 3.6 | May allow weak algorithms | UNSATISFIED |
+| mbedTLS | 2.x+ | Compile-time configured | CONDITIONAL |
+| wolfSSL | 4.x+ | Secure defaults | SATISFIED |
+
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Backend version with secure defaults (see table) | SATISFIED | Backend enforces strong crypto |
+| Backend version with weak defaults (see table) | UNSATISFIED | Backend allows weak crypto |
+| Backend version unknown | UNDETERMINED | Cannot determine backend security |
+
+---
+
+## R8: Certificate Pinning
 
 **Meta-Rule(s)**: O1  |  **Priority**: MAY
 

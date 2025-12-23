@@ -9,13 +9,15 @@ This document defines security rules for curl command-line tool usage in scripts
 | R1 | M1 | MUST | TLS Usage Detection |
 | R2 | M3, M4 | MUST | Certificate & Hostname Verification (Combined) |
 | R3 | M2 | MUST | Protocol Version Enforcement |
-| R4 | M5 | SHOULD | Cipher Suite Selection |
+| R4 | M5 | MUST | Cipher Suite Selection |
 | R5 | S1 | SHOULD | Certificate Revocation Checking |
-| R6 | O1 | MAY | Certificate Pinning |
+| R6 | S2 | SHOULD | Cryptographic Strength (Backend-Dependent) |
+| R7 | O1 | MAY | Certificate Pinning |
 
 **Notes**:
 - Entropy/RNG (S3) is not applicable to curl CLI as it relies on the underlying SSL backend.
 - R2 combines M3 and M4 because `--insecure`/`-k` disables both certificate chain verification AND hostname verification simultaneously.
+- R6 (S2) is backend-dependent - curl relies on the SSL backend for cryptographic strength enforcement.
 
 ## Version Detection Hints
 
@@ -226,7 +228,7 @@ The effective minimum TLS version = max(curl_default, backend_minimum)
 
 ## R4: Cipher Suite Selection
 
-**Meta-Rule(s)**: M5  |  **Priority**: SHOULD
+**Meta-Rule(s)**: M5  |  **Priority**: MUST
 
 **What to Verify**: Strong cipher suites are used, weak ciphers excluded.
 
@@ -337,13 +339,44 @@ HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `--ssl-revoke-best-effort` used | SATISFIED | Revocation checking enabled |
-| `--ssl-no-revoke` used | CONDITIONAL | Explicit disable of SHOULD requirement |
+| `--ssl-no-revoke` used | UNSATISFIED | Revocation checking explicitly disabled |
 | No option, Schannel backend | SATISFIED | Schannel enables CRL by default |
 | No option, other backend | CONDITIONAL | SHOULD requirement not satisfied |
 
 ---
 
-## R6: Certificate Pinning
+## R6: Cryptographic Strength (Backend-Dependent)
+
+**Meta-Rule(s)**: S2  |  **Priority**: SHOULD
+
+**What to Verify**: Certificates use strong signature algorithms (SHA-256+) and adequate key sizes (RSA 2048+).
+
+**Implementation**:
+- curl relies on the underlying SSL backend for cryptographic strength enforcement
+- Check the backend version to determine default security level
+- curl has no direct option to configure cryptographic strength requirements
+
+**Backend Cryptographic Strength Defaults**:
+| Backend | Version | Default Security Level | Verdict |
+|---------|---------|----------------------|---------|
+| OpenSSL | 3.0+ | Level 2 (SHA-256+, RSA 2048+) | SATISFIED |
+| OpenSSL | 1.1.x | Level 1 (SHA-1 allowed, RSA 1024+) | UNSATISFIED |
+| OpenSSL | 1.0.x | Level 0 (weak algorithms allowed) | UNSATISFIED |
+| GnuTLS | 3.6+ | NORMAL priority (secure defaults) | SATISFIED |
+| GnuTLS | < 3.6 | May allow weak algorithms | UNSATISFIED |
+| mbedTLS | 2.x+ | Compile-time configured | CONDITIONAL |
+| wolfSSL | 4.x+ | Secure defaults | SATISFIED |
+
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Backend version with secure defaults (see table) | SATISFIED | Backend enforces strong crypto |
+| Backend version with weak defaults (see table) | UNSATISFIED | Backend allows weak crypto |
+| Backend version unknown | UNDETERMINED | Cannot determine backend security |
+
+---
+
+## R7: Certificate Pinning
 
 **Meta-Rule(s)**: O1  |  **Priority**: MAY
 

@@ -46,6 +46,17 @@ The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", and "MAY" in this docu
 
 **MAY**: "This word, or the adjective 'OPTIONAL', mean that an item is truly optional. One vendor may choose to include the item because a particular marketplace requires it or because the vendor feels that it enhances the product while another vendor may omit the same item."
 
+### Result Type Definitions
+
+When evaluating rules, use these result types:
+
+- **SATISFIED**: The security requirement is met (explicitly configured secure, or secure default applies)
+- **UNSATISFIED**: The security requirement is NOT met (explicitly configured insecure, or insecure default applies)
+- **CONDITIONAL**: The security setting depends on a TRACEABLE runtime variable that requires dataflow analysis
+- **UNDETERMINED**: Cannot determine the result (e.g., library version unknown, relevant code not found)
+
+**Important**: CONDITIONAL is ONLY for scenarios where a runtime variable controls the security setting and can be traced through dataflow analysis. If a setting is hardcoded (even if it disables a SHOULD requirement), the result should be SATISFIED or UNSATISFIED, not CONDITIONAL.
+
 ---
 
 ## MUST Requirements

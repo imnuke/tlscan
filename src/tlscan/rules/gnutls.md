@@ -11,10 +11,13 @@ This document defines library-specific security rules for GnuTLS-based TLS clien
 | R3 | M4 | MUST | Hostname Verification |
 | R4 | M2, M5 | MUST | Protocol Version & Cipher Selection (Combined) |
 | R5 | S1 | SHOULD | Certificate Revocation Checking |
-| R6 | S3 | SHOULD | Entropy/RNG Initialization |
-| R7 | O1 | MAY | Certificate Pinning |
+| R6 | S2 | SHOULD | Cryptographic Strength |
+| R7 | S3 | SHOULD | Entropy/RNG Initialization |
+| R8 | O1 | MAY | Certificate Pinning |
 
-**Combined Rule Note**: GnuTLS uses priority strings (`gnutls_priority_set_direct()`) to control both protocol versions and cipher suites simultaneously, hence R4 implements both M2 and M5.
+**Notes**:
+- R4 implements both M2 and M5 because GnuTLS uses priority strings (`gnutls_priority_set_direct()`) to control both protocol versions and cipher suites simultaneously.
+- R6 (S2) can be enforced via priority string keywords like `SECURE128`, `SECURE192`, `SECURE256`.
 
 ## Version Detection Hints
 
@@ -325,7 +328,53 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 
 ---
 
-## R6: Entropy/RNG Initialization
+## R6: Cryptographic Strength
+
+**Meta-Rule(s)**: S2  |  **Priority**: SHOULD
+
+**What to Verify**: Certificates use strong signature algorithms (SHA-256+) and adequate key sizes (RSA 2048+).
+
+**Implementation**:
+- `gnutls_priority_set_direct()`: Set security level via priority string
+- `SECURE128`: 128-bit minimum security level (RSA 2048+, SHA-256+)
+- `SECURE192`: 192-bit minimum security level (RSA 3072+)
+- `SECURE256`: 256-bit minimum security level (RSA 15360+, SHA-384+)
+- `%VERIFY_ALLOW_BROKEN`: INSECURE - allows weak algorithms
+
+**Priority String Keywords**:
+| Keyword | Minimum Key Size | Hash Algorithm | Security |
+|---------|------------------|----------------|----------|
+| `SECURE128` | RSA 2048, ECDSA 256 | SHA-256+ | SATISFIED |
+| `SECURE192` | RSA 3072, ECDSA 384 | SHA-384+ | SATISFIED |
+| `SECURE256` | RSA 15360, ECDSA 512 | SHA-384+ | SATISFIED |
+| `NORMAL` | RSA 1024 (older versions) | May include SHA-1 | Version-dependent |
+| `%VERIFY_ALLOW_BROKEN` | Any | Any (including MD5) | UNSATISFIED |
+
+**Default Behavior (Version-Dependent)**:
+| GnuTLS Version | "NORMAL" Includes | Security |
+|----------------|-------------------|----------|
+| < 3.6.0 | RSA 1024, SHA-1 | UNSATISFIED |
+| ≥ 3.6.0 | RSA 2048+, SHA-256+ | SATISFIED |
+
+**Detection Patterns**:
+- Priority string contains `SECURE128`, `SECURE192`, `SECURE256` → SATISFIED
+- Priority string contains `%VERIFY_ALLOW_BROKEN` → UNSATISFIED
+- Priority string is `NORMAL` + GnuTLS ≥ 3.6.0 → SATISFIED
+- Priority string is `NORMAL` + GnuTLS < 3.6.0 → UNSATISFIED
+
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Priority uses `SECURE128/192/256` | SATISFIED | Strong crypto enforced |
+| Priority uses `%VERIFY_ALLOW_BROKEN` | UNSATISFIED | Weak crypto allowed |
+| `NORMAL` priority, GnuTLS ≥ 3.6.0 | SATISFIED | Modern defaults secure |
+| `NORMAL` priority, GnuTLS < 3.6.0 | UNSATISFIED | Older defaults allow weak |
+| Priority string from variable | CONDITIONAL | Trace variable |
+| GnuTLS version unknown, `NORMAL` priority | UNDETERMINED | Cannot determine version |
+
+---
+
+## R7: Entropy/RNG Initialization
 
 **Meta-Rule(s)**: S3  |  **Priority**: SHOULD
 
@@ -359,7 +408,7 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 
 ---
 
-## R7: Certificate Pinning
+## R8: Certificate Pinning
 
 **Meta-Rule(s)**: O1  |  **Priority**: MAY
 

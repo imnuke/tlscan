@@ -14,8 +14,11 @@ This document defines library-specific security rules for mbedTLS-based TLS clie
 | R4 | M2 | MUST | Protocol Version Enforcement |
 | R5 | M5 | MUST | Cipher Suite Selection |
 | R6 | S1 | SHOULD | Certificate Revocation Checking |
-| R7 | S3 | SHOULD | Entropy/RNG Initialization (CRITICAL for embedded) |
-| R8 | O1 | MAY | Certificate Pinning |
+| R7 | S2 | SHOULD | Cryptographic Strength (Compile-Time) |
+| R8 | S3 | SHOULD | Entropy/RNG Initialization (CRITICAL for embedded) |
+| R9 | O1 | MAY | Certificate Pinning |
+
+**Note**: R7 (S2) is largely controlled at compile-time in mbedTLS through `mbedtls_config.h` settings.
 
 ## Version Detection Hints
 
@@ -365,7 +368,58 @@ if (peer_cert == NULL) {
 
 ---
 
-## R7: Entropy/RNG Initialization (CRITICAL for Embedded)
+## R7: Cryptographic Strength (Compile-Time)
+
+**Meta-Rule(s)**: S2  |  **Priority**: SHOULD
+
+**What to Verify**: Certificates use strong signature algorithms (SHA-256+) and adequate key sizes (RSA 2048+).
+
+**Implementation**:
+- mbedTLS cryptographic strength is primarily controlled at compile-time via `mbedtls_config.h`
+- Runtime control is limited - most strength settings are baked into the binary
+- Check for weak algorithm symbols in the binary
+
+**Compile-Time Configuration Options**:
+| Config Option | Purpose | Secure Setting |
+|--------------|---------|----------------|
+| `MBEDTLS_KEY_EXCHANGE_RSA_ENABLED` | RSA key exchange | Consider disabling (no PFS) |
+| `MBEDTLS_SSL_CBC_RECORD_SPLITTING` | CBC attack mitigation | Enable |
+| `MBEDTLS_TLS_DEFAULT_ALLOW_SHA1_IN_CERTIFICATES` | SHA-1 in certs | Disable (0) |
+| `MBEDTLS_TLS_DEFAULT_ALLOW_SHA1_IN_KEY_EXCHANGE` | SHA-1 in key exchange | Disable (0) |
+
+**Binary Analysis**:
+| Symbol/Function | Indicates |
+|-----------------|-----------|
+| `mbedtls_md5_*` functions | MD5 support compiled in |
+| `mbedtls_sha1_*` functions | SHA-1 support compiled in |
+| `mbedtls_des_*` functions | DES support compiled in (weak) |
+| `mbedtls_sha256_*` functions | SHA-256 support (required) |
+| `mbedtls_sha512_*` functions | SHA-512 support (strong) |
+
+**Default Behavior**:
+| mbedTLS Version | Default | Security |
+|-----------------|---------|----------|
+| 2.x (recent) | SHA-1 in certs allowed by default | CONDITIONAL |
+| 3.x | SHA-1 disabled by default | SATISFIED |
+
+**Detection Patterns**:
+- Binary lacks `mbedtls_md5_*` and weak algorithm symbols → SATISFIED
+- Binary has `mbedtls_sha256_*` and strong algorithms only → SATISFIED
+- Binary includes weak algorithms (MD5, DES) → CONDITIONAL (check if used for TLS)
+- Cannot determine compile-time config → UNDETERMINED
+
+**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
+| Scenario | Result | Reason |
+|----------|--------|--------|
+| Only strong algorithm symbols present | SATISFIED | Weak crypto not available |
+| Weak algorithm symbols present but not used for TLS | CONDITIONAL | May be used for non-TLS purposes |
+| mbedTLS 3.x with defaults | SATISFIED | SHA-1 disabled by default |
+| mbedTLS 2.x with defaults | CONDITIONAL | SHA-1 may be allowed |
+| Cannot analyze compile-time config | UNDETERMINED | Cannot determine strength |
+
+---
+
+## R8: Entropy/RNG Initialization (CRITICAL for Embedded)
 
 **Meta-Rule(s)**: S3  |  **Priority**: SHOULD (CRITICAL for embedded systems)
 
@@ -430,7 +484,7 @@ mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
 
 ---
 
-## R8: Certificate Pinning
+## R9: Certificate Pinning
 
 **Meta-Rule(s)**: O1  |  **Priority**: MAY
 
