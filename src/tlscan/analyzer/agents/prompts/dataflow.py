@@ -66,15 +66,34 @@ The final step (step_type="trace_end") MUST include:
 ```
 
 **For source_kind="config_file":**
+
+When config file PATH is known:
 ```json
 {
   "step_type": "trace_end",
   "description": "Value read from config file",
   "source_kind": "config_file",
-  "config_file": "/etc/upsmon.conf",  // path, filename, or any clue
-  "config_key": "CERTVERIFY"  // optional
+  "config_file": "/etc/upsmon.conf",
+  "config_key": "CERTVERIFY"
 }
 ```
+
+When config file PATH is DYNAMIC (comes from CLI arg, env var, etc.):
+```json
+{
+  "step_type": "trace_end",
+  "description": "Value from config file; path from -f CLI argument",
+  "source_kind": "config_file",
+  "config_file": null,
+  "config_key": "secure-ssl",
+  "config_file_source": "CLI argument -f"
+}
+```
+
+CRITICAL: When config filename is dynamic but you know the config KEY,
+always set `config_key`. This enables searching config files by key content.
+If you can identify candidate filenames (e.g., from binary name patterns),
+list them in `config_file` even if uncertain.
 
 **For source_kind="environment_variable":**
 ```json
