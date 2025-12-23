@@ -1,5 +1,41 @@
 # curl Command-Line SSL/TLS Security Rules
 
+## ⚠️ CRITICAL: curl CLI vs libcurl Disambiguation
+
+**This ruleset is for the `curl` COMMAND-LINE TOOL, NOT the libcurl library.**
+
+| If you find... | It means... | Action |
+|----------------|-------------|--------|
+| `curl_easy_init`, `curl_easy_setopt`, `curl_easy_perform` | **libcurl library** | NOT APPLICABLE - use libcurl rules instead |
+| Strings like `/usr/bin/curl`, `curl -k`, `curl https://` | **curl CLI** | APPLICABLE - analyze these |
+
+**DO NOT analyze libcurl function calls when using this ruleset.**
+If the binary uses libcurl (has `curl_easy_*` imports), this ruleset does NOT apply unless the binary ALSO invokes the `curl` command as an external process.
+
+## Binary Analysis Guidance
+
+When analyzing compiled binaries (ELF files) for curl CLI usage:
+
+1. **FIRST**: Check if binary has curl CLI strings (not libcurl functions)
+   - Use `list_strings_filter(filter="/usr/bin/curl|/bin/curl|curl -|curl --")`
+   - If NO curl command strings found → set `applicable=false`
+
+2. **curl CLI is an EXTERNAL COMMAND, invoked via**:
+   - system(), popen(), execvp(), fork()+exec()
+   - NOT curl_easy_* functions (those are libcurl)
+
+3. **Analysis Flow**:
+   a. Search strings for curl command patterns
+   b. If found: analyze the command-line options in the string
+   c. If not found: binary does not use curl CLI → not applicable
+
+4. **What to look for in strings**:
+   - Command paths: `/usr/bin/curl`, `/bin/curl`
+   - Insecure flags: `-k`, `--insecure`
+   - URLs: `https://`, `http://`
+
+---
+
 This document defines security rules for curl command-line tool usage in scripts and binaries. Each rule references the corresponding meta-rule(s) from `metarule.md`.
 
 ## Meta-Rule Mapping

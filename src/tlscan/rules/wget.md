@@ -37,6 +37,32 @@ This document defines security rules for wget command-line tool usage in scripts
 
 ---
 
+## Binary Analysis Guidance
+
+**CRITICAL**: When analyzing compiled binaries (ELF files) for wget usage:
+
+1. **wget is an EXTERNAL COMMAND, not a library function**
+   - Do NOT search for "wget" in the function list - it won't exist
+   - wget is invoked via system(), popen(), execvp(), or similar
+
+2. **How to Find wget Usage in Binaries**:
+   - Search STRINGS for command paths: `/usr/bin/wget`, `/bin/wget`, `wget `
+   - Use `list_strings_filter(filter="wget")` to find command invocations
+   - Look for strings containing wget arguments: `--no-check-certificate`, `https://`
+
+3. **Analysis Flow for Binaries**:
+   a. Search strings for "wget" patterns
+   b. Find xrefs to these strings to locate calling functions
+   c. Decompile those functions to see how wget command is constructed
+   d. Check for insecure options in the command string
+
+4. **Common Patterns**:
+   - Hardcoded: `system("wget --no-check-certificate https://...")`
+   - Variable: `snprintf(cmd, "wget %s https://...", opts)`
+   - Environment: Command options from environment variables
+
+---
+
 ## R1: TLS Usage Detection
 
 **Meta-Rule(s)**: M1  |  **Priority**: MUST

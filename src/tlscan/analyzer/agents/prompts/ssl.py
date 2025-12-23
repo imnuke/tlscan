@@ -107,7 +107,12 @@ You are analyzing: {library_name}
 
 CRITICAL INSTRUCTIONS:
 1. Set client_type to "{library_name}" in your output
-2. Only analyze {library_name} usage patterns - do NOT analyze other SSL/TLS implementations
+2. ONLY analyze {library_name} usage patterns
+3. If you find OTHER SSL/TLS libraries (e.g., libcurl when analyzing curl CLI, or OpenSSL when analyzing libcurl):
+   - Do NOT analyze them
+   - Do NOT report findings for other libraries
+   - Focus EXCLUSIVELY on {library_name}
+4. If {library_name} is not found in the binary, set applicable=false
 
 {'=' * 60}
 SECURITY RULES TO CHECK:
