@@ -178,28 +178,85 @@ long result = SSL_get_verify_result(ssl);
 if (result != X509_V_OK) { ... }  // Returns X509_V_OK even without cert!
 ```
 
-### Custom Callback Requirements
+### Custom Callback Requirements (SSL_CTX_set_verify)
 
 If a custom verification callback is provided to `SSL_CTX_set_verify()`:
 
+**CRITICAL**: When a custom callback is detected, you MUST:
+1. **Decompile the callback function** to analyze its implementation
+2. **Check the control flow** for error handling patterns
+3. **Identify any error suppression** that bypasses security checks
+
+**Callback Signature**:
+```c
+int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
+```
+- `preverify_ok`: 1 if OpenSSL verification passed, 0 if it failed
+- Return value: 1 to continue handshake, 0 to abort
+
 **Secure Callback Requirements**:
 1. MUST check `preverify_ok` parameter
-2. MUST call `X509_STORE_CTX_get_error()` to retrieve specific error codes
-3. MUST return 0 on any verification failure
-4. MAY return 1 only for intentional policy decisions (e.g., allowing self-signed certs in specific cases)
+2. MUST return 0 when `preverify_ok` is 0 (propagate verification failure)
+3. MUST NOT suppress critical errors without security justification
+4. MAY return 1 for non-critical errors only with documented policy reason
 
-**Insecure Callback Patterns**:
+**Insecure Patterns - UNSATISFIED**:
 ```c
-// FAIL: Returns 1 unconditionally (bypasses all verification)
+// UNSATISFIED: Returns 1 unconditionally (bypasses all verification)
 int callback(int preverify_ok, X509_STORE_CTX *ctx) {
-    return 1;
+    return 1;  // DANGER: Accepts ANY certificate!
 }
 
-// FAIL: Ignores preverify_ok (ignores OpenSSL's verification result)
+// UNSATISFIED: Ignores preverify_ok entirely
 int callback(int preverify_ok, X509_STORE_CTX *ctx) {
-    return my_custom_check(ctx);
+    // Does custom logic without checking preverify_ok
+    return my_custom_check(ctx);  // preverify_ok ignored!
+}
+
+// UNSATISFIED: Suppresses critical errors
+int callback(int preverify_ok, X509_STORE_CTX *ctx) {
+    int err = X509_STORE_CTX_get_error(ctx);
+    if (err == X509_V_ERR_CERT_HAS_EXPIRED ||
+        err == X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN) {
+        return 1;  // DANGER: Suppresses critical security errors!
+    }
+    return preverify_ok;
 }
 ```
+
+**Secure Pattern - SATISFIED**:
+```c
+// SATISFIED: Properly propagates preverify_ok
+int callback(int preverify_ok, X509_STORE_CTX *ctx) {
+    if (!preverify_ok) {
+        int err = X509_STORE_CTX_get_error(ctx);
+        log_error("Certificate verification failed: %s",
+                  X509_verify_cert_error_string(err));
+        return 0;  // Propagate failure
+    }
+    return 1;  // Verification passed
+}
+```
+
+**Critical Errors That Should NEVER Be Suppressed**:
+| Error Code | Constant | Impact if Suppressed |
+|------------|----------|---------------------|
+| 2 | `X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT` | Accepts incomplete chains |
+| 7 | `X509_V_ERR_CERT_SIGNATURE_FAILURE` | Accepts forged certificates |
+| 9 | `X509_V_ERR_CERT_NOT_YET_VALID` | Accepts future-dated certs |
+| 10 | `X509_V_ERR_CERT_HAS_EXPIRED` | Accepts expired certificates |
+| 18 | `X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT` | Accepts self-signed leaf |
+| 19 | `X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN` | Accepts untrusted CA |
+| 20 | `X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY` | Accepts unknown issuer |
+| 23 | `X509_V_ERR_CERT_REVOKED` | Accepts revoked certificates |
+
+**Analysis Instructions**:
+When you detect `SSL_CTX_set_verify(ctx, mode, callback)` with a non-NULL callback:
+1. Decompile the callback function
+2. Check if callback ever returns 1 when `preverify_ok` (first parameter) is 0
+3. Check if callback uses `X509_STORE_CTX_get_error()` to selectively ignore errors
+4. If any critical error (see table above) is suppressed → result is **UNSATISFIED**
+5. If callback always returns 1 regardless of preverify_ok → result is **UNSATISFIED**
 
 ### SSL_CTX_set_cert_verify_callback (Complete Override)
 
@@ -257,7 +314,8 @@ int callback(X509_STORE_CTX *ctx, void *arg) {
 **Detection Patterns**:
 - Functions: `SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_get_verify_result`, `SSL_get_peer_certificate`
 - Complete override: `SSL_CTX_set_cert_verify_callback`, `X509_verify_cert`
-- Constants: `SSL_VERIFY_PEER`, `SSL_VERIFY_NONE`, `X509_V_OK`
+- Callback analysis: `X509_STORE_CTX_get_error`, `X509_verify_cert_error_string`
+- Constants: `SSL_VERIFY_PEER`, `SSL_VERIFY_NONE`, `X509_V_OK`, `X509_V_ERR_*`
 - CA loading: `SSL_CTX_load_verify_locations`, `SSL_CTX_set_default_verify_paths`
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
@@ -270,8 +328,10 @@ int callback(X509_STORE_CTX *ctx, void *arg) {
 | `SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, ...)` without manual check | UNSATISFIED | Verification disabled |
 | `SSL_CTX_set_verify` not called | UNSATISFIED | Default is `SSL_VERIFY_NONE` |
 | Verification mode from runtime variable | CONDITIONAL | Trace variable |
-| Callback always returns 1 | UNSATISFIED | Bypasses all verification |
-| Callback ignores `preverify_ok` | UNSATISFIED | Ignores OpenSSL's verification |
+| `SSL_CTX_set_verify` callback always returns 1 | UNSATISFIED | Bypasses all verification |
+| `SSL_CTX_set_verify` callback ignores `preverify_ok` | UNSATISFIED | Ignores OpenSSL's verification |
+| `SSL_CTX_set_verify` callback suppresses critical errors | UNSATISFIED | Critical errors bypassed |
+| `SSL_CTX_set_verify` callback properly propagates `preverify_ok` | SATISFIED | Verification enforced |
 | No CA certificates loaded | UNSATISFIED | Chain cannot be verified |
 | `SSL_CTX_set_cert_verify_callback` with proper `X509_verify_cert()` check | SATISFIED | Chain verified before custom logic |
 | `SSL_CTX_set_cert_verify_callback` ignoring `X509_verify_cert()` result | UNSATISFIED | Chain verification bypassed |
