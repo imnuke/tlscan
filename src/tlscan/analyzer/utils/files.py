@@ -65,7 +65,7 @@ def load_security_rules(library_name: str = "openssl") -> str:
 
     Args:
         library_name: Name of the SSL/TLS library
-                     (openssl, curl, libcurl, gnutls, mbedtls, php_curl, wget)
+                     (openssl, curl, libcurl, gnutls, mbedtls, php_curl, wget, qsslsocket)
 
     Returns:
         Content of the rules file, or empty string if file not found

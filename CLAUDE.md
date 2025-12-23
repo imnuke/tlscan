@@ -129,7 +129,7 @@ Security rule generator:
 ### `/src/tlscan/rules/`
 Security rule definitions (Markdown), bundled with package:
 - `metarule.md`: RFC-grounded security requirements (MUST/SHOULD/MAY)
-- Library-specific rules: `openssl.md`, `curl.md`, `libcurl.md`, `gnutls.md`, `mbedtls.md`, `wget.md`, `socket.md`, `php_curl.md`
+- Library-specific rules: `openssl.md`, `curl.md`, `libcurl.md`, `gnutls.md`, `mbedtls.md`, `wget.md`, `socket.md`, `php_curl.md`, `qsslsocket.md`
 
 ### `/docs/paper/`
 Academic paper materials for top security conference submission.
@@ -170,7 +170,7 @@ tlscan-detect /path/to/firmware --save-cache
 - `binary_path`: Binary to analyze (optional for --list-threads/--clean-threads)
 - `-m, --model`: LLM model (e.g., `deepseek:deepseek-chat`, `anthropic:claude-sonnet-4-5`)
 - `-f, --firmware-path`: Firmware root (enables cross-binary analysis)
-- `-r, --rules`: Security rule set (`openssl`, `curl`, `libcurl`, `gnutls`, `mbedtls`, `php_curl`, `wget`, `socket`)
+- `-r, --rules`: Security rule set (`openssl`, `curl`, `libcurl`, `gnutls`, `mbedtls`, `php_curl`, `wget`, `socket`, `qsslsocket`)
 
 ## Important Patterns
 
