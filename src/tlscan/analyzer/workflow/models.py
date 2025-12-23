@@ -334,6 +334,15 @@ class TraceStep(BaseModel):
         description="Key name in the config file if known"
     )
 
+    config_file_source: Optional[str] = Field(
+        None,
+        description=(
+            "When config_file path cannot be determined statically, indicates where "
+            "the path comes from. Example: 'CLI argument -f', 'environment variable CONFIG_PATH'. "
+            "If set, the workflow should search for config files by key instead of by filename."
+        )
+    )
+
     # For ENVIRONMENT_VARIABLE:
     env_var_name: Optional[str] = Field(
         None,
@@ -814,6 +823,16 @@ class ConfigFetchTask(BaseModel):
     trace_details: Optional[str] = Field(
         None,
         description="Original trace path and details from dataflow analysis"
+    )
+
+    config_key: Optional[str] = Field(
+        None,
+        description="Config key to search for when filename is unknown"
+    )
+
+    search_mode: str = Field(
+        default="by_file",
+        description="'by_file' (filename known) or 'by_key' (search files for key)"
     )
 
 

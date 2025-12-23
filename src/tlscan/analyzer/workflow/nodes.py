@@ -292,17 +292,59 @@ def create_follow_up_tasks_from_trace(
 
     # Check if this trace needs config fetching
     if source_kind == SourceKind.CONFIG_FILE:
-        config_reference = last_step.config_file or "unknown_config_file"
-        if last_step.config_key:
-            config_reference = f"{config_reference} (key: {last_step.config_key})"
+        config_file = last_step.config_file
+        config_key = last_step.config_key
+        config_file_source = getattr(last_step, 'config_file_source', None)
 
-        config_task = ConfigFetchTask(
-            variable=trace.variable,
-            function=trace.function,
-            config_reference=config_reference,
-            trace_details=str(trace.trace_path)  # Convert to string for storage
-        )
-        config_fetch_tasks.append(config_task)
+        # Find the original variable's security_mapping
+        original_var = next((v for v in variables if v["variable"] == trace.variable and v["function"] == trace.function), None)
+        security_mapping = original_var.get("security_mapping", {}) if original_var else {}
+
+        # Case 1: Config filename is valid - create normal config fetch
+        if _is_valid_config_filename(config_file):
+            config_reference = config_file
+            if config_key:
+                config_reference = f"{config_reference} (key: {config_key})"
+
+            config_task = ConfigFetchTask(
+                variable=trace.variable,
+                function=trace.function,
+                config_reference=config_reference,
+                config_key=config_key,
+                search_mode="by_file",
+                trace_details=str(trace.trace_path)
+            )
+            config_fetch_tasks.append(config_task)
+
+        # Case 2: Config filename unknown/dynamic - run BOTH approaches
+        else:
+            # 2a: If has CLI arg source, trigger script discovery
+            if config_file_source and 'CLI' in config_file_source.upper():
+                script_discovery_task = DataflowTask(
+                    type=TaskType.NEEDS_SCRIPT_DISCOVERY,
+                    target=binary_path if binary_path else "unknown",
+                    variables=[VariableSpec(
+                        variable=trace.variable,
+                        function=trace.function,
+                        function_address=None,
+                        security_mapping=security_mapping,
+                    )],
+                    binary_path=None,
+                    context=f"Find invocations with {config_file_source}, extract config filename. Config key: {config_key}"
+                )
+                new_dataflow_tasks.append(script_discovery_task)
+
+            # 2b: If config key is known, also trigger key-based search
+            if config_key:
+                config_task = ConfigFetchTask(
+                    variable=trace.variable,
+                    function=trace.function,
+                    config_reference=None,
+                    config_key=config_key,
+                    search_mode="by_key",
+                    trace_details=str(trace.trace_path)
+                )
+                config_fetch_tasks.append(config_task)
 
     # Check if this trace comes from command-line arguments
     elif source_kind == SourceKind.COMMAND_LINE_ARG:
@@ -471,6 +513,42 @@ def find_security_mapping_for_trace(
     return None
 
 
+def _is_valid_config_filename(config_file: Optional[str]) -> bool:
+    """Check if config_file looks like a valid filename (not descriptive text).
+
+    Returns False for:
+    - None or empty string
+    - Descriptive text like "Configuration file specified via -f argument"
+    - Obvious placeholders like "unknown_config_file"
+
+    Returns True for:
+    - Actual filenames like "upsmon.conf", "/etc/ssl.conf"
+    - Files without extension that look like config names
+    """
+    if not config_file:
+        return False
+
+    # Reject obvious placeholders and descriptive text
+    invalid_patterns = [
+        "unknown", "configuration file", "config file",
+        "specified via", "from argument", "from env",
+        "command-line", "cli argument"
+    ]
+    lower = config_file.lower()
+    if any(pattern in lower for pattern in invalid_patterns):
+        return False
+
+    # Should look like a filename (has extension, is a path, or ends in common config suffixes)
+    if '/' in config_file:
+        return True  # Path-like
+    if '.' in config_file:
+        return True  # Has extension
+    if config_file.endswith(('rc', 'conf', 'cfg', 'ini', 'yaml', 'yml', 'json')):
+        return True  # Common config suffixes
+
+    return False
+
+
 # ============================================================================
 # Node: Dataflow Analysis
 # ============================================================================
@@ -594,18 +672,62 @@ async def dataflow_analysis_node(
 
             # Check if this trace needs config fetching
             if source_kind == SourceKind.CONFIG_FILE:
-                config_reference = last_step.config_file or "unknown_config_file"
-                if last_step.config_key:
-                    config_reference = f"{config_reference} (key: {last_step.config_key})"
+                config_file = last_step.config_file
+                config_key = last_step.config_key
+                config_file_source = getattr(last_step, 'config_file_source', None)
 
-                config_task = ConfigFetchTask(
-                    variable=trace.variable,
-                    function=trace.function,
-                    config_reference=config_reference,
-                    trace_details=str(trace.trace_path)
-                )
-                config_fetch_tasks.append(config_task)
-                console.print(f"[dim]    → Config fetch needed for {trace.variable} from {config_reference}[/dim]")
+                # Case 1: Config filename is valid - create normal config fetch
+                if _is_valid_config_filename(config_file):
+                    config_reference = config_file
+                    if config_key:
+                        config_reference = f"{config_reference} (key: {config_key})"
+
+                    config_task = ConfigFetchTask(
+                        variable=trace.variable,
+                        function=trace.function,
+                        config_reference=config_reference,
+                        config_key=config_key,
+                        search_mode="by_file",
+                        trace_details=str(trace.trace_path)
+                    )
+                    config_fetch_tasks.append(config_task)
+                    console.print(f"[dim]    → Config fetch needed for {trace.variable} from {config_reference}[/dim]")
+
+                # Case 2: Config filename unknown/dynamic - run BOTH approaches in parallel
+                else:
+                    # 2a: If has CLI arg source, trigger script discovery
+                    if config_file_source and 'CLI' in config_file_source.upper():
+                        cli_variables = [VariableSpec(
+                            variable=trace.variable,
+                            function=trace.function,
+                            security_mapping=security_mapping,
+                        )]
+
+                        script_discovery_task = DataflowTask(
+                            type=TaskType.NEEDS_SCRIPT_DISCOVERY,
+                            target=binary_path or state.get("main_binary_path"),
+                            variables=cli_variables,
+                            context=f"Find invocations with {config_file_source}, extract config filename. Config key: {config_key}"
+                        )
+                        new_dataflow_tasks.append(script_discovery_task)
+                        console.print(f"[dim]    → Script discovery needed for {config_file_source}[/dim]")
+
+                    # 2b: If config key is known, also trigger key-based search
+                    if config_key:
+                        config_task = ConfigFetchTask(
+                            variable=trace.variable,
+                            function=trace.function,
+                            config_reference=None,
+                            config_key=config_key,
+                            search_mode="by_key",
+                            trace_details=str(trace.trace_path)
+                        )
+                        config_fetch_tasks.append(config_task)
+                        console.print(f"[dim]    → Config key search needed for key '{config_key}'[/dim]")
+
+                    # If neither approach is viable, log warning
+                    if not (config_file_source and 'CLI' in config_file_source.upper()) and not config_key:
+                        console.print(f"[yellow]⚠ Cannot resolve config: no filename, no key, no source info[/yellow]")
 
             # Check if this trace requires cross-binary analysis
             elif source_kind == SourceKind.EXTERNAL_CALL:
@@ -880,6 +1002,56 @@ async def _process_script_discovery(
         return remaining_tasks, None, result.details, metrics
 
 
+def _add_config_trace_to_graph(
+    task: ConfigFetchTask,
+    fetched_value: Optional[str],
+    config_path: str,
+    traces: Dict[str, VariableTrace],
+    rule_trace_links: Dict[str, RuleTraceLink],
+) -> None:
+    """Helper to add a config fetch result to the trace graph."""
+    condition_key = f"{task.function}:{task.variable}"
+
+    # Create config trace
+    config_trace = VariableTrace(
+        trace_type=TraceType.CONFIG_FILE,
+        source_path=config_path,
+        function=task.function,
+        variable=task.variable,
+        value=fetched_value,
+        resolving_status=TraceResolvingStatus.RESOLVED if fetched_value else TraceResolvingStatus.CANNOT_RESOLVE,
+    )
+
+    # Find parent trace ID from the condition
+    parent_trace_id = None
+    if condition_key in rule_trace_links:
+        link = rule_trace_links[condition_key]
+        # Find traces that need this config continuation
+        for root_id in link.root_trace_ids:
+            root_trace = traces.get(root_id)
+            if root_trace and root_trace.trace_path:
+                last_step = root_trace.trace_path[-1]
+                if (last_step.step_type == TraceStepType.TRACE_END and
+                    last_step.source_kind == SourceKind.CONFIG_FILE):
+                    parent_trace_id = root_id
+                    break
+
+    # Add to trace graph
+    trace_id = add_trace_to_graph(traces, config_trace, parent_trace_id=parent_trace_id)
+
+    # If no parent found, add as root trace
+    if not parent_trace_id:
+        if condition_key not in rule_trace_links:
+            rule_trace_links[condition_key] = RuleTraceLink(
+                condition_key=condition_key,
+                root_trace_ids=[trace_id],
+            )
+        elif trace_id not in rule_trace_links[condition_key].root_trace_ids:
+            rule_trace_links[condition_key].root_trace_ids.append(trace_id)
+
+    console.print(f"[dim]    ✓ {task.variable} = {fetched_value or '(not found)'}[/dim]")
+
+
 async def _process_config_fetch(
     config_fetch_tasks: List[ConfigFetchTask],
     firmware_agent,
@@ -887,6 +1059,10 @@ async def _process_config_fetch(
     rule_trace_links: Dict[str, RuleTraceLink],
 ) -> tuple[Dict[str, VariableTrace], Dict[str, RuleTraceLink], str, AgentMetrics]:
     """Process config fetch tasks and update unified trace graph.
+
+    Supports two search modes:
+    - by_file: Config filename is known, fetch value from specific file
+    - by_key: Config filename unknown, search for files containing the key
 
     Args:
         config_fetch_tasks: Tasks that need config value fetching
@@ -897,98 +1073,114 @@ async def _process_config_fetch(
     Returns:
         Tuple of (updated_traces, updated_rule_trace_links, firmware_details, metrics)
     """
-    console.print(f"[dim]  Fetching config values: {len(config_fetch_tasks)} tasks[/dim]")
+    # Split tasks by search mode
+    file_tasks = [t for t in config_fetch_tasks if t.search_mode == "by_file"]
+    key_tasks = [t for t in config_fetch_tasks if t.search_mode == "by_key"]
 
-    # Build structured request with explicit constraints
-    config_requests = []
-    for task in config_fetch_tasks:
-        config_ref = task.config_reference or "configuration file"
-        config_requests.append(f"  - {config_ref}")
+    all_details = []
+    total_metrics = create_empty_metrics()
 
-    request = (
-        f"CONFIG FETCH TASK:\n\n"
-        f"Extract the following configuration values from their respective files:\n"
-        + "\n".join(config_requests) + "\n\n"
-        f"INSTRUCTIONS:\n"
-        f"1. Find and read ONLY the specified config files\n"
-        f"2. Extract ONLY the specified keys from each file\n"
-        f"3. Use empty string (\"\") for keys not found in the file\n"
-        f"4. STOP after reading the files - do NOT search binaries or other configs\n"
-    )
-    messages = [HumanMessage(content=request)]
+    # Process file-based tasks (existing logic)
+    if file_tasks:
+        console.print(f"[dim]  Fetching config values by file: {len(file_tasks)} tasks[/dim]")
 
-    result, metrics = await stream_and_log_agent(
-        agent=firmware_agent,
-        messages=messages,
-        agent_name="Firmware Agent",
-        agent_emoji="📂",
-        output_model=FirmwareSearchResult
-    )
+        config_requests = []
+        for task in file_tasks:
+            config_ref = task.config_reference or "configuration file"
+            config_requests.append(f"  - {config_ref}")
 
-    # Validation: warn if agent returned unexpected results for config fetch
-    if result.executables and len(result.executables) > 0:
-        console.print(
-            f"[yellow]⚠ Warning: Config fetch returned {len(result.executables)} binaries. "
-            f"This suggests the agent did unnecessary searches.[/yellow]"
+        request = (
+            f"CONFIG FETCH TASK:\n\n"
+            f"Extract the following configuration values from their respective files:\n"
+            + "\n".join(config_requests) + "\n\n"
+            f"INSTRUCTIONS:\n"
+            f"1. Find and read ONLY the specified config files\n"
+            f"2. Extract ONLY the specified keys from each file\n"
+            f"3. Use empty string (\"\") for keys not found in the file\n"
+            f"4. STOP after reading the files - do NOT search binaries or other configs\n"
         )
+        messages = [HumanMessage(content=request)]
 
-    if result.found and result.config_values:
-        console.print(f"[green]✓ Found {len(result.config_values)} config values[/green]")
+        result, metrics = await stream_and_log_agent(
+            agent=firmware_agent,
+            messages=messages,
+            agent_name="Firmware Agent",
+            agent_emoji="📂",
+            output_model=FirmwareSearchResult
+        )
+        total_metrics = add_metrics(total_metrics, metrics)
 
-        for task in config_fetch_tasks:
-            condition_key = f"{task.function}:{task.variable}"
-
-            # Extract config file path from config_reference
-            config_path = task.config_reference or "unknown_config"
-            if " (key:" in config_path:
-                config_path = config_path.split(" (key:")[0].strip()
-
-            # Get the fetched value for this variable
-            fetched_value = result.config_values.get(task.variable)
-
-            # Create config trace
-            config_trace = VariableTrace(
-                trace_type=TraceType.CONFIG_FILE,
-                source_path=config_path,
-                function=task.function,
-                variable=task.variable,
-                value=fetched_value,
-                resolving_status=TraceResolvingStatus.RESOLVED if fetched_value else TraceResolvingStatus.CANNOT_RESOLVE,
+        # Validation: warn if agent returned unexpected results
+        if result.executables and len(result.executables) > 0:
+            console.print(
+                f"[yellow]⚠ Warning: Config fetch returned {len(result.executables)} binaries. "
+                f"This suggests the agent did unnecessary searches.[/yellow]"
             )
 
-            # Find parent trace ID from the condition
-            parent_trace_id = None
-            if condition_key in rule_trace_links:
-                link = rule_trace_links[condition_key]
-                # Find traces that need this config continuation
-                for root_id in link.root_trace_ids:
-                    root_trace = traces.get(root_id)
-                    if root_trace and root_trace.trace_path:
-                        last_step = root_trace.trace_path[-1]
-                        if (last_step.step_type == TraceStepType.TRACE_END and
-                            last_step.source_kind == SourceKind.CONFIG_FILE):
-                            parent_trace_id = root_id
-                            break
+        if result.found and result.config_values:
+            console.print(f"[green]✓ Found {len(result.config_values)} config values (by file)[/green]")
 
-            # Add to trace graph
-            trace_id = add_trace_to_graph(traces, config_trace, parent_trace_id=parent_trace_id)
+            for task in file_tasks:
+                # Extract config file path from config_reference
+                config_path = task.config_reference or "unknown_config"
+                if " (key:" in config_path:
+                    config_path = config_path.split(" (key:")[0].strip()
 
-            # If no parent found, add as root trace
-            if not parent_trace_id:
-                if condition_key not in rule_trace_links:
-                    rule_trace_links[condition_key] = RuleTraceLink(
-                        condition_key=condition_key,
-                        root_trace_ids=[trace_id],
-                    )
-                elif trace_id not in rule_trace_links[condition_key].root_trace_ids:
-                    rule_trace_links[condition_key].root_trace_ids.append(trace_id)
+                # Get the fetched value - try variable name first, then config_key
+                fetched_value = result.config_values.get(task.variable)
+                if not fetched_value and task.config_key:
+                    fetched_value = result.config_values.get(task.config_key)
 
-            console.print(f"[dim]    ✓ {task.variable} = {fetched_value or '(not found)'}[/dim]")
+                _add_config_trace_to_graph(task, fetched_value, config_path, traces, rule_trace_links)
 
-        return traces, rule_trace_links, result.details, metrics
-    else:
-        console.print(f"[yellow]⚠ No config values found[/yellow]")
-        return traces, rule_trace_links, result.details, metrics
+            all_details.append(result.details)
+        else:
+            console.print(f"[yellow]⚠ No config values found (by file)[/yellow]")
+            all_details.append(result.details if result else "No results")
+
+    # Process key-based tasks (search by key when filename unknown)
+    if key_tasks:
+        keys = [t.config_key for t in key_tasks if t.config_key]
+        console.print(f"[dim]  Searching config files by key: {', '.join(keys)}[/dim]")
+
+        request = (
+            f"CONFIG KEY SEARCH TASK:\n\n"
+            f"The config filename is UNKNOWN. Search for config files containing these keys:\n"
+            + "\n".join([f"  - {k}" for k in keys]) + "\n\n"
+            f"INSTRUCTIONS:\n"
+            f"1. Search common config patterns (*.conf, *.cfg, *.ini, *.yaml, *.json) for these keys\n"
+            f"2. Read matching files and extract the value for each key\n"
+            f"3. Return all findings in config_values (key: value)\n"
+            f"4. If not found, return found=false with details about what was searched\n"
+            f"5. NEVER ask questions - always work with available information\n"
+        )
+        messages = [HumanMessage(content=request)]
+
+        result, metrics = await stream_and_log_agent(
+            agent=firmware_agent,
+            messages=messages,
+            agent_name="Firmware Agent (key search)",
+            agent_emoji="🔍",
+            output_model=FirmwareSearchResult
+        )
+        total_metrics = add_metrics(total_metrics, metrics)
+
+        if result.found and result.config_values:
+            console.print(f"[green]✓ Found {len(result.config_values)} config values (by key)[/green]")
+
+            for task in key_tasks:
+                # Get value by config_key
+                fetched_value = result.config_values.get(task.config_key)
+                config_path = f"key_search:{task.config_key}"
+
+                _add_config_trace_to_graph(task, fetched_value, config_path, traces, rule_trace_links)
+
+            all_details.append(result.details)
+        else:
+            console.print(f"[yellow]⚠ No config values found (by key)[/yellow]")
+            all_details.append(result.details if result else "No results")
+
+    return traces, rule_trace_links, "\n".join(all_details), total_metrics
 
 
 # ============================================================================
