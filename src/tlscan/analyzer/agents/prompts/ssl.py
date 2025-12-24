@@ -85,6 +85,24 @@ CRITICAL for conditions:
 - The dataflow agent will search for these exact variable names in the code
 - Example: If code shows "if (v20 != 0)" or "if [ $SSL_VERIFY ]", use the actual variable name
 
+WHAT IS A VALID CONDITION (when to use CONDITIONAL):
+- ONLY use CONDITIONAL when the security outcome depends on a RUNTIME VARIABLE from the analyzed code
+- Valid condition examples:
+  - Code variable: "v20", "a1", "$VERIFY_FLAG" that control SSL options
+  - Function parameter: "param1" passed to SSL configuration function
+  - Config file variable: File path from code that needs content analysis
+- INVALID condition examples (these are NOT traceable):
+  - Backend defaults: "OpenSSL_default_ciphers", "backend_tls_version"
+  - System settings: "system_ca_bundle", "os_tls_config"
+  - Abstract concepts: "cipher_strength", "verification_mode"
+
+WHEN TO USE BACKEND/VERSION TABLES INSTEAD OF CONDITIONAL:
+- If no option is set AND the behavior depends on library/backend version:
+  1. Check the "Backend Defaults" or "Version Defaults" table in the rules
+  2. If backend version IS detected → use SATISFIED/UNSATISFIED based on table
+  3. If backend version is UNKNOWN → use UNDETERMINED
+  4. NEVER use CONDITIONAL for backend-dependent defaults (they're not code variables)
+
 RESULT TYPE RULES:
 - SATISFIED: Option set to secure value, OR option not set and default is secure
 - UNSATISFIED: Option set to insecure value, OR option not set and default is insecure
