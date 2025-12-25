@@ -1,0 +1,19 @@
+{
+  // Disable syntax checking/diagnostics in examples by preventing language mode activation.
+  // "files.associations": {
+    // "**/examples/**": "plaintext"
+  // },
+
+  // Optional: reduce background processing
+  "files.watcherExclude": {
+    "**/examples/**": true
+  },
+  "search.exclude": {
+    "**/examples/**": true
+  },
+  // Keep C highlighting, but stop C/C++ extension from reporting diagnostics here.
+  "C_Cpp.errorSquiggles": "disabled",
+
+  // Optional: also stop IntelliSense engine for this root (fewer background parses).
+  "C_Cpp.intelliSenseEngine": "disabled"
+}
