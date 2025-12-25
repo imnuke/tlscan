@@ -263,7 +263,7 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 - `--ciphers 'HIGH:!aNULL:!eNULL'` → SATISFIED (strong ciphers)
 - `--secure-protocol=PFS` → SATISFIED (forward secrecy)
 - `--ciphers` containing `NULL`, `EXPORT`, `RC4` → UNSATISFIED
-- No cipher option → CONDITIONAL (uses backend default)
+- No cipher option → Use Backend Defaults table (R5) to determine result
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -271,8 +271,10 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | Strong cipher string configured | SATISFIED | Weak ciphers excluded |
 | `--secure-protocol=PFS` | SATISFIED | Forward secrecy enforced |
 | Cipher string contains weak ciphers | UNSATISFIED | Insecure ciphers allowed |
-| No cipher configuration | CONDITIONAL | Uses backend default |
-| Cipher string from variable | CONDITIONAL | Trace variable |
+| No cipher config, backend with secure defaults (OpenSSL 3.0+, GnuTLS 3.6+) | SATISFIED | Backend enforces strong ciphers |
+| No cipher config, backend with weak defaults (OpenSSL <3.0) | UNSATISFIED | Backend allows weak ciphers |
+| No cipher config, backend unknown | UNDETERMINED | Cannot determine cipher security |
+| Cipher string from code variable | CONDITIONAL | Trace variable |
 
 ---
 
