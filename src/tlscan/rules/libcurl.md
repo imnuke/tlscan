@@ -16,7 +16,7 @@ This document defines library-specific security rules for libcurl-based TLS clie
 | R8 | O1 | MAY | Certificate Pinning |
 
 **Notes**:
-- Entropy/RNG (S3) is not applicable to libcurl as it relies on the underlying SSL backend (OpenSSL, NSS, etc.).
+- Entropy/RNG (S3) is not applicable to libcurl: there are no libcurl options to configure entropy, and RNG initialization is entirely internal to the SSL backend with nothing observable at the libcurl layer. In contrast, R7 (S2) is analyzable because backend version determines cryptographic strength defaults (e.g., OpenSSL 3.0+ enforces SHA-256+, RSA 2048+).
 - R7 (S2) is backend-dependent - libcurl relies on the SSL backend for cryptographic strength enforcement.
 
 ## Binary Analysis Reference
