@@ -51,7 +51,7 @@ This document defines security rules for curl command-line tool usage in scripts
 | R7 | O1 | MAY | Certificate Pinning |
 
 **Notes**:
-- Entropy/RNG (S3) is not applicable to curl CLI as it relies on the underlying SSL backend.
+- Entropy/RNG (S3) is not applicable to curl CLI: there are no curl options to configure entropy, and RNG initialization is entirely internal to the SSL backend with nothing observable at the curl layer. In contrast, R6 (S2) is analyzable because backend version determines cryptographic strength defaults (e.g., OpenSSL 3.0+ enforces SHA-256+, RSA 2048+).
 - R2 combines M3 and M4 because `--insecure`/`-k` disables both certificate chain verification AND hostname verification simultaneously.
 - R6 (S2) is backend-dependent - curl relies on the SSL backend for cryptographic strength enforcement.
 
