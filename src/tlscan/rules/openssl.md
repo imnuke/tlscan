@@ -508,6 +508,14 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 | `"ALL"` or `"DEFAULT"` without exclusions | INSECURE |
 | `"eNULL"` / `"aNULL"` / `"LOW"` / `"EXPORT"` | INSECURE |
 
+**Default Cipher Suite Behavior (Version-Dependent)**:
+| OpenSSL Version | Default Cipher String | Security |
+|-----------------|----------------------|----------|
+| 3.0+ | Secure defaults, weak excluded | SECURE |
+| 1.1.1 | DEFAULT (excludes weak) | SECURE |
+| 1.0.x | DEFAULT (may include weak) | INSECURE |
+| < 1.0 | May include export ciphers | INSECURE |
+
 **Detection Patterns**:
 - Functions: `SSL_CTX_set_cipher_list`, `SSL_CTX_set_ciphersuites`, `SSL_get_cipher_name`
 - Vulnerability: No cipher restriction or weak cipher string
@@ -517,7 +525,9 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 |----------|--------|--------|
 | Cipher string excludes NULL, EXPORT, RC4, weak ciphers | SATISFIED | Strong ciphers only |
 | `SSL_CTX_set_cipher_list(ctx, "ALL")` | UNSATISFIED | Allows weak ciphers |
-| No cipher restrictions set | SATISFIED | OpenSSL default excludes weak ciphers (see Version Defaults) |
+| No cipher restrictions + OpenSSL 1.1.1+ | SATISFIED | Modern defaults exclude weak ciphers |
+| No cipher restrictions + OpenSSL < 1.1.1 | UNSATISFIED | May include weak ciphers |
+| No cipher restrictions + version unknown | UNDETERMINED | Cannot determine defaults |
 | Cipher string from config/env | CONDITIONAL | Trace the value |
 | TLS 1.3 only (OpenSSL 1.1.1+) | SATISFIED | TLS 1.3 has no weak ciphers |
 

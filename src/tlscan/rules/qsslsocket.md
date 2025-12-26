@@ -292,12 +292,21 @@ void handleErrors(const QList<QSslError> &errors) {
 | 13 | `TlsV1_3OrLater` | SECURE |
 | -1 | `UnknownProtocol` | INSECURE (negotiation may fail) |
 
-**Default Behavior**:
-| Qt Version | SecureProtocols Includes | Security |
-|------------|-------------------------|----------|
-| < 5.12 | TLS 1.0 - 1.2 | CONDITIONAL |
-| 5.12+ | TLS 1.0 - 1.3 | CONDITIONAL |
-| 5.15+ | Typically TLS 1.2+ | SECURE |
+**Default Behavior (Version-Dependent)**:
+| Qt Version | SecureProtocols Includes | Default Min TLS | Security |
+|------------|-------------------------|-----------------|----------|
+| 6.2+ | TLS 1.2+ | TLS 1.2 | SECURE |
+| 5.15 - 6.1 | TLS 1.2+ | TLS 1.2 | SECURE |
+| 5.12 - 5.14 | TLS 1.0 - 1.3 | TLS 1.0 | INSECURE |
+| < 5.12 | TLS 1.0 - 1.2 | TLS 1.0 | INSECURE |
+
+**Protocol Resolution (when no `setProtocol` call found)**:
+1. If explicit `setProtocol(TlsV1_2)` or higher → SATISFIED
+2. If explicit `setProtocol(TlsV1_0)` or `AnyProtocol` → UNSATISFIED
+3. If no setProtocol and Qt 5.15+ detected → SATISFIED (SecureProtocols defaults to TLS 1.2+)
+4. If no setProtocol and Qt 5.12-5.14 detected → UNSATISFIED (allows TLS 1.0)
+5. If no setProtocol and Qt < 5.12 detected → UNSATISFIED (allows TLS 1.0)
+6. If no setProtocol and Qt version unknown → UNDETERMINED
 
 **Note**: The exact protocols included in `SecureProtocols` depend on the underlying TLS backend configuration.
 
@@ -310,17 +319,20 @@ void handleErrors(const QList<QSslError> &errors) {
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Default (no `setProtocol` call) + Qt 5.15+ | SATISFIED | SecureProtocols defaults to TLS 1.2+ |
+| Default + Qt 5.12-5.14 detected | UNSATISFIED | Allows TLS 1.0 by default |
+| Default + Qt < 5.12 detected | UNSATISFIED | Allows TLS 1.0 by default |
+| Default + Qt version unknown | UNDETERMINED | Cannot determine Qt version |
 | `setProtocol(QSsl::TlsV1_2)` | SATISFIED | TLS 1.2 enforced |
 | `setProtocol(QSsl::TlsV1_2OrLater)` | SATISFIED | TLS 1.2+ enforced |
 | `setProtocol(QSsl::TlsV1_3)` | SATISFIED | TLS 1.3 only |
-| `setProtocol(QSsl::SecureProtocols)` | SATISFIED | Uses Qt's secure default |
+| `setProtocol(QSsl::SecureProtocols)` + Qt 5.15+ | SATISFIED | Uses Qt's secure default |
+| `setProtocol(QSsl::SecureProtocols)` + Qt < 5.15 | UNSATISFIED | May allow TLS 1.0 |
 | `setProtocol(QSsl::TlsV1_0)` or value 0 | UNSATISFIED | TLS 1.0 only |
 | `setProtocol(QSsl::TlsV1_1)` or value 1 | UNSATISFIED | TLS 1.1 only |
 | `setProtocol(QSsl::AnyProtocol)` or value 3 | UNSATISFIED | Allows negotiation to old protocols |
 | `setProtocol(QSsl::TlsV1_0OrLater)` or value 5 | UNSATISFIED | Allows TLS 1.0 |
 | `setProtocol(QSsl::TlsV1_1OrLater)` or value 6 | UNSATISFIED | Allows TLS 1.1 |
 | Protocol from runtime variable | CONDITIONAL | Trace variable |
-| Default + Qt < 5.15 | UNDETERMINED | Backend-dependent |
 
 ---
 
