@@ -35,37 +35,6 @@ class DetectionMethod(str, Enum):
     BOTH = "both"
 
 
-class BackendConfig(BaseModel):
-    """Extracted backend TLS configuration from firmware config files."""
-
-    min_protocol: Optional[str] = Field(
-        default=None, description="Minimum TLS protocol (e.g., 'TLSv1.2')"
-    )
-    max_protocol: Optional[str] = Field(
-        default=None, description="Maximum TLS protocol (e.g., 'TLSv1.3')"
-    )
-    config_source: Optional[str] = Field(
-        default=None, description="Path to config file (relative to firmware root)"
-    )
-
-
-class BackendInfo(BaseModel):
-    """SSL/TLS backend information for curl/libcurl."""
-
-    name: str = Field(description="Backend name (e.g., OpenSSL, GnuTLS)")
-    version: Optional[str] = Field(default=None, description="Backend version if detected")
-    confidence: ConfidenceLevel = Field(
-        default=ConfidenceLevel.MEDIUM, description="Detection confidence"
-    )
-    detection_method: str = Field(
-        default="dynamic_linking",
-        description="How backend was detected (dynamic_linking, symbols, version_string)",
-    )
-    config: Optional[BackendConfig] = Field(
-        default=None, description="Extracted TLS config from firmware config files"
-    )
-
-
 class VersionInfo(BaseModel):
     """Library version information."""
 
@@ -75,9 +44,6 @@ class VersionInfo(BaseModel):
     details: Optional[str] = Field(default=None, description="Additional version details")
     source_path: Optional[str] = Field(
         default=None, description="Path to library file (for firmware libs)"
-    )
-    backend: Optional[BackendInfo] = Field(
-        default=None, description="SSL backend info (for curl/libcurl)"
     )
 
 

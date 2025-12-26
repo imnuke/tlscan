@@ -1,7 +1,7 @@
 """TLS/SSL scanner module.
 
 This module provides two main capabilities:
-1. **lib_scan**: Scan firmware for TLS libraries and tools, detect versions and backends
+1. **lib_scan**: Scan firmware for TLS libraries and tools, detect versions
 2. **client_scan**: Find programs that use TLS as clients
 
 Usage:
@@ -26,10 +26,6 @@ from .lib_scan import (
     scan_libraries,
     find_library_files,
     detect_library_version,
-    detect_ssl_backend,
-    BackendInfo,
-    CURL_BACKEND_SYMBOLS,
-    BACKEND_NAMES,
 )
 
 # ============================================================================
@@ -55,7 +51,6 @@ from .models import (
     ScanResult,
     DetectionResult,
     VersionInfo,
-    BackendInfo as BackendInfoModel,
     ConfidenceLevel,
     FileType,
     DetectionMethod,
@@ -79,10 +74,6 @@ __all__ = [
     "scan_libraries",
     "find_library_files",
     "detect_library_version",
-    "detect_ssl_backend",
-    "BackendInfo",
-    "CURL_BACKEND_SYMBOLS",
-    "BACKEND_NAMES",
     # Task 2: Client scanning
     "scan_file",
     "scan_clients",
@@ -99,7 +90,6 @@ __all__ = [
     "ScanResult",
     "DetectionResult",
     "VersionInfo",
-    "BackendInfoModel",
     "ConfidenceLevel",
     "FileType",
     "DetectionMethod",

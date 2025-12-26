@@ -1,7 +1,7 @@
 """Library file discovery in firmware.
 
 Provides functions to find TLS library files and CLI tools in firmware
-directories, and scan them for versions and backends.
+directories, and scan them for versions.
 """
 
 import logging
@@ -14,8 +14,6 @@ from .versions import (
     parse_verneed_version,
     confidence_rank,
 )
-from .backends import detect_ssl_backend
-from .configs import extract_backend_config
 
 logger = logging.getLogger(__name__)
 
@@ -75,18 +73,17 @@ def find_library_files(root: str) -> Dict[str, List[Path]]:
 
 
 def scan_libraries(root: str) -> Dict[str, Dict[str, Any]]:
-    """Scan firmware for TLS libraries and tools, detecting versions and backends.
+    """Scan firmware for TLS libraries and tools, detecting versions.
 
     This is the main entry point for library scanning. It:
     1. Finds library files and CLI tools in the firmware
     2. Detects their versions using multiple methods
-    3. Detects SSL backends for curl/libcurl
 
     Args:
         root: Firmware root directory path
 
     Returns:
-        Dict mapping library types to version/backend info dicts
+        Dict mapping library types to version info dicts
     """
     result: Dict[str, Dict[str, Any]] = {}
     root_path = Path(root)
@@ -140,54 +137,6 @@ def scan_libraries(root: str) -> Dict[str, Dict[str, Any]]:
                         "details": f"Exported versions: {', '.join(verdef_versions[:5])}",
                     }
                     break
-
-    # Detect SSL backend for curl-related binaries
-    for lib_type in ["libcurl", "curl_cli", "wget_cli"]:
-        if lib_type in result:
-            source_path = result[lib_type].get("source_path", "")
-            if source_path:
-                lib_path = root_path / source_path
-                if lib_path.exists():
-                    backend = detect_ssl_backend(str(lib_path))
-                    if backend:
-                        backend_data: Dict[str, Any] = {
-                            "name": backend.name,
-                            "version": backend.version,
-                            "confidence": backend.confidence,
-                            "detection_method": backend.detection_method,
-                        }
-                        # Extract backend config from firmware
-                        backend_config = extract_backend_config(root, backend.name)
-                        if backend_config:
-                            backend_data["config"] = {
-                                "min_protocol": backend_config.min_protocol,
-                                "max_protocol": backend_config.max_protocol,
-                                "config_source": backend_config.config_source,
-                            }
-                        result[lib_type]["backend"] = backend_data
-
-    # Cross-reference backend versions with detected library versions
-    backend_to_lib = {
-        "OpenSSL": "openssl",
-        "GnuTLS": "gnutls",
-        "mbedTLS": "mbedtls",
-        "wolfSSL": "wolfssl",
-        "NSS": "nss",
-    }
-
-    for lib_type in ["libcurl", "curl_cli", "wget_cli"]:
-        if lib_type in result and "backend" in result[lib_type]:
-            backend = result[lib_type]["backend"]
-            if not backend.get("version"):
-                backend_name = backend.get("name", "")
-                lib_key = backend_to_lib.get(backend_name)
-                if lib_key and lib_key in result:
-                    backend["version"] = result[lib_key].get("version")
-
-    # Inherit backend for curl_cli from libcurl if not detected
-    if "curl_cli" in result and "backend" not in result["curl_cli"]:
-        if "libcurl" in result and "backend" in result["libcurl"]:
-            result["curl_cli"]["backend"] = result["libcurl"]["backend"].copy()
 
     logger.info(f"Scanned {root}: found {len(result)} library types")
     return result

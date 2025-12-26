@@ -38,6 +38,7 @@ def format_status_badge(status: RuleResultStatus) -> str:
         RuleResultStatus.UNSATISFIED: "[red]❌ UNSATISFIED[/red]",
         RuleResultStatus.CONDITIONAL: "[yellow]⚠️ CONDITIONAL[/yellow]",
         RuleResultStatus.UNDETERMINED: "[dim]❓ UNDETERMINED[/dim]",
+        RuleResultStatus.DEFAULT: "[cyan]⚙️ DEFAULT[/cyan]",
     }
     return badges.get(status, f"[white]{status.value.upper()}[/white]")
 
@@ -72,6 +73,7 @@ def get_border_color(status: RuleResultStatus) -> str:
         RuleResultStatus.UNSATISFIED: "red",
         RuleResultStatus.CONDITIONAL: "yellow",
         RuleResultStatus.UNDETERMINED: "dim",
+        RuleResultStatus.DEFAULT: "cyan",
     }
     return colors.get(status, "white")
 
@@ -150,6 +152,7 @@ def display_summary(console: Console, stats: Dict[str, int], statistics: Dict[st
     table.add_row("[red]❌ Unsatisfied[/red]", f"[red]{stats.get('unsatisfied', 0)}[/red]")
     table.add_row("[yellow]⚠️ Conditional[/yellow]", f"[yellow]{stats.get('conditional', 0)}[/yellow]")
     table.add_row("[dim]❓ Undetermined[/dim]", f"[dim]{stats.get('undetermined', 0)}[/dim]")
+    table.add_row("[cyan]⚙️ Default[/cyan]", f"[cyan]{stats.get('default', 0)}[/cyan]")
     table.add_row("Variables Traced", str(stats.get("trace_count", 0)))
     table.add_row("Cross-Binary Traces", str(stats.get("cross_binary_count", 0)))
 

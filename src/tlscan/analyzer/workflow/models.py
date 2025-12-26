@@ -20,6 +20,7 @@ class RuleResultStatus(str, Enum):
     SATISFIED = "satisfied"
     UNSATISFIED = "unsatisfied"
     CONDITIONAL = "conditional"
+    DEFAULT = "default"  # Rule follows library default behavior - not explicitly configured
 
 class SourceKind(str, Enum):
     """What kind of source was found at TRACE_END step."""
@@ -545,59 +546,6 @@ class VersionDetectionMethod(str, Enum):
     NONE = "none"                        # No specific detection method
 
 
-class BackendDetectionMethod(str, Enum):
-    """Method used to detect SSL backend for curl/libcurl."""
-
-    VERSION_STRING = "version_string"    # From embedded version string (e.g., "libcurl/7.73.0 OpenSSL/1.1.1")
-    DYNAMIC_LINKING = "dynamic_linking"  # From ELF DT_NEEDED entries
-    SYMBOLS = "symbols"                  # From curl backend-specific symbols
-
-
-class BackendConfig(BaseModel):
-    """Backend TLS config extracted from firmware (e.g., openssl.cnf)."""
-
-    min_protocol: Optional[str] = Field(
-        None, description="Minimum TLS protocol (e.g., 'TLSv1.2')"
-    )
-    max_protocol: Optional[str] = Field(
-        None, description="Maximum TLS protocol (e.g., 'TLSv1.3')"
-    )
-    config_source: Optional[str] = Field(
-        None, description="Config file path relative to firmware root"
-    )
-
-
-class SSLBackend(BaseModel):
-    """
-    SSL/TLS backend information for curl/libcurl binaries.
-
-    Detected from dynamic linking, internal symbols, or version strings.
-    """
-
-    name: str = Field(
-        description="Backend display name (e.g., 'OpenSSL', 'GnuTLS', 'mbedTLS')"
-    )
-
-    version: Optional[str] = Field(
-        None,
-        description="Backend version if detectable (e.g., '1.1.1w')"
-    )
-
-    confidence: VersionConfidence = Field(
-        default=VersionConfidence.NONE,
-        description="Confidence level of backend detection"
-    )
-
-    detection_method: BackendDetectionMethod = Field(
-        default=BackendDetectionMethod.DYNAMIC_LINKING,
-        description="Method used to detect the backend"
-    )
-
-    config: Optional[BackendConfig] = Field(
-        None, description="TLS config from firmware config files"
-    )
-
-
 class LibraryVersion(BaseModel):
     """
     Version information for a detected library.
@@ -660,11 +608,6 @@ class LibraryVersion(BaseModel):
         description="List of required symbol versions from VERNEED (e.g., ['OPENSSL_1_1_0'])"
     )
 
-    backend: Optional[SSLBackend] = Field(
-        None,
-        description="SSL backend info for curl/libcurl (e.g., OpenSSL, GnuTLS)"
-    )
-
 
 class LibraryVersions(BaseModel):
     """
@@ -699,34 +642,10 @@ class LibraryVersions(BaseModel):
         Returns:
             LibraryVersions instance populated from cache
         """
-        from pathlib import Path
-
         result = cls(binary_path=binary_path)
 
         # Load firmware-level library versions
         for lib_id, lib_data in cache_data.get("firmware_libraries", {}).items():
-            # Parse backend info if present
-            backend = None
-            backend_data = lib_data.get("backend")
-            if backend_data:
-                # Parse config if present
-                backend_config = None
-                config_data = backend_data.get("config")
-                if config_data:
-                    backend_config = BackendConfig(
-                        min_protocol=config_data.get("min_protocol"),
-                        max_protocol=config_data.get("max_protocol"),
-                        config_source=config_data.get("config_source"),
-                    )
-
-                backend = SSLBackend(
-                    name=backend_data.get("name", "unknown"),
-                    version=backend_data.get("version"),
-                    confidence=VersionConfidence(backend_data.get("confidence", "none")),
-                    detection_method=BackendDetectionMethod(backend_data.get("detection_method", "dynamic_linking")),
-                    config=backend_config,
-                )
-
             # Parse detection method with fallback for unrecognized values
             method_str = lib_data.get("method", "api_inference")
             try:
@@ -743,37 +662,7 @@ class LibraryVersions(BaseModel):
                 soname=lib_data.get("soname"),
                 details=lib_data.get("details", ""),
                 required_symbols=lib_data.get("required_symbols", []),
-                backend=backend,
             )
-
-        # binary_versions loading disabled - using firmware_libraries only
-        # binary_versions = cache_data.get("binary_versions", {})
-        # for cached_path, libs in binary_versions.items():
-        #     # Match by basename or full path
-        #     if binary_path.endswith(cached_path) or cached_path.endswith(Path(binary_path).name):
-        #         for lib_id, lib_data in libs.items():
-        #             # Parse backend info if present
-        #             backend = None
-        #             backend_data = lib_data.get("backend")
-        #             if backend_data:
-        #                 backend = SSLBackend(
-        #                     name=backend_data.get("name", "unknown"),
-        #                     version=backend_data.get("version"),
-        #                     confidence=VersionConfidence(backend_data.get("confidence", "none")),
-        #                     detection_method=BackendDetectionMethod(backend_data.get("detection_method", "dynamic_linking")),
-        #                 )
-        #
-        #             result.libraries[lib_id] = LibraryVersion(
-        #                 library=lib_id,
-        #                 version=lib_data.get("version"),
-        #                 confidence=VersionConfidence(lib_data.get("confidence", "none")),
-        #                 detection_method=VersionDetectionMethod(lib_data.get("method", "api_inference")),
-        #                 soname=lib_data.get("soname"),
-        #                 details=lib_data.get("details", ""),
-        #                 required_symbols=lib_data.get("required_symbols", []),
-        #                 backend=backend,
-        #             )
-        #         break
 
         return result
 
@@ -790,20 +679,7 @@ class LibraryVersions(BaseModel):
             lines.append("Binary library requirements:")
             for lib_id, ver in sorted(self.libraries.items()):
                 if ver.version:
-                    line = f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence, {ver.detection_method.value})"
-                    # Include SSL backend info for curl/libcurl
-                    # Use escaped bracket \[ to prevent Rich from interpreting as markup
-                    if ver.backend:
-                        backend_str = ver.backend.name
-                        if ver.backend.version:
-                            backend_str += f" {ver.backend.version}"
-                        line += f" \\[backend: {backend_str}]"
-                        # Add config info if available
-                        if ver.backend.config:
-                            if ver.backend.config.min_protocol:
-                                line += f" \\[min: {ver.backend.config.min_protocol}]"
-                            if ver.backend.config.config_source:
-                                line += f" \\[from: {ver.backend.config.config_source}]"
+                    line = f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence)"
                     lines.append(line)
 
         # Firmware library versions
@@ -814,21 +690,7 @@ class LibraryVersions(BaseModel):
             for lib_id, ver in sorted(self.firmware_libraries.items()):
                 if ver.version:
                     source = f" from {ver.source_path}" if ver.source_path else ""
-                    # Build backend string (placed before source path to avoid truncation)
-                    # Use escaped brackets \[ \] to prevent Rich from interpreting as markup
-                    backend_suffix = ""
-                    if ver.backend:
-                        backend_str = ver.backend.name
-                        if ver.backend.version:
-                            backend_str += f" {ver.backend.version}"
-                        backend_suffix = f" \\[backend: {backend_str}]"
-                        # Add config info if available
-                        if ver.backend.config:
-                            if ver.backend.config.min_protocol:
-                                backend_suffix += f" \\[min: {ver.backend.config.min_protocol}]"
-                            if ver.backend.config.config_source:
-                                backend_suffix += f" \\[from: {ver.backend.config.config_source}]"
-                    line = f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence){backend_suffix}{source}"
+                    line = f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence){source}"
                     lines.append(line)
 
         return "\n".join(lines) if lines else "No library versions detected"

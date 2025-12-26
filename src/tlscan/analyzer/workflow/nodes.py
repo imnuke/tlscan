@@ -155,13 +155,10 @@ async def ssl_analysis_node(
         # Get script tools for script analysis
         tools = static_engine.get_script_tools(binary_path)
 
-    # Get library version info for version-dependent rules
-    library_versions = state.get("library_versions")
-    library_versions_str = library_versions.format_for_prompt() if library_versions else None
     library_name = state.get("library_name", "unknown")
 
     # Build and display the system prompt before agent execution
-    system_prompt = get_ssl_system_prompt(security_rules, library_versions_str, library_name)
+    system_prompt = get_ssl_system_prompt(security_rules, library_name)
 
     # NOTE: Use this for debugging prompt issues
     # console.print(Panel(
@@ -174,7 +171,6 @@ async def ssl_analysis_node(
     ssl_agent = agent_factory.create_ssl_agent(
         tools=tools,
         security_rules_content=security_rules,
-        library_versions=library_versions_str,
         library_name=library_name
     )
 
@@ -1614,6 +1610,7 @@ def calculate_rule_statistics(rules: Dict[str, RuleResult]) -> Dict[str, int]:
         "unsatisfied": 0,
         "conditional": 0,
         "undetermined": 0,
+        "default": 0,
     }
     for rule in rules.values():
         if rule.result == RuleResultStatus.SATISFIED:
@@ -1624,6 +1621,8 @@ def calculate_rule_statistics(rules: Dict[str, RuleResult]) -> Dict[str, int]:
             stats["conditional"] += 1
         elif rule.result == RuleResultStatus.UNDETERMINED:
             stats["undetermined"] += 1
+        elif rule.result == RuleResultStatus.DEFAULT:
+            stats["default"] += 1
     return stats
 
 

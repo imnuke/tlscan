@@ -100,7 +100,6 @@ class AgentFactory:
         self,
         tools: List[any],
         security_rules_content: str = "",
-        library_versions: Optional[str] = None,
         library_name: str = "unknown"
     ) -> any:
         """Create SSL analysis agent with structured output.
@@ -108,7 +107,6 @@ class AgentFactory:
         Args:
             tools: IDA tools from Static Analysis Engine
             security_rules_content: Security rules to inject into prompt
-            library_versions: Optional formatted library version information for version-dependent rules
             library_name: Name of the library/command being analyzed (from -r argument)
 
         Returns:
@@ -116,7 +114,7 @@ class AgentFactory:
         """
         from tlscan.analyzer.agents.prompts.ssl import get_ssl_system_prompt
 
-        system_prompt = get_ssl_system_prompt(security_rules_content, library_versions, library_name)
+        system_prompt = get_ssl_system_prompt(security_rules_content, library_name)
 
         # Get temperature for SSL analysis agent
         temperature = self._config.get_agent_temperature('ssl_analysis')
