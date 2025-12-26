@@ -5,6 +5,7 @@ with a single data-driven implementation that works with any LibraryDefinition.
 """
 
 import logging
+import re
 from typing import Set, Dict, List
 
 from ..models import ConfidenceLevel, DetectionResult, DetectionMethod
@@ -31,6 +32,17 @@ def match_indicators(
     if indicator_set.match_type == MatchType.EXACT:
         # Exact matching - typically for symbols
         return [ind for ind in indicator_set.indicators if ind in symbols]
+    elif indicator_set.match_type == MatchType.WORD_BOUNDARY:
+        # Word boundary matching - matches complete words only
+        # Prevents "curl" from matching "curly" or "left-curly-bracket"
+        matches = []
+        for ind in indicator_set.indicators:
+            pattern = re.compile(r"\b" + re.escape(ind) + r"\b")
+            for s in strings:
+                if pattern.search(s):
+                    matches.append(ind)
+                    break
+        return matches
     else:
         # Substring matching - typically for strings
         matches = []

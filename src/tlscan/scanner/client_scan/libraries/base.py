@@ -22,6 +22,7 @@ class MatchType(Enum):
 
     EXACT = auto()  # Exact match (for symbols)
     SUBSTRING = auto()  # Substring match (for strings)
+    WORD_BOUNDARY = auto()  # Word boundary match (regex \b)
 
 
 @dataclass
