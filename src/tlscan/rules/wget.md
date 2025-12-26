@@ -11,7 +11,6 @@ This document defines security rules for wget command-line tool usage in scripts
 | R3 | M2 | MUST | Protocol Version Enforcement |
 | R4 | M5 | MUST | Cipher Suite Selection (Limited) |
 | R5 | S2 | SHOULD | Cryptographic Strength (Backend-Dependent) |
-| LS1 | N/A | SHOULD | Configuration File Analysis |
 
 **Notes**:
 - Entropy/RNG (S3) is not applicable to wget CLI as it relies on the underlying SSL backend.
@@ -333,47 +332,6 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | Backend version with secure defaults (see table) | SATISFIED | Backend enforces strong crypto |
 | Backend version with weak defaults (see table) | UNSATISFIED | Backend allows weak crypto |
 | Backend version unknown | UNDETERMINED | Cannot determine backend security |
-
----
-
-## LS1: Explicit Configuration File Analysis
-
-**Meta-Rule(s)**: N/A (library-specific)  |  **Priority**: SHOULD
-
-**What to Verify**: When code explicitly references a wgetrc configuration file, verify it does not contain insecure settings.
-
-**Important**: This rule ONLY applies when the code explicitly references configuration files. Do NOT scan implicit config file locations (like `~/.wgetrc` or `/etc/wgetrc`) unless the code explicitly mentions them.
-
-**When This Rule Applies**:
-- Code uses `--config=<file>` option
-- Code explicitly references `WGETRC` environment variable
-- Code explicitly reads/mentions a wgetrc file path
-
-**When This Rule Does NOT Apply**:
-- Implicit default config file loading (wget's automatic wgetrc search)
-- No explicit config file reference in the analyzed code
-
-**Security-Critical Settings** (when config file IS analyzed):
-| Setting | Secure Value | Insecure Value |
-|---------|--------------|----------------|
-| `check_certificate` | `on` | `off` |
-| `secure_protocol` | `TLSv1_2`, `TLSv1_3`, `PFS` | `SSLv2`, `SSLv3`, `TLSv1` |
-| `https_only` | `on` | `off` |
-
-**Detection Patterns**:
-- `wget --config=/path/to/file` → Analyze the specified config file
-- `WGETRC=/path/to/file wget ...` → Analyze the specified config file
-- `wget https://...` (no --config) → LS1 does NOT apply
-
-**SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
-| Scenario | Result | Reason |
-|----------|--------|--------|
-| No explicit config file reference | N/A | Rule does not apply |
-| `--config=<file>` with secure settings | SATISFIED | Explicit config is safe |
-| `--config=<file>` with `check_certificate = off` | UNSATISFIED | Disables verification |
-| `--config=<file>` with insecure `secure_protocol` | UNSATISFIED | Allows weak protocols |
-| `WGETRC` from variable | CONDITIONAL | Trace variable to find config path |
-| Config file path from variable | CONDITIONAL | Trace variable to find config path |
 
 ---
 

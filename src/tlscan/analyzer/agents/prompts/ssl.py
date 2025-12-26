@@ -95,6 +95,12 @@ WHAT IS A VALID CONDITION (when to use CONDITIONAL):
   - Backend defaults: "OpenSSL_default_ciphers", "backend_tls_version"
   - System settings: "system_ca_bundle", "os_tls_config"
   - Abstract concepts: "cipher_strength", "verification_mode"
+  - Implicit config files: Default config file locations (e.g., ~/.wgetrc, ~/.curlrc)
+    that tools load automatically without explicit code reference
+- Config file IS a valid condition ONLY when code explicitly references it:
+  - Command-line option: --config=/path/to/file
+  - Environment variable in code: WGETRC=/path/to/file
+  - Explicit file path in code: load_config("/etc/myapp/config")
 
 WHEN TO USE BACKEND/VERSION TABLES INSTEAD OF CONDITIONAL:
 - If no option is set AND the behavior depends on library/backend version:
