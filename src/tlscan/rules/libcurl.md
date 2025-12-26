@@ -296,20 +296,25 @@ The effective minimum TLS version = max(libcurl_default, backend_minimum)
 **Backend Cipher Suite Defaults (when no cipher configuration)**:
 | Backend | Version | Default Config | Security |
 |---------|---------|----------------|----------|
-| OpenSSL | 3.0+ | TLS_AES_* + ECDHE preferred | SATISFIED |
-| OpenSSL | 1.1.1+ | DEFAULT:!aNULL:!eNULL (ECDHE) | SATISFIED |
-| OpenSSL | 1.0.x | DEFAULT (may include weak) | CONDITIONAL |
-| GnuTLS | 3.6+ | NORMAL priority | SATISFIED |
-| mbedTLS | 2.x+ | Secure defaults | SATISFIED |
-| wolfSSL | 4.x+ | Secure defaults | SATISFIED |
+| OpenSSL | 3.0+ | TLS_AES_* + ECDHE preferred | SECURE |
+| OpenSSL | 1.1.1+ | DEFAULT:!aNULL:!eNULL (ECDHE) | SECURE |
+| OpenSSL | 1.0.x | DEFAULT (may include weak) | INSECURE |
+| GnuTLS | 3.6+ | NORMAL priority | SECURE |
+| mbedTLS | 2.x+ | Secure defaults | SECURE |
+| wolfSSL | 4.x+ | Secure defaults | SECURE |
 
-**Resolution**: When no cipher configured and backend is detected, use Security column.
+**Cipher Resolution (when no `CURLOPT_SSL_CIPHER_LIST` set)**:
+1. If explicit cipher string with strong ciphers → SATISFIED
+2. If explicit cipher string with weak ciphers → UNSATISFIED
+3. If no config and backend detected as SATISFIED in table → SATISFIED
+4. If no config and backend detected as INSECURE (OpenSSL 1.0.x) → UNSATISFIED
+5. If no config and backend version unknown → UNDETERMINED
 
 **Detection Patterns**:
 - Cipher string containing `NULL`, `EXPORT`, `RC4`, `DES` → UNSATISFIED
 - Cipher string with `HIGH:!aNULL:!eNULL:!EXPORT` → SATISFIED
 - No cipher config, backend SATISFIED in table → SATISFIED (secure backend default)
-- No cipher config, backend unknown → CONDITIONAL (cannot verify default)
+- No cipher config, backend unknown → UNDETERMINED (cannot verify default)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -317,7 +322,8 @@ The effective minimum TLS version = max(libcurl_default, backend_minimum)
 | Strong cipher string configured | SATISFIED | Weak ciphers excluded |
 | Weak ciphers in string | UNSATISFIED | Insecure ciphers allowed |
 | No cipher config, backend detected as SATISFIED | SATISFIED | Uses secure backend default |
-| No cipher config, backend unknown | CONDITIONAL | Cannot verify backend default |
+| No cipher config, backend detected as INSECURE | UNSATISFIED | Backend may use weak ciphers |
+| No cipher config, backend version unknown | UNDETERMINED | Cannot verify backend default |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---

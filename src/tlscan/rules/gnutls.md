@@ -278,10 +278,18 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 ```
 
 **Default Behavior (Version-Dependent)**:
-| GnuTLS Version | "NORMAL" Includes | Security |
-|----------------|-------------------|----------|
-| < 3.6.0 | TLS 1.0, 1.1, 1.2 | INSECURE |
-| ≥ 3.6.0 | Vendor-configurable | Check config |
+| GnuTLS Version | "NORMAL" Includes | Default Min TLS | Security |
+|----------------|-------------------|-----------------|----------|
+| 3.7.0+ | Vendor-configurable | TLS 1.2 | SECURE |
+| 3.6.0 - 3.6.x | Vendor-configurable | TLS 1.2 | SECURE |
+| < 3.6.0 | TLS 1.0, 1.1, 1.2 | TLS 1.0 | INSECURE |
+
+**Priority Resolution (when no priority string explicitly set)**:
+1. If explicit priority disables TLS 1.0/1.1 → SATISFIED
+2. If explicit "NORMAL" without version restrictions → UNSATISFIED
+3. If no priority and GnuTLS ≥ 3.6.0 detected → SATISFIED (TLS 1.2 default)
+4. If no priority and GnuTLS < 3.6.0 detected → UNSATISFIED (allows TLS 1.0/1.1)
+5. If no priority and GnuTLS version unknown → UNDETERMINED
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -290,7 +298,9 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 | `"SECURE128/192/256"` without TLS 1.0/1.1 | SATISFIED | Strong configuration |
 | `"NORMAL"` without version restrictions | UNSATISFIED | Allows TLS 1.0/1.1 |
 | Priority allows NULL/EXPORT ciphers | UNSATISFIED | Weak ciphers enabled |
-| No priority set | CONDITIONAL | Uses system default |
+| No priority, GnuTLS ≥ 3.6.0 detected | SATISFIED | Default TLS 1.2+ |
+| No priority, GnuTLS < 3.6.0 detected | UNSATISFIED | Allows TLS 1.0/1.1 |
+| No priority, GnuTLS version unknown | UNDETERMINED | Cannot determine default |
 | Priority string from variable | CONDITIONAL | Trace variable |
 
 ---

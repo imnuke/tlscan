@@ -201,11 +201,21 @@ This document defines security rules for wget command-line tool usage in scripts
 **PFS Mode**:
 The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide forward secrecy. This is secure but does not specify a minimum TLS version - combine with modern OpenSSL for TLS 1.2+.
 
-**Default Behavior**:
-| System | Default (`auto`) | Security |
-|--------|------------------|----------|
-| Modern Linux (OpenSSL 1.1.1+) | TLS 1.2+ | Typically SECURE |
-| Older systems | May allow TLS 1.0/1.1 | CONDITIONAL |
+**Backend TLS Version Defaults (when `--secure-protocol=auto` or not set)**:
+| Backend | Version | Default Min TLS | Security |
+|---------|---------|-----------------|----------|
+| OpenSSL | 3.0+ | TLS 1.2 | SECURE |
+| OpenSSL | 1.1.1+ | TLS 1.0 | INSECURE |
+| OpenSSL | 1.0.x | TLS 1.0 | INSECURE |
+| GnuTLS | 3.6+ | TLS 1.2 | SECURE |
+| GnuTLS | < 3.6 | TLS 1.0 | INSECURE |
+| wolfSSL | 4.x+ | TLS 1.2 | SECURE |
+
+**TLS Version Resolution (when no `--secure-protocol` flag specified)**:
+1. If explicit `--secure-protocol=TLSv1.2` or `TLSv1.3` → SATISFIED
+2. If explicit `--secure-protocol=TLSv1.0` or lower → UNSATISFIED
+3. If no flag and backend version detected → Use Backend TLS Version Defaults table above
+4. If no flag and backend version unknown → UNDETERMINED
 
 **Detection Patterns**:
 - `wget --secure-protocol=TLSv1_2 https://...` → SATISFIED
@@ -213,7 +223,7 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 - `wget --secure-protocol=PFS https://...` → SATISFIED (if OpenSSL supports TLS 1.2+)
 - `wget --secure-protocol=TLSv1 https://...` → UNSATISFIED
 - `wget --secure-protocol=SSLv3 https://...` → UNSATISFIED
-- `wget https://...` (no protocol option) → UNDETERMINED (system-dependent default)
+- `wget https://...` (no protocol option) → Use resolution logic above
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -222,7 +232,9 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | `--secure-protocol=PFS` | SATISFIED | Forward secrecy enforced |
 | `--secure-protocol=TLSv1`, `TLSv1_1` | UNSATISFIED | Insecure protocol |
 | `--secure-protocol=SSLv2`, `SSLv3` | UNSATISFIED | Insecure protocol |
-| `--secure-protocol=auto` or not set | UNDETERMINED | Depends on system (not traceable) |
+| No flag, backend default ≥ TLS 1.2 | SATISFIED | Backend enforces secure minimum |
+| No flag, backend default < TLS 1.2 | UNSATISFIED | Backend allows insecure protocols |
+| No flag, backend version unknown | UNDETERMINED | Cannot determine backend default |
 | Protocol option from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -259,11 +271,28 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | `aNULL` | No authentication |
 | `eNULL` | No encryption |
 
+**Backend Cipher Suite Defaults (when no `--ciphers` specified)**:
+| Backend | Version | Default Ciphers | Security |
+|---------|---------|-----------------|----------|
+| OpenSSL | 3.0+ | TLS_AES_* + ECDHE preferred | SECURE |
+| OpenSSL | 1.1.1+ | DEFAULT:!aNULL:!eNULL (ECDHE) | SECURE |
+| OpenSSL | 1.0.x | DEFAULT (may include weak) | INSECURE |
+| GnuTLS | 3.6+ | NORMAL priority | SECURE |
+| GnuTLS | < 3.6 | NORMAL (may include weak) | INSECURE |
+| wolfSSL | 4.x+ | Secure defaults | SECURE |
+
+**Cipher Resolution (when no `--ciphers` flag specified)**:
+1. If explicit `--ciphers` with strong cipher string → SATISFIED
+2. If explicit `--ciphers` with weak ciphers → UNSATISFIED
+3. If `--secure-protocol=PFS` → SATISFIED (forward secrecy enforced)
+4. If no flag and backend version detected → Use Backend Cipher Suite Defaults table above
+5. If no flag and backend version unknown → UNDETERMINED
+
 **Detection Patterns**:
 - `--ciphers 'HIGH:!aNULL:!eNULL'` → SATISFIED (strong ciphers)
 - `--secure-protocol=PFS` → SATISFIED (forward secrecy)
 - `--ciphers` containing `NULL`, `EXPORT`, `RC4` → UNSATISFIED
-- No cipher option → Use Backend Defaults table (R5) to determine result
+- No cipher option → Use resolution logic above
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -271,10 +300,10 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | Strong cipher string configured | SATISFIED | Weak ciphers excluded |
 | `--secure-protocol=PFS` | SATISFIED | Forward secrecy enforced |
 | Cipher string contains weak ciphers | UNSATISFIED | Insecure ciphers allowed |
-| No cipher config, backend with secure defaults (OpenSSL 3.0+, GnuTLS 3.6+) | SATISFIED | Backend enforces strong ciphers |
-| No cipher config, backend with weak defaults (OpenSSL <3.0) | UNSATISFIED | Backend allows weak ciphers |
-| No cipher config, backend unknown | UNDETERMINED | Cannot determine cipher security |
-| Cipher string from code variable | CONDITIONAL | Trace variable |
+| No config, backend default secure | SATISFIED | Backend uses secure ciphers |
+| No config, backend default insecure | UNSATISFIED | Backend may use weak ciphers |
+| No config, backend version unknown | UNDETERMINED | Cannot determine backend default |
+| Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---
 
@@ -424,9 +453,12 @@ For applications requiring these features, consider using curl or a custom TLS c
 |----------|----------|--------|
 | MUST | Option explicitly secure | SATISFIED |
 | MUST | Option explicitly insecure | UNSATISFIED |
-| MUST | No option, secure default (wget ≥1.10) | SATISFIED |
-| MUST | No option, version-dependent default | UNDETERMINED |
+| MUST | No option, secure default (wget ≥1.10 or backend secure) | SATISFIED |
+| MUST | No option, backend version detected, backend default insecure | UNSATISFIED |
+| MUST | No option, backend version unknown | UNDETERMINED |
 | SHOULD | Feature enabled | SATISFIED |
 | SHOULD | Feature explicitly disabled | UNSATISFIED |
-| SHOULD | Feature not configured | UNDETERMINED |
+| SHOULD | Feature not configured, backend secure | SATISFIED |
+| SHOULD | Feature not configured, backend insecure | UNSATISFIED |
+| SHOULD | Feature not configured, backend unknown | UNDETERMINED |
 | MAY | Feature not supported | N/A |
