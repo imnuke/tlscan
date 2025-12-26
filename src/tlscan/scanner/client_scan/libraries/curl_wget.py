@@ -21,7 +21,7 @@ CURL_WGET_INDICATORS = [
             "/bin/curl",
             "/bin/wget",
         },
-        match_type=MatchType.SUBSTRING,
+        match_type=MatchType.WORD_BOUNDARY,
     ),
     IndicatorSet(
         name="urls",
