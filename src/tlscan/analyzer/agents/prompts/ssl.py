@@ -111,6 +111,17 @@ WHAT IS A VALID CONDITION (when to use CONDITIONAL):
   - Environment variable in code: WGETRC=/path/to/file
   - Explicit file path in code: load_config("/etc/myapp/config")
 
+CRITICAL: DO NOT RESOLVE FUNCTION PARAMETERS VIA STRING SEARCH:
+- When a security-critical value (URL, options, flags) comes from a FUNCTION PARAMETER:
+  1. DO NOT search the string table for plausible values and assume they're the parameter values
+  2. DO NOT conclude "this parameter probably receives https://..." based on nearby strings
+  3. ALWAYS mark as CONDITIONAL with the actual parameter name (e.g., "a1", "param2")
+  4. The dataflow agent will trace the parameter through callers to find the actual source
+- Example - If wget is called with URL from parameter `a1`:
+  - WRONG: "Found https://example.com in strings, assuming a1 receives this" → SATISFIED
+  - CORRECT: "URL comes from parameter a1, need to trace source" → CONDITIONAL with variable="a1"
+- Function parameters are NEVER resolved by finding strings elsewhere in the binary
+
 WHEN TO USE BACKEND/VERSION TABLES INSTEAD OF CONDITIONAL:
 - If no option is set AND the behavior depends on library/backend version:
   1. Check the "Backend Defaults" or "Version Defaults" table in the rules
