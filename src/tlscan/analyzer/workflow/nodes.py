@@ -162,11 +162,13 @@ async def ssl_analysis_node(
 
     # Build and display the system prompt before agent execution
     system_prompt = get_ssl_system_prompt(security_rules, library_versions_str, library_name)
-    console.print(Panel(
-        system_prompt,
-        title="[bold blue]SSL Agent System Prompt[/bold blue]",
-        border_style="blue"
-    ))
+
+    # NOTE: Use this for debugging prompt issues
+    # console.print(Panel(
+    #     system_prompt,
+    #     title="[bold blue]SSL Agent System Prompt[/bold blue]",
+    #     border_style="blue"
+    # ))
 
     # Create SSL agent with structured output
     ssl_agent = agent_factory.create_ssl_agent(
