@@ -14,12 +14,10 @@ This document defines security rules for PHP cURL extension usage. Each rule ref
 | R6 | S1 | SHOULD | Certificate Revocation Checking |
 | R7 | S2 | SHOULD | Cryptographic Strength (Backend-Dependent) |
 | R8 | O1 | MAY | Certificate Pinning |
-| LS1 | N/A | CRITICAL | PHP-Specific Vulnerabilities |
 
 **Notes**:
 - Entropy/RNG (S3) is not applicable to PHP cURL as it relies on the underlying SSL backend.
 - PHP uses the same libcurl constants with PHP constant syntax.
-- LS1 is marked CRITICAL because PHP developers commonly disable SSL verification incorrectly.
 - R7 (S2) is backend-dependent - PHP cURL relies on the SSL backend for cryptographic strength enforcement.
 
 ## PHP cURL Constants Reference
@@ -412,111 +410,6 @@ curl_setopt($ch, CURLOPT_PINNEDPUBLICKEY, 'sha256//hash1;sha256//hash2');
 | `CURLOPT_PINNEDPUBLICKEY` set | SATISFIED | Pinning enabled |
 | Pinning not configured | UNSATISFIED | Pinning not implemented |
 | Pin value from variable | CONDITIONAL | Trace pin source |
-
----
-
-## LS1: PHP-Specific Vulnerabilities
-
-**Meta-Rule(s)**: N/A (library-specific)  |  **Priority**: CRITICAL
-
-**What to Verify**: Common PHP cURL security mistakes are avoided.
-
-### Common Vulnerability Patterns
-
-**1. Disabling SSL to "fix" certificate errors**:
-```php
-// CRITICAL VULNERABILITY - Common anti-pattern
-curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-// Often copied from Stack Overflow
-```
-
-**2. Using boolean false instead of integer 0**:
-```php
-// Both are INSECURE - PHP treats false as 0
-curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);  // Same as 0
-curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, FALSE);  // Same as 0
-```
-
-**3. Configuration-based disabling**:
-```php
-// CONDITIONAL - Trace config source
-if ($config['debug'] || $config['dev_mode']) {
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-}
-```
-
-**4. Environment-based disabling**:
-```php
-// CONDITIONAL - Check environment values
-curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, getenv('VERIFY_SSL') !== 'false');
-```
-
-**5. Missing CA bundle on Windows**:
-```php
-// CONDITIONAL - Windows may not have CA bundle
-// Check if CURLOPT_CAINFO is set or system CA exists
-```
-
-### Detection Patterns
-
-Search for these patterns in PHP code:
-
-| Pattern | Risk Level |
-|---------|------------|
-| `CURLOPT_SSL_VERIFYPEER.*false` | CRITICAL |
-| `CURLOPT_SSL_VERIFYHOST.*0` | CRITICAL |
-| `CURLOPT_SSL_VERIFYHOST.*false` | CRITICAL |
-| `// disable.*ssl` (comment) | Review needed |
-| `// fix.*certificate` (comment) | Review needed |
-| `$verify.*=.*false` | Trace variable |
-
-### Wrapper Functions
-
-Watch for insecure wrapper functions/classes:
-
-```php
-// UNSATISFIED: Wrapper that disables verification
-function makeRequest($url) {
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);  // Hidden insecurity
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-    return curl_exec($ch);
-}
-
-// UNSATISFIED: Class with insecure defaults
-class HttpClient {
-    private $verifySSL = false;  // Insecure default
-}
-```
-
-### Framework-Specific Patterns
-
-**Laravel/Guzzle**:
-```php
-// UNSATISFIED: Guzzle with verify disabled
-$client = new \GuzzleHttp\Client(['verify' => false]);
-
-// SATISFIED: Guzzle with verification
-$client = new \GuzzleHttp\Client(['verify' => true]);
-$client = new \GuzzleHttp\Client(['verify' => '/path/to/cacert.pem']);
-```
-
-**Symfony HttpClient**:
-```php
-// UNSATISFIED: Disabled verification
-$client = HttpClient::create(['verify_peer' => false]);
-```
-
-### SATISFIED/UNSATISFIED/CONDITIONAL Criteria
-
-| Pattern | Result | Reason |
-|---------|--------|--------|
-| `VERIFYPEER = false` anywhere | UNSATISFIED | Verification disabled |
-| `VERIFYHOST = 0` or `false` | UNSATISFIED | Hostname check disabled |
-| Conditional disable (debug mode) | CONDITIONAL | May be disabled in production |
-| Framework `verify => false` | UNSATISFIED | Framework-level insecurity |
-| No insecure patterns found | SATISFIED | Secure implementation |
 
 ---
 
