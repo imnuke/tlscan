@@ -553,6 +553,20 @@ class BackendDetectionMethod(str, Enum):
     SYMBOLS = "symbols"                  # From curl backend-specific symbols
 
 
+class BackendConfig(BaseModel):
+    """Backend TLS config extracted from firmware (e.g., openssl.cnf)."""
+
+    min_protocol: Optional[str] = Field(
+        None, description="Minimum TLS protocol (e.g., 'TLSv1.2')"
+    )
+    max_protocol: Optional[str] = Field(
+        None, description="Maximum TLS protocol (e.g., 'TLSv1.3')"
+    )
+    config_source: Optional[str] = Field(
+        None, description="Config file path relative to firmware root"
+    )
+
+
 class SSLBackend(BaseModel):
     """
     SSL/TLS backend information for curl/libcurl binaries.
@@ -577,6 +591,10 @@ class SSLBackend(BaseModel):
     detection_method: BackendDetectionMethod = Field(
         default=BackendDetectionMethod.DYNAMIC_LINKING,
         description="Method used to detect the backend"
+    )
+
+    config: Optional[BackendConfig] = Field(
+        None, description="TLS config from firmware config files"
     )
 
 
@@ -691,11 +709,22 @@ class LibraryVersions(BaseModel):
             backend = None
             backend_data = lib_data.get("backend")
             if backend_data:
+                # Parse config if present
+                backend_config = None
+                config_data = backend_data.get("config")
+                if config_data:
+                    backend_config = BackendConfig(
+                        min_protocol=config_data.get("min_protocol"),
+                        max_protocol=config_data.get("max_protocol"),
+                        config_source=config_data.get("config_source"),
+                    )
+
                 backend = SSLBackend(
                     name=backend_data.get("name", "unknown"),
                     version=backend_data.get("version"),
                     confidence=VersionConfidence(backend_data.get("confidence", "none")),
                     detection_method=BackendDetectionMethod(backend_data.get("detection_method", "dynamic_linking")),
+                    config=backend_config,
                 )
 
             # Parse detection method with fallback for unrecognized values
@@ -769,6 +798,12 @@ class LibraryVersions(BaseModel):
                         if ver.backend.version:
                             backend_str += f" {ver.backend.version}"
                         line += f" \\[backend: {backend_str}]"
+                        # Add config info if available
+                        if ver.backend.config:
+                            if ver.backend.config.min_protocol:
+                                line += f" \\[min: {ver.backend.config.min_protocol}]"
+                            if ver.backend.config.config_source:
+                                line += f" \\[from: {ver.backend.config.config_source}]"
                     lines.append(line)
 
         # Firmware library versions
@@ -787,6 +822,12 @@ class LibraryVersions(BaseModel):
                         if ver.backend.version:
                             backend_str += f" {ver.backend.version}"
                         backend_suffix = f" \\[backend: {backend_str}]"
+                        # Add config info if available
+                        if ver.backend.config:
+                            if ver.backend.config.min_protocol:
+                                backend_suffix += f" \\[min: {ver.backend.config.min_protocol}]"
+                            if ver.backend.config.config_source:
+                                backend_suffix += f" \\[from: {ver.backend.config.config_source}]"
                     line = f"  - {lib_id}: {ver.version} ({ver.confidence.value} confidence){backend_suffix}{source}"
                     lines.append(line)
 

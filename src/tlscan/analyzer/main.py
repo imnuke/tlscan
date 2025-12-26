@@ -323,7 +323,10 @@ async def main(
                                     backend_str = ver.backend.name
                                     if ver.backend.version:
                                         backend_str += f" {ver.backend.version}"
-                                    line += f" [backend: {backend_str}]"
+                                    line += f" \\[backend: {backend_str}]"
+                                    # Add config info if available
+                                    if ver.backend.config and ver.backend.config.min_protocol:
+                                        line += f" \\[min: {ver.backend.config.min_protocol}]"
                                 console.print(f"[dim]{line}[/dim]")
 
                     if library_versions.libraries:
@@ -336,7 +339,10 @@ async def main(
                                     backend_str = ver.backend.name
                                     if ver.backend.version:
                                         backend_str += f" {ver.backend.version}"
-                                    line += f" [backend: {backend_str}]"
+                                    line += f" \\[backend: {backend_str}]"
+                                    # Add config info if available
+                                    if ver.backend.config and ver.backend.config.min_protocol:
+                                        line += f" \\[min: {ver.backend.config.min_protocol}]"
                                 console.print(f"[dim]{line}[/dim]")
 
                     console.print("[green]✓ Library versions loaded[/green]")
