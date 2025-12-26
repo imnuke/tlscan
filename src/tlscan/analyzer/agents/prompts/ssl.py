@@ -44,6 +44,15 @@ When a rule depends on backend defaults, refer to the "Backend Minimum" or "Back
 in the security rules document. The rules contain the resolution logic and version-specific defaults.
 Include the backend version in your evidence when resolving these rules.
 
+USING BACKEND CONFIG VALUES (MinProtocol, MaxProtocol):
+
+When backend config is shown (e.g., [min: TLSv1.2] [from: etc/ssl/openssl.cnf]):
+1. This is ALREADY RESOLVED - do NOT create CONDITIONAL results
+2. Use the min_protocol value directly to determine SATISFIED/UNSATISFIED
+3. Example: [min: TLSv1.2] means protocol version rule is SATISFIED
+4. Do NOT create conditions like "$OPENSSL_MINPROTOCOL" when config is known
+5. Include in evidence: "MinProtocol=TLSv1.2 from etc/ssl/openssl.cnf"
+
 """
 
     return f"""You are an SSL/TLS security analysis expert.
