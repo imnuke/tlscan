@@ -355,7 +355,7 @@ Use these scopes for conventional commit messages:
 - Firmware tools use `fd` and `rg` for fast searching
 - Configuration in `llm_config.yaml` (gitignored - contains API keys)
 - Rules are bundled with package, override via `SSLENS_RULES_DIR` environment variable
-- **After implementation**: Always present a commit message in Conventional Commits format (see Commit Messages section)
+- **After implementation**: Always present a commit message in Conventional Commits format (defined in global ~/.claude/CLAUDE.md)
 - When using TodoWrite for multi-step tasks, the final step should be preparing the commit message
 - **No backward compatibility required**: When refactoring, feel free to remove or rename unused code, change APIs, and restructure without maintaining backward compatibility
 
