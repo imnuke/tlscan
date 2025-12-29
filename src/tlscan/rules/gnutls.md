@@ -28,6 +28,35 @@ This document defines library-specific security rules for GnuTLS-based TLS clien
 | `gnutls_protocol_set_enabled()` | GnuTLS 3.6.0+ |
 | `gnutls_certificate_verify_peers2()` | All versions (older API) |
 
+## ⚠️ CRITICAL: Applicability Check
+
+**This ruleset applies ONLY to binaries that implement TLS clients using GnuTLS.**
+
+### Required Functions for Applicability
+
+A binary MUST call this function to be applicable:
+- `gnutls_handshake()` - TLS handshake
+
+### Non-Applicable: Setup-Only Usage
+
+If a binary only imports these functions WITHOUT `gnutls_handshake`:
+
+| Function | Purpose | TLS Relevance |
+|----------|---------|---------------|
+| `gnutls_init` | Create session | Setup only |
+| `gnutls_deinit` | Destroy session | Cleanup only |
+| `gnutls_global_init` | Initialize library | Setup only |
+| `gnutls_global_deinit` | Cleanup library | Cleanup only |
+| `gnutls_certificate_allocate_credentials` | Alloc creds | Setup only |
+
+**→ Set `applicable=false` with reason: "Binary uses GnuTLS setup/utility functions only (no gnutls_handshake)"**
+
+### Binary Analysis Flow
+
+1. **FIRST**: Check for `gnutls_handshake` imports/calls
+2. **If NOT found**: Set `applicable=false`
+3. **If found**: Continue with rule analysis (R1-R8)
+
 ---
 
 ## R1: TLS Usage Detection
