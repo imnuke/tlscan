@@ -29,7 +29,7 @@ Analyze the code for SSL/TLS client security compliance and output JSON matching
       "conditions": []  // for conditional, list variables to trace
     }}
   ],
-  "summary": "human-readable summary",
+  "summary": "2-3 sentences: First explain what the program uses TLS for (business purpose), then summarize security posture",
   "applicable": true|false,
   "reason": null|"why not applicable"
 }}
@@ -131,6 +131,24 @@ CRITICAL INSTRUCTIONS:
    - Do NOT report findings for other libraries
    - Focus EXCLUSIVELY on {library_name}
 4. If {library_name} is not found in the binary, set applicable=false
+
+{'=' * 60}
+SUMMARY INSTRUCTIONS:
+{'=' * 60}
+
+The summary field must explain WHAT the program uses TLS for, not just HOW rules are checked.
+
+First sentence - Client purpose:
+- Identify what service/functionality the TLS client implements
+- Look at URLs, hostnames, API endpoints to understand the purpose
+- Examples:
+  - "libplugin.so uses libcurl to query the AbuseIPDB API for IP reputation checks"
+  - "The program leverages OpenSSL to implement a DDNS client that updates dynamic DNS records"
+  - "This binary uses libcurl to communicate with a firmware update server"
+
+Following sentences - Security posture:
+- Summarize which security aspects are satisfied/unsatisfied/conditional
+- Highlight any critical security concerns
 
 {'=' * 60}
 SECURITY RULES TO CHECK:
