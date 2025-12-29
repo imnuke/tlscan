@@ -56,6 +56,35 @@ This document defines library-specific security rules for mbedTLS-based TLS clie
 | `MBEDTLS_SSL_VERSION_TLS1_2` | 0x0303 | TLS 1.2 |
 | `MBEDTLS_SSL_VERSION_TLS1_3` | 0x0304 | TLS 1.3 |
 
+## ⚠️ CRITICAL: Applicability Check
+
+**This ruleset applies ONLY to binaries that implement TLS clients using mbedTLS.**
+
+### Required Functions for Applicability
+
+A binary MUST call this function to be applicable:
+- `mbedtls_ssl_handshake()` - TLS handshake
+
+### Non-Applicable: Setup-Only Usage
+
+If a binary only imports these functions WITHOUT `mbedtls_ssl_handshake`:
+
+| Function | Purpose | TLS Relevance |
+|----------|---------|---------------|
+| `mbedtls_ssl_init` | Initialize context | Setup only |
+| `mbedtls_ssl_free` | Free context | Cleanup only |
+| `mbedtls_ssl_config_init` | Initialize config | Setup only |
+| `mbedtls_ssl_config_free` | Free config | Cleanup only |
+| `mbedtls_ssl_setup` | Apply config | Setup only |
+
+**→ Set `applicable=false` with reason: "Binary uses mbedTLS setup/utility functions only (no mbedtls_ssl_handshake)"**
+
+### Binary Analysis Flow
+
+1. **FIRST**: Check for `mbedtls_ssl_handshake` imports/calls
+2. **If NOT found**: Set `applicable=false`
+3. **If found**: Continue with rule analysis (R1-R9)
+
 ---
 
 ## R1: TLS Usage Detection

@@ -29,6 +29,37 @@ Use these patterns to identify OpenSSL version in binaries:
 | `TLS_client_method()` | OpenSSL 1.1.0+ (preferred) |
 | `SSL_CTX_set_options()` with `SSL_OP_NO_*` | Any version (legacy approach) |
 
+## ⚠️ CRITICAL: Applicability Check
+
+**This ruleset applies ONLY to binaries that implement TLS clients using OpenSSL.**
+
+### Required Functions for Applicability
+
+A binary MUST call at least one of these to be applicable:
+- `SSL_connect()` - Client TLS handshake
+- `SSL_do_handshake()` - Generic handshake (client or server)
+
+### Non-Applicable: Setup-Only Usage
+
+If a binary only imports these functions WITHOUT handshake calls:
+
+| Function | Purpose | TLS Relevance |
+|----------|---------|---------------|
+| `SSL_CTX_new` | Create context | Setup only |
+| `SSL_new` | Create session | Setup only |
+| `SSL_free` | Free session | Cleanup only |
+| `SSL_CTX_free` | Free context | Cleanup only |
+| `SSL_library_init` | Initialize library | Setup only |
+| `SSL_load_error_strings` | Load error messages | Utility only |
+
+**→ Set `applicable=false` with reason: "Binary uses OpenSSL setup/utility functions only (no SSL_connect or SSL_do_handshake)"**
+
+### Binary Analysis Flow
+
+1. **FIRST**: Check for `SSL_connect` or `SSL_do_handshake` imports/calls
+2. **If NOT found**: Set `applicable=false`
+3. **If found**: Continue with rule analysis (R1-R9)
+
 ---
 
 ## OpenSSL Version Defaults

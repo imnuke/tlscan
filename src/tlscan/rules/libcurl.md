@@ -19,6 +19,51 @@ This document defines library-specific security rules for libcurl-based TLS clie
 - Entropy/RNG (S3) is not applicable to libcurl: there are no libcurl options to configure entropy, and RNG initialization is entirely internal to the SSL backend with nothing observable at the libcurl layer. In contrast, R7 (S2) is analyzable because backend version determines cryptographic strength defaults (e.g., OpenSSL 3.0+ enforces SHA-256+, RSA 2048+).
 - R7 (S2) is backend-dependent - libcurl relies on the SSL backend for cryptographic strength enforcement.
 
+## ⚠️ CRITICAL: Applicability Check
+
+**This ruleset applies ONLY to binaries that implement TLS clients using libcurl.**
+
+### Required Functions for Applicability
+
+A binary MUST call at least one of these to be applicable:
+- `curl_easy_perform()` - Execute single transfer
+- `curl_multi_perform()` - Execute multi-handle transfer
+
+### Non-Applicable: Utility-Only Usage
+
+If a binary only imports these functions WITHOUT `curl_easy_perform`/`curl_multi_perform`:
+
+| Function | Purpose | TLS Relevance |
+|----------|---------|---------------|
+| `curl_easy_init` | Create handle | Setup only |
+| `curl_easy_cleanup` | Destroy handle | Cleanup only |
+| `curl_easy_escape` | URL-encode string | Utility only |
+| `curl_easy_unescape` | URL-decode string | Utility only |
+| `curl_free` | Free memory | Utility only |
+| `curl_easy_strerror` | Error message | Utility only |
+
+**→ Set `applicable=false` with reason: "Binary uses libcurl utility functions only (no curl_easy_perform or curl_multi_perform)"**
+
+### Binary Analysis Flow
+
+1. **FIRST**: Check for `curl_easy_perform` or `curl_multi_perform` imports/calls
+   - Use `list_functions_filter(filter="curl_easy_perform")` or `list_imports`
+   - Search strings: `list_strings_filter(filter="curl_easy_perform")`
+
+2. **If NOT found**:
+   - Set `applicable=false`
+   - Reason: "Binary uses libcurl utility functions only"
+
+3. **If found**:
+   - Continue with rule analysis (R1-R8)
+
+### Delegated TLS Clients
+
+If the binary imports functions that handle TLS internally (e.g., `Send_Mail_Direct`, `NotificationOauth::*`), but doesn't call `curl_easy_perform` itself:
+- The TLS implementation is in the **library** defining those functions
+- This binary is NOT the TLS client → NOT APPLICABLE
+- The library should be analyzed separately
+
 ## Binary Analysis Reference
 
 **CRITICAL**: When analyzing compiled binaries, `curl_easy_setopt()` calls show numeric option codes instead of symbolic names.
