@@ -136,6 +136,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cxxfilt"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/dc/71ac606f7dfa71d49e3dc126b49b18daefaf6bd953078858af30fde40702/cxxfilt-0.3.0.tar.gz", hash = "sha256:7df6464ba5e8efbf0d8974c0b2c78b32546676f06059a83515dbdfa559b34214", size = 4806, upload-time = "2021-08-21T16:48:04.038Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/29/23572dc59bf4a3984fe3c5fc242f73be916785ee93387dd95c972dbf584e/cxxfilt-0.3.0-py2.py3-none-any.whl", hash = "sha256:774e85a8d0157775ed43276d89397d924b104135762d86b3a95f81f203094e07", size = 4649, upload-time = "2021-08-21T16:48:02.953Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1150,6 +1159,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
+    { name = "cxxfilt" },
     { name = "ida-domain" },
     { name = "idapro" },
     { name = "langchain" },
@@ -1171,6 +1181,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "cxxfilt", specifier = ">=0.3.0" },
     { name = "ida-domain", specifier = ">=0.2.0" },
     { name = "idapro", specifier = ">=0.0.6" },
     { name = "langchain", specifier = ">=1.0.1" },
