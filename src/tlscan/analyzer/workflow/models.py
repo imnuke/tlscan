@@ -114,6 +114,22 @@ class VariableSpec(BaseModel):
         description="Parameter name if tracing function parameter (e.g., 'mode', 'arg1')"
     )
 
+    usage_address: Optional[str] = Field(
+        None,
+        description=(
+            "Hex address where variable is used in security-relevant context "
+            "(e.g., '0x407a8c'). Restricts dataflow to assignments before this point."
+        )
+    )
+
+    usage_context: Optional[str] = Field(
+        None,
+        description=(
+            "How/where the variable is used at the usage point "
+            "(e.g., '4th argument to Execute_Command_Line')"
+        )
+    )
+
 
 class DataflowTask(BaseModel):
     """
@@ -204,6 +220,22 @@ class RuleCondition(BaseModel):
         description=(
             "Mapping of values to security outcomes. "
             "Example: {'0': 'UNSATISFIED - disables verification', '1': 'SATISFIED - enables verification'}"
+        )
+    )
+
+    usage_address: Optional[str] = Field(
+        None,
+        description=(
+            "Hex address where variable is used in security-relevant context "
+            "(e.g., '0x407a8c'). Restricts dataflow to assignments before this point."
+        )
+    )
+
+    usage_context: Optional[str] = Field(
+        None,
+        description=(
+            "How/where the variable is used at the usage point "
+            "(e.g., '4th argument to Execute_Command_Line')"
         )
     )
 

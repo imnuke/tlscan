@@ -223,6 +223,8 @@ async def ssl_analysis_node(
                     function=cond.function,
                     function_address=cond.function_address,
                     security_mapping=cond.security_mapping,
+                    usage_address=cond.usage_address,
+                    usage_context=cond.usage_context,
                 )
                 for cond in rule.conditions
             ]
@@ -448,18 +450,34 @@ async def execute_single_dataflow_task(
         raise ValueError(f"Unknown task type: {task_type}")
 
     # Build request message
+    def format_variable_desc(v: VariableSpec, include_address: bool) -> str:
+        """Format a variable for the dataflow request message."""
+        if include_address:
+            base = f"  - Variable '{v.variable}' in function '{v.function}' at {v.function_address or 'unknown'}"
+        else:
+            base = f"  - Variable '{v.variable}' in function '{v.function}'"
+        # Add usage scope info if available
+        if v.usage_address or v.usage_context:
+            usage_parts = []
+            if v.usage_address:
+                usage_parts.append(f"usage at {v.usage_address}")
+            if v.usage_context:
+                usage_parts.append(v.usage_context)
+            base += f"\n    Usage: {', '.join(usage_parts)}"
+        return base
+
     if variables:
         # Detect cross-binary task by checking if binary_path is set
         if task.binary_path:
             # Cross-binary analysis: omit address clause since we're looking for function calls
             variables_desc = "\n".join([
-                f"  - Variable '{v.variable}' in function '{v.function}'"
+                format_variable_desc(v, include_address=False)
                 for v in variables
             ])
         else:
             # Regular dataflow: include address if available
             variables_desc = "\n".join([
-                f"  - Variable '{v.variable}' in function '{v.function}' at {v.function_address or 'unknown'}"
+                format_variable_desc(v, include_address=True)
                 for v in variables
             ])
 

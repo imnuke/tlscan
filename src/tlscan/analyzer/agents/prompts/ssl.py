@@ -44,14 +44,25 @@ For conditional result, include conditions array with:
   "variable": "v20",  // ACTUAL variable name from pseudocode, NOT descriptive names
   "function": "upscli_init",
   "function_address": "0x5be7",
+  "usage_address": "0x5c4a",  // Address where variable is USED in security-critical call
+  "usage_context": "2nd argument to SSL_CTX_set_verify",  // How the variable is used
   "security_mapping": {{"0": "unsatisfied", "1": "satisfied"}}
 }}
 
-CRITICAL for conditions:
+CRITICAL for conditions - VARIABLE NAMES:
 - Use ACTUAL variable names from the code (e.g., "v20", "a1", "param2", "$SSL_VERIFY")
 - DO NOT make up descriptive names like "verify_flag" or "ssl_mode"
 - The dataflow agent will search for these exact variable names in the code
 - Example: If code shows "if (v20 != 0)" or "if [ $SSL_VERIFY ]", use the actual variable name
+
+CRITICAL for conditions - USAGE ADDRESS:
+- usage_address: The ADDRESS of the instruction where the variable is USED (not defined)
+  - Example: If "Execute_Command_Line(..., s, ...)" is at 0x407a8c, usage_address="0x407a8c"
+  - This restricts dataflow tracing to assignments BEFORE this address
+  - Assignments AFTER the usage point cannot affect the value used
+- usage_context: Describes HOW the variable is used at that address
+  - Example: "4th argument to Execute_Command_Line", "passed to SSL_set_verify"
+  - Helps the dataflow agent understand the security relevance
 
 WHAT IS A VALID CONDITION (when to use CONDITIONAL):
 - ONLY use CONDITIONAL when the security outcome depends on a RUNTIME VARIABLE from the analyzed code
