@@ -8,9 +8,6 @@ from .base import (
     MatchType,
 )
 
-# Import backend symbols from lib_scan (single source of truth)
-from ...lib_scan.backends import CURL_BACKEND_SYMBOLS
-
 # Indicator sets for libcurl client detection
 LIBCURL_INDICATORS = [
     IndicatorSet(
@@ -108,5 +105,4 @@ LIBCURL = LibraryDefinition(
     applicable_file_types=["elf_binary"],
     indicator_sets=LIBCURL_INDICATORS,
     scoring_rules=LIBCURL_SCORING_RULES,
-    backend_symbols=CURL_BACKEND_SYMBOLS,  # From lib_scan.backends
 )

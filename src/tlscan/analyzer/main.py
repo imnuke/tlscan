@@ -318,15 +318,6 @@ async def main(
                             if ver.version:
                                 source = f" from {ver.source_path}" if ver.source_path else ""
                                 line = f"    └─ {lib_id}: {ver.version} ({ver.confidence.value}){source}"
-                                # Add backend info for curl/libcurl/wget
-                                if ver.backend:
-                                    backend_str = ver.backend.name
-                                    if ver.backend.version:
-                                        backend_str += f" {ver.backend.version}"
-                                    line += f" \\[backend: {backend_str}]"
-                                    # Add config info if available
-                                    if ver.backend.config and ver.backend.config.min_protocol:
-                                        line += f" \\[min: {ver.backend.config.min_protocol}]"
                                 console.print(f"[dim]{line}[/dim]")
 
                     if library_versions.libraries:
@@ -334,15 +325,6 @@ async def main(
                         for lib_id, ver in sorted(library_versions.libraries.items()):
                             if ver.version:
                                 line = f"    └─ {lib_id}: {ver.version} ({ver.confidence.value})"
-                                # Add backend info for curl/libcurl
-                                if ver.backend:
-                                    backend_str = ver.backend.name
-                                    if ver.backend.version:
-                                        backend_str += f" {ver.backend.version}"
-                                    line += f" \\[backend: {backend_str}]"
-                                    # Add config info if available
-                                    if ver.backend.config and ver.backend.config.min_protocol:
-                                        line += f" \\[min: {ver.backend.config.min_protocol}]"
                                 console.print(f"[dim]{line}[/dim]")
 
                     console.print("[green]✓ Library versions loaded[/green]")

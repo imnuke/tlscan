@@ -68,21 +68,7 @@ def format_firmware_versions(firmware_versions: Dict[str, Dict[str, Any]]) -> st
         method = info.get("method", "unknown")
         source = info.get("source_path", "")
 
-        # Build version line with optional backend
-        # NOTE: Escape square brackets to prevent Rich from interpreting as markup
         line = f"  {lib_type}: {version} ({confidence} confidence, {method})"
-        backend = info.get("backend")
-        if backend:
-            backend_str = backend.get("name", "")
-            if backend.get("version"):
-                backend_str += f" {backend['version']}"
-            # Escape the opening bracket for Rich compatibility
-            line += f" \\[backend: {backend_str}]"
-
-            # Add config info if available
-            config = backend.get("config")
-            if config and config.get("min_protocol"):
-                line += f" \\[min: {config['min_protocol']}]"
         lines.append(line)
 
         if source:
@@ -163,20 +149,6 @@ def save_to_cache(
                     ver_data["details"] = ver.details
                 if ver.source_path:
                     ver_data["source_path"] = ver.source_path
-                if ver.backend:
-                    backend_data: Dict[str, Any] = {
-                        "name": ver.backend.name,
-                        "version": ver.backend.version,
-                        "confidence": ver.backend.confidence.value,
-                        "detection_method": ver.backend.detection_method,
-                    }
-                    if ver.backend.config:
-                        backend_data["config"] = {
-                            "min_protocol": ver.backend.config.min_protocol,
-                            "max_protocol": ver.backend.config.max_protocol,
-                            "config_source": ver.backend.config.config_source,
-                        }
-                    ver_data["backend"] = backend_data
                 version_dict[lib_id] = ver_data
 
             binary_versions[rel_path] = version_dict

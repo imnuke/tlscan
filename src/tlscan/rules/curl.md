@@ -230,34 +230,21 @@ The effective minimum TLS version = max(curl_default, backend_minimum)
 | 7.50.0 | GnuTLS 3.7.0 | - | TLS 1.2 | SATISFIED |
 | Any | OpenSSL 3.0+ | (none) | TLS 1.2 | SATISFIED |
 
-**Resolution logic**:
-1. If explicit --tlsv1.2 or --tlsv1.3 → SATISFIED
-2. If explicit --tlsv1.0 or --tlsv1.1:
-   - Check backend config MinProtocol: if ≥ TLS 1.2 → SATISFIED (backend refuses lower)
-   - Otherwise → UNSATISFIED (insecure negotiation possible)
-3. If no flag, both curl and backend versions known → Use max(curl_default, backend_minimum)
-4. If backend config MinProtocol found → Use that as backend_minimum
-5. If no config but backend version known → Use Library Default from table
-6. If neither curl nor backend known → UNDETERMINED
-
 **Detection Patterns**:
 - `curl --tlsv1.2 https://...` → SATISFIED (TLS 1.2 minimum)
 - `curl --tlsv1.3 https://...` → SATISFIED (TLS 1.3 minimum)
-- `curl --tlsv1 https://...` → Check backend config/version for effective minimum
-- `curl --tlsv1.0 https://...` → Check backend config/version for effective minimum
-- `curl --tlsv1.1 https://...` → Check backend config/version for effective minimum
-- `curl https://...` (no TLS option) → Use resolution logic above
+- `curl --tlsv1 https://...` → UNSATISFIED (insecure version)
+- `curl --tlsv1.0 https://...` → UNSATISFIED (insecure version)
+- `curl --tlsv1.1 https://...` → UNSATISFIED (insecure version)
+- `curl https://...` (no TLS option) → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `--tlsv1.2` or `--tlsv1.3` used | SATISFIED | Secure minimum enforced |
-| `--tlsv1.*` with backend min ≥ TLS 1.2 | SATISFIED | Backend refuses insecure protocols |
-| `--tlsv1.*` with backend min < TLS 1.2 | UNSATISFIED | Insecure negotiation possible |
+| `--tlsv1`, `--tlsv1.0`, `--tlsv1.1` | UNSATISFIED | Insecure version explicitly set |
 | `--sslv2`, `--sslv3` | UNSATISFIED | Insecure protocols |
-| No flag, effective min ≥ TLS 1.2 | SATISFIED | Resolution yields secure minimum |
-| No flag, effective min < TLS 1.2 | UNSATISFIED | Resolution yields insecure minimum |
-| No flag, cannot determine effective min | UNDETERMINED | Insufficient version info |
+| No TLS version flag | DEFAULT | Not explicitly configured |
 | TLS option from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -313,16 +300,14 @@ HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 **Detection Patterns**:
 - `--ciphers 'HIGH:!aNULL:!eNULL'` → SATISFIED (strong ciphers)
 - `--ciphers` containing `NULL`, `EXPORT`, `RC4` → UNSATISFIED
-- No `--ciphers`, backend SATISFIED in table → SATISFIED (secure backend default)
-- No `--ciphers`, backend unknown → CONDITIONAL (cannot verify default)
+- No `--ciphers` → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Strong cipher string configured | SATISFIED | Weak ciphers excluded |
 | Cipher string contains weak ciphers | UNSATISFIED | Insecure ciphers allowed |
-| No `--ciphers`, backend detected as SATISFIED | SATISFIED | Uses secure backend default |
-| No `--ciphers`, backend unknown | CONDITIONAL | Cannot verify backend default |
+| No `--ciphers` | DEFAULT | Not explicitly configured |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -363,21 +348,17 @@ HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 | SecureTransport (macOS) | May use system OCSP | CONDITIONAL |
 | wolfSSL | DISABLED | CONDITIONAL |
 
-**Resolution**: When no revocation option specified and backend is detected, use Verdict column.
-**Note**: CONDITIONAL (not UNSATISFIED) because S1 is a SHOULD requirement, not MUST.
-
 **Detection Patterns**:
 - `--ssl-revoke-best-effort` → SATISFIED (revocation enabled)
-- `--ssl-no-revoke` → CONDITIONAL (explicit disable of SHOULD)
-- No revocation option, backend known → use Verdict from table
+- `--ssl-no-revoke` → UNSATISFIED (explicitly disabled)
+- No revocation option → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `--ssl-revoke-best-effort` used | SATISFIED | Revocation checking enabled |
 | `--ssl-no-revoke` used | UNSATISFIED | Revocation checking explicitly disabled |
-| No option, Schannel backend | SATISFIED | Schannel enables CRL by default |
-| No option, other backend | CONDITIONAL | SHOULD requirement not satisfied |
+| No revocation option | DEFAULT | Not explicitly configured |
 
 ---
 
@@ -406,9 +387,10 @@ HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Backend version with secure defaults (see table) | SATISFIED | Backend enforces strong crypto |
-| Backend version with weak defaults (see table) | UNSATISFIED | Backend allows weak crypto |
-| Backend version unknown | UNDETERMINED | Cannot determine backend security |
+| No configuration | DEFAULT | Not explicitly configured (backend-dependent) |
+
+**Note**: curl has no direct option to configure cryptographic strength. This is entirely
+backend-dependent with no code-level configuration possible, so result is always DEFAULT.
 
 ---
 
@@ -509,14 +491,14 @@ if [ -f ~/.curlrc ]; then ...
 
 ## Result Determination Summary
 
-| Priority | Scenario | Result |
-|----------|----------|--------|
-| MUST | Option explicitly secure | SATISFIED |
-| MUST | Option explicitly insecure | UNSATISFIED |
-| MUST | No option, secure default | SATISFIED |
-| MUST | No option, version-dependent default | UNDETERMINED |
-| SHOULD | Feature enabled | SATISFIED |
-| SHOULD | Feature explicitly disabled | UNSATISFIED |
-| SHOULD | Feature not configured | UNDETERMINED |
-| MAY | Feature implemented | SATISFIED |
-| MAY | Feature not implemented | UNDETERMINED |
+| Scenario | Result |
+|----------|--------|
+| Option explicitly set to secure value | SATISFIED |
+| Option explicitly set to insecure value | UNSATISFIED |
+| Option set to runtime variable | CONDITIONAL |
+| Option NOT configured | DEFAULT |
+| Cannot find relevant code at all | UNDETERMINED |
+
+**IMPORTANT**: Use DEFAULT (not SATISFIED) when an option is not explicitly configured,
+even if the tool has secure defaults. The agent should NOT infer results based on
+knowledge of tool/library default behavior.

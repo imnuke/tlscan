@@ -318,20 +318,17 @@ void handleErrors(const QList<QSslError> &errors) {
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Default (no `setProtocol` call) + Qt 5.15+ | SATISFIED | SecureProtocols defaults to TLS 1.2+ |
-| Default + Qt 5.12-5.14 detected | UNSATISFIED | Allows TLS 1.0 by default |
-| Default + Qt < 5.12 detected | UNSATISFIED | Allows TLS 1.0 by default |
-| Default + Qt version unknown | UNDETERMINED | Cannot determine Qt version |
 | `setProtocol(QSsl::TlsV1_2)` | SATISFIED | TLS 1.2 enforced |
 | `setProtocol(QSsl::TlsV1_2OrLater)` | SATISFIED | TLS 1.2+ enforced |
 | `setProtocol(QSsl::TlsV1_3)` | SATISFIED | TLS 1.3 only |
-| `setProtocol(QSsl::SecureProtocols)` + Qt 5.15+ | SATISFIED | Uses Qt's secure default |
-| `setProtocol(QSsl::SecureProtocols)` + Qt < 5.15 | UNSATISFIED | May allow TLS 1.0 |
+| `setProtocol(QSsl::TlsV1_3OrLater)` | SATISFIED | TLS 1.3+ enforced |
 | `setProtocol(QSsl::TlsV1_0)` or value 0 | UNSATISFIED | TLS 1.0 only |
 | `setProtocol(QSsl::TlsV1_1)` or value 1 | UNSATISFIED | TLS 1.1 only |
 | `setProtocol(QSsl::AnyProtocol)` or value 3 | UNSATISFIED | Allows negotiation to old protocols |
 | `setProtocol(QSsl::TlsV1_0OrLater)` or value 5 | UNSATISFIED | Allows TLS 1.0 |
 | `setProtocol(QSsl::TlsV1_1OrLater)` or value 6 | UNSATISFIED | Allows TLS 1.1 |
+| No `setProtocol` call | DEFAULT | Not explicitly configured |
+| `setProtocol(QSsl::SecureProtocols)` | DEFAULT | Uses Qt's version-dependent default |
 | Protocol from runtime variable | CONDITIONAL | Trace variable |
 
 ---
@@ -432,8 +429,7 @@ Qt's default cipher list documentation: "The cipher list is restricted to those 
 |----------|--------|--------|
 | `setOcspStaplingEnabled(true)` | SATISFIED | OCSP stapling enabled |
 | Manual OCSP verification implemented | SATISFIED | Revocation checked |
-| Default configuration (no OCSP) | UNSATISFIED | No revocation checking |
-| Qt < 5.13 without manual OCSP | UNSATISFIED | No API available |
+| No OCSP configuration | DEFAULT | Not explicitly configured |
 | Revocation check from config | CONDITIONAL | Trace configuration |
 
 ---
@@ -468,10 +464,9 @@ Qt's default cipher list documentation: "The cipher list is restricted to those 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Default configuration (Qt 5.8+) | SATISFIED | 2048-bit DH by default |
-| Custom strong DH parameters | SATISFIED | Adequate key strength |
+| Custom strong DH parameters (2048-bit+) | SATISFIED | Adequate key strength |
 | `setDiffieHellmanParameters()` with weak DH | UNSATISFIED | Weak DH parameters |
-| No strength checking + old Qt | UNDETERMINED | Backend-dependent |
+| No crypto strength configuration | DEFAULT | Not explicitly configured |
 
 ---
 
@@ -532,24 +527,24 @@ void handleSslErrors(const QList<QSslError> &errors) {
 
 ## Result Determination Summary
 
-| Priority | Scenario | Result |
-|----------|----------|--------|
-| MUST | Default Qt configuration (no changes) | SATISFIED (secure defaults) |
-| MUST | `setPeerVerifyMode(VerifyNone)` | UNSATISFIED |
-| MUST | `ignoreSslErrors()` called unconditionally | UNSATISFIED |
-| MUST | `setProtocol(TlsV1_0)` or `AnyProtocol` | UNSATISFIED |
-| MUST | Option from runtime variable | CONDITIONAL |
-| SHOULD | OCSP enabled | SATISFIED |
-| SHOULD | No revocation checking | UNSATISFIED |
-| SHOULD | Feature not configured | UNDETERMINED |
-| MAY | Pinning implemented | SATISFIED |
-| MAY | No pinning | UNSATISFIED |
+| Scenario | Result |
+|----------|--------|
+| Option explicitly set to secure value | SATISFIED |
+| Option explicitly set to insecure value | UNSATISFIED |
+| `ignoreSslErrors()` called unconditionally | UNSATISFIED |
+| Option set to runtime variable | CONDITIONAL |
+| Option NOT configured | DEFAULT |
+| Cannot find relevant code at all | UNDETERMINED |
+
+**Note**: DEFAULT means the option was not explicitly configured in code. The actual
+security depends on Qt and backend versions at runtime, which cannot be determined
+from static analysis alone.
 
 ### Key Insight: Qt's Secure Defaults
 
 Unlike some other TLS libraries, Qt has **secure defaults**:
 - `AutoVerifyPeer` enables certificate verification for clients
-- `SecureProtocols` restricts to modern TLS versions
+- `SecureProtocols` restricts to modern TLS versions (in newer Qt)
 - Default cipher list excludes weak ciphers
 
 The primary vulnerability vector is **`ignoreSslErrors()`** - developers often add this during development and forget to remove it, or use it incorrectly to bypass certificate validation.

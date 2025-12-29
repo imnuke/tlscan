@@ -41,7 +41,7 @@ When code does NOT explicitly configure an option, OpenSSL uses these version-sp
 |---------|---------------|----------|----------|
 | All | `ALL:!COMPLEMENTOFDEFAULT:!eNULL` | RC4, aNULL, eNULL, EXPORT, DES, LOW | SECURE |
 
-**Resolution**: No `SSL_CTX_set_cipher_list()` or `SSL_CTX_set_ciphersuites()` → **SATISFIED** (defaults are secure)
+**Resolution**: No `SSL_CTX_set_cipher_list()` or `SSL_CTX_set_ciphersuites()` → **DEFAULT** (not explicitly configured)
 
 ### Default Minimum Protocol (R4)
 
@@ -50,7 +50,7 @@ When code does NOT explicitly configure an option, OpenSSL uses these version-sp
 | < 3.0 | TLS 1.0 | INSECURE |
 | 3.0+ | TLS 1.2 (via security level 1) | SECURE |
 
-**Resolution**: No protocol version set → Check OpenSSL version to determine result
+**Resolution**: No protocol version set → **DEFAULT** (not explicitly configured)
 
 ### Default Cryptographic Strength (R7)
 
@@ -59,9 +59,7 @@ When code does NOT explicitly configure an option, OpenSSL uses these version-sp
 | 1.1.x | Level 1 | 1024-bit | SHA-1 allowed | INSECURE |
 | 3.0+ | Level 2 | 2048-bit | SHA-256+ | SECURE |
 
-**Resolution**:
-- No strength checking + OpenSSL 3.0+ → **SATISFIED** (security level 2 by default)
-- No strength checking + OpenSSL < 3.0 → **UNSATISFIED** (security level 1 allows weak crypto)
+**Resolution**: No strength checking → **DEFAULT** (not explicitly configured, version-dependent)
 
 ### Default Revocation Checking (R6)
 
@@ -69,7 +67,7 @@ When code does NOT explicitly configure an option, OpenSSL uses these version-sp
 |---------|---------|----------|
 | All | Disabled | N/A (SHOULD requirement) |
 
-**Resolution**: No revocation checking → **UNSATISFIED** (revocation checking not implemented)
+**Resolution**: No revocation checking → **DEFAULT** (not explicitly configured)
 
 ---
 
@@ -476,9 +474,7 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 | `SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION)` | SATISFIED | TLS 1.2+ enforced |
 | `SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3\|SSL_OP_NO_TLSv1\|SSL_OP_NO_TLSv1_1)` | SATISFIED | Legacy disabling method |
 | `SSL_CTX_set_options` without disabling TLS 1.0/1.1 | UNSATISFIED | Incomplete protocol restriction |
-| No protocol restrictions + OpenSSL 3.0+ | SATISFIED | TLS 1.2 enforced by default (security level 1) |
-| No protocol restrictions + OpenSSL < 3.0 | UNSATISFIED | Allows TLS 1.0/1.1 by default |
-| No protocol restrictions + version unknown | UNDETERMINED | Cannot determine without version |
+| No protocol restrictions | DEFAULT | Not explicitly configured |
 | `SSL_CTX_set_min_proto_version(ctx, TLS1_VERSION)` | UNSATISFIED | Allows TLS 1.0 |
 | `SSLv3_client_method()` used | UNSATISFIED | Forces SSL 3.0 only |
 
@@ -525,9 +521,7 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 |----------|--------|--------|
 | Cipher string excludes NULL, EXPORT, RC4, weak ciphers | SATISFIED | Strong ciphers only |
 | `SSL_CTX_set_cipher_list(ctx, "ALL")` | UNSATISFIED | Allows weak ciphers |
-| No cipher restrictions + OpenSSL 1.1.1+ | SATISFIED | Modern defaults exclude weak ciphers |
-| No cipher restrictions + OpenSSL < 1.1.1 | UNSATISFIED | May include weak ciphers |
-| No cipher restrictions + version unknown | UNDETERMINED | Cannot determine defaults |
+| No cipher restrictions | DEFAULT | Not explicitly configured |
 | Cipher string from config/env | CONDITIONAL | Trace the value |
 | TLS 1.3 only (OpenSSL 1.1.1+) | SATISFIED | TLS 1.3 has no weak ciphers |
 
@@ -561,7 +555,7 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 |----------|--------|--------|
 | CRL or OCSP checking implemented | SATISFIED | Revocation verified |
 | OCSP stapling enabled | SATISFIED | Server provides OCSP response |
-| No revocation checking | UNSATISFIED | Revocation checking not implemented |
+| No revocation checking | DEFAULT | Not explicitly configured |
 | Revocation check from config | CONDITIONAL | Trace configuration |
 
 ---
@@ -601,9 +595,7 @@ X509_NAME_get_text_by_NID(subject, NID_commonName, cn, sizeof(cn));
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Certificate strength validation implemented | SATISFIED | Strong crypto enforced |
-| No strength checking + OpenSSL 3.0+ | SATISFIED | Security level 2 by default (see Version Defaults) |
-| No strength checking + OpenSSL < 3.0 | UNSATISFIED | Security level 1 allows weak crypto |
-| No strength checking + version unknown | UNDETERMINED | Cannot determine without version |
+| No strength checking | DEFAULT | Not explicitly configured |
 | MD5/SHA-1 signatures explicitly rejected | SATISFIED | Weak algorithms blocked |
 
 ---

@@ -123,16 +123,15 @@ This document defines library-specific security rules for libcurl-based TLS clie
 **Detection Patterns**:
 - `curl_easy_setopt(handle, 64, 0)` → UNSATISFIED (verification disabled)
 - `curl_easy_setopt(handle, 64, 1)` → SATISFIED (verification enabled)
-- No call to option 64 → SATISFIED (uses secure default)
+- No call to option 64 → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `CURLOPT_SSL_VERIFYPEER` set to 1 | SATISFIED | Verification enabled |
-| `CURLOPT_SSL_VERIFYPEER` not set | SATISFIED | Default is 1 (enabled) |
+| `CURLOPT_SSL_VERIFYPEER` not set | DEFAULT | Not explicitly configured |
 | `CURLOPT_SSL_VERIFYPEER` set to 0 | UNSATISFIED | Verification disabled |
 | `curl_easy_setopt(h, 64, var)` | CONDITIONAL | Trace variable |
-| `CURLOPT_CAINFO`/`CAPATH` not set | CONDITIONAL | May use system CA store |
 
 ---
 
@@ -169,13 +168,13 @@ This document defines library-specific security rules for libcurl-based TLS clie
 - `curl_easy_setopt(handle, 81, 0)` → UNSATISFIED (hostname verification disabled)
 - `curl_easy_setopt(handle, 81, 1)` → UNSATISFIED (unreliable/deprecated)
 - `curl_easy_setopt(handle, 81, 2)` → SATISFIED (verification enabled)
-- No call to option 81 → SATISFIED (default is 2)
+- No call to option 81 → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `CURLOPT_SSL_VERIFYHOST` set to 2 | SATISFIED | Strict hostname check |
-| `CURLOPT_SSL_VERIFYHOST` not set | SATISFIED | Default is 2 |
+| `CURLOPT_SSL_VERIFYHOST` not set | DEFAULT | Not explicitly configured |
 | `CURLOPT_SSL_VERIFYHOST` set to 0 | UNSATISFIED | Hostname check disabled |
 | `CURLOPT_SSL_VERIFYHOST` set to 1 | UNSATISFIED | Deprecated/unreliable |
 | `curl_easy_setopt(h, 81, var)` | CONDITIONAL | Trace variable |
@@ -233,44 +232,18 @@ This document defines library-specific security rules for libcurl-based TLS clie
 If the backend config (e.g., openssl.cnf) sets MinProtocol=TLSv1.2, the backend
 will refuse connections below TLS 1.2 even if libcurl's default would allow TLS 1.0.
 
-**TLS Version Resolution (when CURLOPT_SSLVERSION=0 or not set)**:
-
-The effective minimum TLS version = max(libcurl_default, backend_minimum)
-
-| libcurl Version | Backend | Config MinProtocol | Effective Min | Result |
-|-----------------|---------|-------------------|---------------|--------|
-| 8.0.1 | OpenSSL 1.1.1 | TLSv1.2 | TLS 1.2 | SATISFIED |
-| 8.0.1 | OpenSSL 1.1.1 | (none) | TLS 1.0 | UNSATISFIED |
-| 8.16.0 | OpenSSL 1.1.1 | (none) | TLS 1.2 | SATISFIED |
-| 7.50.0 | GnuTLS 3.7.0 | - | TLS 1.2 | SATISFIED |
-| Any | OpenSSL 3.0+ | (none) | TLS 1.2 | SATISFIED |
-
-**Resolution logic**:
-1. If CURLOPT_SSLVERSION ≥ 6 (TLS 1.2+) → SATISFIED
-2. If CURLOPT_SSLVERSION > 0 and < 6 (explicit insecure):
-   - Check backend config MinProtocol: if ≥ TLS 1.2 → SATISFIED (backend refuses lower)
-   - Otherwise → UNSATISFIED (insecure negotiation possible)
-3. If CURLOPT_SSLVERSION = 0 or not set:
-   - Use max(libcurl_default, backend_minimum) as effective minimum
-4. If backend config MinProtocol found → Use that as backend_minimum
-5. If no config but backend version known → Use Library Default from table
-6. If neither libcurl nor backend known → UNDETERMINED
-
 **Detection Patterns**:
 - `curl_easy_setopt(handle, 32, 6)` → SATISFIED (TLS 1.2 minimum)
 - `curl_easy_setopt(handle, 32, 7)` → SATISFIED (TLS 1.3 minimum)
-- `curl_easy_setopt(handle, 32, 1-5)` → Check backend config/version for effective minimum
-- No call to option 32 → Use resolution logic above
+- `curl_easy_setopt(handle, 32, 1-5)` → UNSATISFIED (insecure version explicitly set)
+- No call to option 32 → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | `CURLOPT_SSLVERSION` ≥ 6 | SATISFIED | TLS 1.2+ enforced |
-| `CURLOPT_SSLVERSION` 1-5 with backend min ≥ TLS 1.2 | SATISFIED | Backend refuses insecure protocols |
-| `CURLOPT_SSLVERSION` 1-5 with backend min < TLS 1.2 | UNSATISFIED | Insecure negotiation possible |
-| SSLVERSION=0/not set, effective min ≥ TLS 1.2 | SATISFIED | Resolution yields secure minimum |
-| SSLVERSION=0/not set, effective min < TLS 1.2 | UNSATISFIED | Resolution yields insecure minimum |
-| SSLVERSION=0/not set, cannot determine effective min | UNDETERMINED | Insufficient version info |
+| `CURLOPT_SSLVERSION` 1-5 | UNSATISFIED | Insecure version explicitly set |
+| `CURLOPT_SSLVERSION` not set | DEFAULT | Not explicitly configured |
 | `curl_easy_setopt(h, 32, var)` | CONDITIONAL | Trace variable |
 
 ---
@@ -303,27 +276,17 @@ The effective minimum TLS version = max(libcurl_default, backend_minimum)
 | mbedTLS | 2.x+ | Secure defaults | SECURE |
 | wolfSSL | 4.x+ | Secure defaults | SECURE |
 
-**Cipher Resolution (when no `CURLOPT_SSL_CIPHER_LIST` set)**:
-1. If explicit cipher string with strong ciphers → SATISFIED
-2. If explicit cipher string with weak ciphers → UNSATISFIED
-3. If no config and backend detected as SATISFIED in table → SATISFIED
-4. If no config and backend detected as INSECURE (OpenSSL 1.0.x) → UNSATISFIED
-5. If no config and backend version unknown → UNDETERMINED
-
 **Detection Patterns**:
 - Cipher string containing `NULL`, `EXPORT`, `RC4`, `DES` → UNSATISFIED
 - Cipher string with `HIGH:!aNULL:!eNULL:!EXPORT` → SATISFIED
-- No cipher config, backend SATISFIED in table → SATISFIED (secure backend default)
-- No cipher config, backend unknown → UNDETERMINED (cannot verify default)
+- No cipher config → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Strong cipher string configured | SATISFIED | Weak ciphers excluded |
 | Weak ciphers in string | UNSATISFIED | Insecure ciphers allowed |
-| No cipher config, backend detected as SATISFIED | SATISFIED | Uses secure backend default |
-| No cipher config, backend detected as INSECURE | UNSATISFIED | Backend may use weak ciphers |
-| No cipher config, backend version unknown | UNDETERMINED | Cannot verify backend default |
+| No cipher config | DEFAULT | Not explicitly configured |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -359,21 +322,17 @@ The effective minimum TLS version = max(libcurl_default, backend_minimum)
 | SecureTransport (macOS) | May use system OCSP | CONDITIONAL |
 | wolfSSL | DISABLED | CONDITIONAL |
 
-**Resolution**: When no revocation config and backend is detected, use Verdict column.
-**Note**: CONDITIONAL (not UNSATISFIED) because S1 is a SHOULD requirement, not MUST.
-
 **Detection Patterns**:
 - `CURLSSLOPT_REVOKE_BEST_EFFORT` flag set → SATISFIED
-- `CURLSSLOPT_NO_REVOKE` flag set → CONDITIONAL (explicit disable of SHOULD)
-- No revocation config, backend known → use Verdict from table
+- `CURLSSLOPT_NO_REVOKE` flag set → UNSATISFIED (explicitly disabled)
+- No revocation config → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Revocation checking enabled | SATISFIED | CRL/OCSP check performed |
 | `CURLSSLOPT_NO_REVOKE` used | UNSATISFIED | Revocation checking explicitly disabled |
-| No config, Schannel backend | SATISFIED | Schannel enables CRL by default |
-| No config, other backend | CONDITIONAL | SHOULD requirement not satisfied |
+| No revocation config | DEFAULT | Not explicitly configured |
 
 ---
 
@@ -402,9 +361,10 @@ The effective minimum TLS version = max(libcurl_default, backend_minimum)
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Backend version with secure defaults (see table) | SATISFIED | Backend enforces strong crypto |
-| Backend version with weak defaults (see table) | UNSATISFIED | Backend allows weak crypto |
-| Backend version unknown | UNDETERMINED | Cannot determine backend security |
+| No configuration | DEFAULT | Not explicitly configured (backend-dependent) |
+
+**Note**: libcurl has no direct option to configure cryptographic strength. This is entirely
+backend-dependent with no code-level configuration possible, so result is always DEFAULT.
 
 ---
 
@@ -444,8 +404,11 @@ The effective minimum TLS version = max(libcurl_default, backend_minimum)
 | Scenario | Result | Example |
 |----------|--------|---------|
 | Option explicitly set to secure value | SATISFIED | `curl_easy_setopt(curl, 81, 2)` |
-| Option NOT set, default is secure | SATISFIED | `CURLOPT_SSL_VERIFYHOST` not called |
 | Option explicitly set to insecure value | UNSATISFIED | `curl_easy_setopt(curl, 64, 0)` |
-| Option NOT set, default is version-dependent | UNDETERMINED | `CURLOPT_SSLVERSION` not set |
 | Option set to runtime variable | CONDITIONAL | `curl_easy_setopt(curl, 64, config_value)` |
-| Cannot find relevant code | UNDETERMINED | No `curl_easy_setopt` calls found |
+| Option NOT configured | DEFAULT | `CURLOPT_SSL_VERIFYHOST` not called |
+| Cannot find relevant code at all | UNDETERMINED | No `curl_easy_setopt` calls found |
+
+**IMPORTANT**: Use DEFAULT (not SATISFIED) when an option is not explicitly configured,
+even if the library has secure defaults. The agent should NOT infer results based on
+knowledge of library default behavior.

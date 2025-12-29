@@ -6,7 +6,6 @@ as clients. Clean separation of concerns:
 - Data extraction (symbols, strings)
 - Library scoring (data-driven)
 - Version detection (only for positive detections)
-- Backend detection (only for curl-like libraries)
 """
 
 import os
@@ -24,7 +23,6 @@ from ..models import (
     ScanResult,
     DetectionResult,
     VersionInfo,
-    BackendInfo as BackendInfoModel,
     FileType,
     ConfidenceLevel,
 )
@@ -33,8 +31,8 @@ from .scoring import score_all_libraries
 from ..utils.elf import extract_symbols, is_probably_elf
 from ..utils.strings import extract_strings
 
-# Import version and backend detection from lib_scan
-from ..lib_scan import detect_library_version, detect_ssl_backend
+# Import version detection from lib_scan
+from ..lib_scan import detect_library_version
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +122,6 @@ def scan_file(
     2. Data extraction (symbols, strings)
     3. Library scoring (data-driven)
     4. Version detection (only for positive detections)
-    5. Backend detection (only for curl-like libraries)
 
     Args:
         path: Path to the file to scan
@@ -201,28 +198,6 @@ def scan_file(
                     details=ver_info.get("details"),
                     source_path=ver_info.get("source_path"),
                 )
-
-        # Backend detection (separate concern, only for curl-like libraries)
-        if "libcurl" in detections or "curl_wget" in detections:
-            backend = detect_ssl_backend(path, symbols)
-            if backend:
-                target_lib = "libcurl" if "libcurl" in detections else "curl_wget"
-                backend_model = BackendInfoModel(
-                    name=backend.name,
-                    version=backend.version,
-                    confidence=ConfidenceLevel(backend.confidence),
-                    detection_method=backend.detection_method,
-                )
-
-                if target_lib in versions:
-                    versions[target_lib].backend = backend_model
-                else:
-                    versions[target_lib] = VersionInfo(
-                        version="unknown",
-                        confidence=ConfidenceLevel.LOW,
-                        method="backend_only",
-                        backend=backend_model,
-                    )
 
     return ScanResult(
         path=path,

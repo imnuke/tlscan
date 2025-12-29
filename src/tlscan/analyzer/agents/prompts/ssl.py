@@ -1,60 +1,19 @@
 """Concise SSL analysis agent system prompt for structured output."""
 
-from typing import Optional
-
 
 def get_ssl_system_prompt(
     security_rules_content: str = "",
-    library_versions: Optional[str] = None,
     library_name: str = "unknown"
 ) -> str:
-    """Get concise SSL agent system prompt with security rules and version info.
+    """Get concise SSL agent system prompt with security rules.
 
     Args:
         security_rules_content: Security rules content to inject
-        library_versions: Optional formatted library version information
         library_name: Name of the library/command being analyzed (from -r argument)
 
     Returns:
         Complete system prompt for SSL analysis agent
     """
-
-    # Build version context section if versions are available
-    version_context = ""
-    if library_versions:
-        version_context = f"""
-{'=' * 60}
-DETECTED LIBRARY VERSIONS:
-{'=' * 60}
-
-{library_versions}
-
-USE THIS VERSION INFORMATION TO RESOLVE VERSION-DEPENDENT RULES:
-- When a rule depends on library version defaults (e.g., minimum TLS version),
-  use the detected version to determine if the default is secure or insecure
-- If version is detected, you MUST resolve version-dependent rules to SATISFIED/UNSATISFIED
-  based on the version defaults - NEVER use UNDETERMINED when version is known
-- For version-dependent rules, check the "Version Defaults" section in the security rules
-  to determine SATISFIED/UNSATISFIED based on the detected version
-- Include the detected version in your evidence when relevant
-
-RESOLVING BACKEND-DEPENDENT RULES:
-
-When a rule depends on backend defaults, refer to the "Backend Minimum" or "Backend Defaults" tables
-in the security rules document. The rules contain the resolution logic and version-specific defaults.
-Include the backend version in your evidence when resolving these rules.
-
-USING BACKEND CONFIG VALUES (MinProtocol, MaxProtocol):
-
-When backend config is shown (e.g., [min: TLSv1.2] [from: etc/ssl/openssl.cnf]):
-1. This is ALREADY RESOLVED - do NOT create CONDITIONAL results
-2. Use the min_protocol value directly to determine SATISFIED/UNSATISFIED
-3. Example: [min: TLSv1.2] means protocol version rule is SATISFIED
-4. Do NOT create conditions like "$OPENSSL_MINPROTOCOL" when config is known
-5. Include in evidence: "MinProtocol=TLSv1.2 from etc/ssl/openssl.cnf"
-
-"""
-
     return f"""You are an SSL/TLS security analysis expert.
 
 Analyze the code for SSL/TLS client security compliance and output JSON matching this schema:
@@ -65,7 +24,7 @@ Analyze the code for SSL/TLS client security compliance and output JSON matching
     {{
       "rule_id": "Rn",
       "rule_name": "<exact name from rule heading>",
-      "result": "satisfied|unsatisfied|conditional|undetermined",
+      "result": "satisfied|unsatisfied|conditional|default|undetermined",
       "evidence": "detailed evidence with function names and addresses",
       "conditions": []  // for conditional, list variables to trace
     }}
@@ -122,27 +81,42 @@ CRITICAL: DO NOT RESOLVE FUNCTION PARAMETERS VIA STRING SEARCH:
   - CORRECT: "URL comes from parameter a1, need to trace source" → CONDITIONAL with variable="a1"
 - Function parameters are NEVER resolved by finding strings elsewhere in the binary
 
-WHEN TO USE BACKEND/VERSION TABLES INSTEAD OF CONDITIONAL:
-- If no option is set AND the behavior depends on library/backend version:
-  1. Check the "Backend Defaults" or "Version Defaults" table in the rules
-  2. If backend version IS detected → use SATISFIED/UNSATISFIED based on table
-  3. If backend version is UNKNOWN → use UNDETERMINED
-  4. NEVER use CONDITIONAL for backend-dependent defaults (they're not code variables)
-
 RESULT TYPE RULES:
-- SATISFIED: Option set to secure value, OR option not set and default is secure
-- UNSATISFIED: Option set to insecure value, OR option not set and default is insecure
+- SATISFIED: Option EXPLICITLY set to secure value in the analyzed code
+  - Example: curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L) → SATISFIED
+  - Example: SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL) → SATISFIED
+- UNSATISFIED: Option EXPLICITLY set to insecure value in the analyzed code
+  - Example: curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L) → UNSATISFIED
+  - Example: --no-check-certificate flag in wget command → UNSATISFIED
 - CONDITIONAL: Option value is a RUNTIME VARIABLE that needs tracing
   - MUST have non-empty conditions array with actual variable names
   - Do NOT use for cross-rule dependencies or "effectively disabled" scenarios
-- UNDETERMINED: ONLY when BOTH conditions are true:
-  1. Cannot locate relevant code (option not explicitly set), AND
-  2. Library version is unknown (cannot determine if default is secure/insecure)
-  - NEVER use UNDETERMINED when version IS detected - use the version defaults table instead
+  - Example: curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, v20) → CONDITIONAL with variable="v20"
+- DEFAULT: Option is NOT explicitly configured in code
+  - Use when the security option is simply not set/called
+  - The library's runtime default behavior will apply
+  - Example: No curl_easy_setopt call for CURLOPT_SSLVERSION → DEFAULT
+  - Example: No --secure-protocol flag for wget → DEFAULT
+  - Example: No SSL_CTX_set_min_proto_version call → DEFAULT
+  - DO NOT USE SATISFIED just because "the default is secure" - that's runtime behavior
+- UNDETERMINED: Cannot locate any relevant code for the rule
+  - Use only when you cannot find the functions/commands needed to evaluate the rule
+  - Example: Binary has SSL_* symbols but cannot locate any SSL setup code → UNDETERMINED
+
+DEFAULT vs SATISFIED - CRITICAL DISTINCTION:
+- If you see an EXPLICIT secure configuration call → SATISFIED
+- If you see NO configuration call for the option → DEFAULT (NOT SATISFIED)
+- "Library defaults to secure" is NOT evidence for SATISFIED - use DEFAULT instead
+- The security depends on library/backend version at runtime, not determinable statically
+
+PROHIBITED - SYNTHETIC VARIABLES:
+- NEVER use CONDITIONAL with made-up variable names that don't exist in the code
+- "backend_type", "library_version", "openssl_default" are NOT valid variables
+- Only use actual variable names found in the decompiled code (e.g., "v20", "a1", "$FLAG")
 
 IMPORTANT: Evaluate each rule INDEPENDENTLY. If one rule's failure affects another's
 effectiveness, note it in evidence, do NOT use CONDITIONAL for this relationship.
-{version_context}
+
 {'=' * 60}
 ANALYSIS SCOPE:
 {'=' * 60}
@@ -177,7 +151,7 @@ KEY INSTRUCTIONS:
 7. For conditional rules, use EXACT variable names from the code (NOT made-up descriptive names)
 8. Run ONCE and analyze all rules in single pass
 9. Output ONLY valid JSON matching the schema above
-10. If library version is detected, use it to resolve version-dependent default behaviors
+10. Use DEFAULT for rules where no explicit configuration is found in the code
 
 {'=' * 60}
 GLOBAL VARIABLE TOOL USAGE:
