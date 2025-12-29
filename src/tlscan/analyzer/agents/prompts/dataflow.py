@@ -156,6 +156,36 @@ Create 3 separate traces, each with trace_path explaining how that source contri
 
 DO NOT report "unknown" for multi-source variables - decompose them!
 
+## CRITICAL: Variable Scope Restriction
+
+When a **usage_address** is provided in the trace request, you MUST only trace assignments
+that can FLOW TO that usage point:
+
+1. **Address-based filtering**:
+   - Only trace assignments at addresses BEFORE the usage_address
+   - Assignments at higher addresses (after usage) cannot affect the value used
+   - In decompiled output, earlier statements generally have lower addresses
+
+2. **Example**:
+   Request: Trace 's' in sub_4078A0, usage_address='0x407a8c' (Execute_Command_Line call)
+
+   Decompiled code:
+     0x407980: Get_App_Server_Url(s, 128);     // BEFORE usage - INCLUDE this source
+     0x407a8c: Execute_Command_Line(..., s);   // USAGE POINT - this is where s is used
+     0x407b20: sprintf(s, "%s/%d.txt", ...);   // AFTER usage - EXCLUDE (cannot affect wget)
+
+   Correct: Only trace the Get_App_Server_Url assignment
+   Wrong: Including sprintf (it happens after the security-relevant usage)
+
+3. **Control flow considerations**:
+   - If/else branches: Include assignments from BOTH branches if either can reach usage
+   - Loops: Include assignments that can execute before the usage point
+   - Function parameters: Always flow into the function (trace from callers)
+
+4. **When usage_address is NOT provided**:
+   - Trace all assignments to the variable (backward compatibility)
+   - This applies to cross-binary analysis where usage context may be unknown
+
 ## Tracing Workflow
 
 1. Use available tools to analyze the code and trace variables
