@@ -1,0 +1,203 @@
+<mxfile host="app.diagrams.net" agent="Claude" version="24.0.0">
+  <diagram id="combined" name="Motivating Example">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Synthetic note -->
+        <mxCell id="synthetic-note" value="Synthetic motivating examples (composite patterns from firmware); not a single real program." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=2;fontFamily=Helvetica;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="900" height="18" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== LEFT SIDE: Cross-Boundary Tracing ==================== -->
+
+        <!-- Left section label -->
+        <mxCell id="left-label" value="(a) (C2) Configuration Provenance Across Boundaries" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="140" y="20" width="300" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Library component -->
+        <mxCell id="lib-frame" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="55" width="500" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="lib-title" value="libtls.so (example 1)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="50" y="60" width="120" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Library code box -->
+        <mxCell id="lib-code" value="&lt;pre style=&quot;margin:0;padding:8px;font-family:Consolas,Monaco,monospace;font-size:10px;line-height:1.4;text-align:left;&quot;&gt;&lt;span style=&quot;color:#0000aa&quot;&gt;int&lt;/span&gt; tls_connect(..., &lt;span style=&quot;color:#0000aa&quot;&gt;int&lt;/span&gt; flags) {&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;int&lt;/span&gt; verify = (&lt;b&gt;flags&lt;/b&gt; &amp;gt;&amp;gt; 4) &amp;amp; 1;&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;if&lt;/span&gt; (verify)&#xa;        SSL_set_verify(ctx, SSL_VERIFY_PEER, NULL);&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;else&lt;/span&gt;&#xa;        SSL_set_verify(ctx, SSL_VERIFY_NONE, NULL);&#xa;    &lt;span style=&quot;color:#888888&quot;&gt;// BUG: no hostname verification (e.g., X509_check_host)&lt;/span&gt;&#xa;}&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="50" y="85" width="340" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- flags = ? annotation -->
+        <mxCell id="flags-q" value="flags = ?" style="text;html=1;strokeColor=none;fillColor=#ffffcc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1;fontFamily=Consolas,Monaco,monospace;" vertex="1" parent="1">
+          <mxGeometry x="410" y="120" width="70" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Completeness note: hostname verification -->
+        <mxCell id="note-hostname" value="Missing hostname verification&#xa;(completeness/spec)" style="text;html=1;strokeColor=#999999;fillColor=#ffe6e6;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=2;fontFamily=Helvetica;dashed=1;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="150" width="140" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow from flags annotation to code -->
+        <mxCell id="arrow-flags" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="410" y="132" as="sourcePoint" />
+            <mxPoint x="390" y="132" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== Two callers ===== -->
+
+        <!-- upsc box -->
+        <mxCell id="upsc-frame" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="240" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="upsc-title" value="/usr/bin/client_a" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="50" y="245" width="120" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="upsc-code" value="&lt;pre style=&quot;margin:0;padding:8px;font-family:Consolas,Monaco,monospace;font-size:10px;line-height:1.4;text-align:left;&quot;&gt;tls_connect(..., &lt;b style=&quot;color:#cc0000&quot;&gt;0x01&lt;/b&gt;);&#xa;&lt;span style=&quot;color:#888888&quot;&gt;// bit 4 = 0&lt;/span&gt;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;strokeWidth=1;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="50" y="270" width="200" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- upsmon box -->
+        <mxCell id="upsmon-frame" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="290" y="240" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="upsmon-title" value="/usr/bin/client_b" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="300" y="245" width="130" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="upsmon-code" value="&lt;pre style=&quot;margin:0;padding:8px;font-family:Consolas,Monaco,monospace;font-size:10px;line-height:1.4;text-align:left;&quot;&gt;flags = 0x01;&#xa;&lt;span style=&quot;color:#0000aa&quot;&gt;if&lt;/span&gt; (&lt;b&gt;g_certverify&lt;/b&gt;) flags |= 0x10;&#xa;tls_connect(..., flags);&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;strokeWidth=1;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="300" y="270" width="230" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Config file box -->
+        <mxCell id="config-frame" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="390" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="config-title" value="/etc/client_b.conf" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="330" y="395" width="160" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="config-content" value="&lt;pre style=&quot;margin:0;padding:8px;font-family:Consolas,Monaco,monospace;font-size:10px;line-height:1.4;text-align:left;&quot;&gt;certverify = &lt;span style=&quot;color:#cc0000&quot;&gt;(missing)&lt;/span&gt;  &lt;span style=&quot;color:#888888&quot;&gt;# default = 0&lt;/span&gt;&#xa;# → flags bit 4 = 0&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;strokeWidth=1;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="330" y="420" width="180" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Evidence chain (multi-hop, intra-program) -->
+        <mxCell id="left-evidence" value="Evidence chain (simplified):&#xa;parse_conf() → g_certverify → flags(bit4) → tls_connect() → SSL_set_verify(...)" style="text;html=1;strokeColor=#999999;fillColor=#f0f0f0;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontFamily=Helvetica;dashed=1;strokeWidth=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="360" width="270" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows: callers to library -->
+        <mxCell id="arrow-upsc" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#333333;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="150" y="240" as="sourcePoint" />
+            <mxPoint x="150" y="195" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow-upsmon" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#333333;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="415" y="240" as="sourcePoint" />
+            <mxPoint x="415" y="195" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Arrow: upsmon to config (dashed) -->
+        <mxCell id="arrow-config" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="420" y="340" as="sourcePoint" />
+            <mxPoint x="420" y="390" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow-config-label" value="parses" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=2;fontFamily=Helvetica;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="425" y="358" width="35" height="15" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== RIGHT SIDE: Semantic Understanding ==================== -->
+
+        <!-- Right section label -->
+        <mxCell id="right-label" value="(b) (C1) Semantics Beyond API Templates" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="820" y="20" width="320" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- msmtp component -->
+        <mxCell id="msmtp-frame" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="55" width="520" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="msmtp-title" value="/usr/bin/client_c (custom TLS)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="610" y="60" width="80" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- mtls_connect code -->
+        <mxCell id="msmtp-connect" value="&lt;pre style=&quot;margin:0;padding:8px;font-family:Consolas,Monaco,monospace;font-size:10px;line-height:1.4;text-align:left;&quot;&gt;&lt;span style=&quot;color:#0000aa&quot;&gt;int&lt;/span&gt; tls_connect_custom(tls_t *t, ...) {&#xa;    SSL_connect(t-&amp;gt;ssl);&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;if&lt;/span&gt; (!t-&amp;gt;&lt;b&gt;no_certcheck&lt;/b&gt;) {&#xa;        &lt;span style=&quot;color:#0000aa&quot;&gt;return&lt;/span&gt; &lt;b&gt;cert_verify_custom&lt;/b&gt;(t);&#xa;    }&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;return&lt;/span&gt; 0;&#xa;}&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="610" y="85" width="290" height="115" as="geometry" />
+        </mxCell>
+
+        <!-- mtls_cert_verify code -->
+        <mxCell id="msmtp-verify" value="&lt;pre style=&quot;margin:0;padding:8px;font-family:Consolas,Monaco,monospace;font-size:10px;line-height:1.35;text-align:left;&quot;&gt;&lt;span style=&quot;color:#0000aa&quot;&gt;int&lt;/span&gt; cert_verify_custom(tls_t *t) {&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;long&lt;/span&gt; r = &lt;b&gt;SSL_get_verify_result&lt;/b&gt;(t-&amp;gt;ssl);&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;if&lt;/span&gt; (r != X509_V_OK &amp;amp;&amp;amp; r != X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY)&#xa;        &lt;span style=&quot;color:#0000aa&quot;&gt;return&lt;/span&gt; -1;   &lt;span style=&quot;color:#cc0000&quot;&gt;// BUG: ignores some chain errors&lt;/span&gt;&#xa;&#xa;    san = X509_get_ext_d2i(cert, NID_subject_alt_name, ...);&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;for&lt;/span&gt; (...) {&#xa;        &lt;span style=&quot;color:#0000aa&quot;&gt;if&lt;/span&gt; (&lt;b&gt;sub_418D5E&lt;/b&gt;(t-&amp;gt;host, san_entry))&#xa;            &lt;span style=&quot;color:#0000aa&quot;&gt;return&lt;/span&gt; 0;&#xa;    }&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;return&lt;/span&gt; -1;&#xa;}&#xa;&#xa;&lt;span style=&quot;color:#0000aa&quot;&gt;int&lt;/span&gt; sub_418D5E(host, pat) {&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;if&lt;/span&gt; (starts_with(pat, &quot;*.&quot;))&#xa;        &lt;span style=&quot;color:#0000aa&quot;&gt;return&lt;/span&gt; ends_with(host, pat+2); &lt;span style=&quot;color:#cc0000&quot;&gt;// BUG: no label boundary check&lt;/span&gt;&#xa;    &lt;span style=&quot;color:#0000aa&quot;&gt;return&lt;/span&gt; strcasecmp(host, pat) == 0;&#xa;}&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="610" y="215" width="340" height="170" as="geometry" />
+        </mxCell>
+
+        <!-- msmtp config file -->
+        <mxCell id="msmtp-config-frame" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="970" y="85" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="msmtp-config-title" value="/etc/client_c.conf" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="980" y="90" width="80" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="msmtp-config-content" value="&lt;pre style=&quot;margin:0;padding:8px;font-family:Consolas,Monaco,monospace;font-size:10px;line-height:1.4;text-align:left;&quot;&gt;tls = on&#xa;tls_certcheck = on&#xa;hostname = &quot;example.com&quot;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;strokeWidth=1;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="980" y="115" width="120" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: connect to verify -->
+        <mxCell id="arrow-verify" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#333333;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="755" y="200" as="sourcePoint" />
+            <mxPoint x="755" y="215" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Arrow: config to connect (dashed) -->
+        <mxCell id="arrow-msmtp-config" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="970" y="125" as="sourcePoint" />
+            <mxPoint x="900" y="125" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow-msmtp-config-label" value="parses" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=2;fontFamily=Helvetica;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="920" y="108" width="35" height="15" as="geometry" />
+        </mxCell>
+
+        <!-- Annotation: no SSL_set_verify -->
+        <mxCell id="note-no-verify" value="Verification logic is not expressed via&#xa;SSL_set_verify(SSL_VERIFY_PEER)" style="text;html=1;strokeColor=#999999;fillColor=#ffffcc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=2;fontFamily=Helvetica;dashed=1;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="970" y="215" width="130" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- C1 callout: cross-library non-transferability -->
+        <mxCell id="c1-transfer-frame" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f0f0f0;strokeColor=#cccccc;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="405" width="520" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="c1-transfer" value="(C1) Diversity breaks rule templates:&#xa;&lt;span style=&quot;font-family:Consolas,Monaco,monospace&quot;&gt;API-based: SSL_set_verify / X509_check_host&#xa;Custom: cert_verify_custom / sub_418D5E&#xa;Pinning/TOFU/etc.: many more variants&#xa;&#xa;Cross-library: OpenSSL vs libcurl vs GnuTLS vs mbedTLS&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="610" y="410" width="500" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- C3 callout -->
+        <mxCell id="c3-callout-frame" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f0f0f0;strokeColor=#cccccc;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="510" width="1080" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="c3-callout" value="(C3) Beyond ELF + one TLS library: firmware TLS clients also appear in Shell scripts (curl/wget) and PHP (cURL extension), etc." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="55" y="520" width="1050" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Separator line -->
+        <mxCell id="separator" value="" style="endArrow=none;html=1;rounded=0;strokeWidth=1;strokeColor=#cccccc;dashed=1;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="570" y="480" as="sourcePoint" />
+            <mxPoint x="570" y="20" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
