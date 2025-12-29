@@ -554,6 +554,9 @@ class AnalysisState(TypedDict, total=False):
     # Firmware Context
     # ========================================================================
 
+    firmware_path: Optional[str]
+    """Root path of firmware filesystem for cross-binary and config analysis."""
+
     firmware_details: Optional[str]
     """Detailed findings from firmware exploration (for logging/display)."""
 
@@ -627,6 +630,7 @@ def create_initial_state(
     file_type: FileType = FileType.ELF_BINARY,
     library_versions: Optional[LibraryVersions] = None,
     library_name: str = "unknown",
+    firmware_path: Optional[str] = None,
 ) -> AnalysisState:
     """
     Create initial state for analysis.
@@ -669,6 +673,7 @@ def create_initial_state(
         pending_config_fetch_tasks=[],
 
         # Firmware
+        firmware_path=firmware_path,
         firmware_details=None,
         script_findings=None,
 
