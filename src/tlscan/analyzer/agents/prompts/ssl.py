@@ -82,17 +82,37 @@ CRITICAL: DO NOT RESOLVE FUNCTION PARAMETERS VIA STRING SEARCH:
 - Function parameters are NEVER resolved by finding strings elsewhere in the binary
 
 RESULT TYPE RULES:
-- SATISFIED: Option explicitly set to secure value
-- UNSATISFIED: Option explicitly set to insecure value
+- SATISFIED: Option EXPLICITLY set to secure value in the analyzed code
+  - Example: curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L) → SATISFIED
+  - Example: SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL) → SATISFIED
+- UNSATISFIED: Option EXPLICITLY set to insecure value in the analyzed code
+  - Example: curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L) → UNSATISFIED
+  - Example: --no-check-certificate flag in wget command → UNSATISFIED
 - CONDITIONAL: Option value is a RUNTIME VARIABLE that needs tracing
   - MUST have non-empty conditions array with actual variable names
   - Do NOT use for cross-rule dependencies or "effectively disabled" scenarios
+  - Example: curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, v20) → CONDITIONAL with variable="v20"
 - DEFAULT: Option is NOT explicitly configured in code
-  - Use when no explicit configuration is found for the rule
-  - The library's default behavior will apply
-  - Example: TLS version not set, verification callbacks not installed
-- UNDETERMINED: Cannot locate relevant code AND cannot determine behavior
-  - Use sparingly - prefer DEFAULT when option is simply not configured
+  - Use when the security option is simply not set/called
+  - The library's runtime default behavior will apply
+  - Example: No curl_easy_setopt call for CURLOPT_SSLVERSION → DEFAULT
+  - Example: No --secure-protocol flag for wget → DEFAULT
+  - Example: No SSL_CTX_set_min_proto_version call → DEFAULT
+  - DO NOT USE SATISFIED just because "the default is secure" - that's runtime behavior
+- UNDETERMINED: Cannot locate any relevant code for the rule
+  - Use only when you cannot find the functions/commands needed to evaluate the rule
+  - Example: Binary has SSL_* symbols but cannot locate any SSL setup code → UNDETERMINED
+
+DEFAULT vs SATISFIED - CRITICAL DISTINCTION:
+- If you see an EXPLICIT secure configuration call → SATISFIED
+- If you see NO configuration call for the option → DEFAULT (NOT SATISFIED)
+- "Library defaults to secure" is NOT evidence for SATISFIED - use DEFAULT instead
+- The security depends on library/backend version at runtime, not determinable statically
+
+PROHIBITED - SYNTHETIC VARIABLES:
+- NEVER use CONDITIONAL with made-up variable names that don't exist in the code
+- "backend_type", "library_version", "openssl_default" are NOT valid variables
+- Only use actual variable names found in the decompiled code (e.g., "v20", "a1", "$FLAG")
 
 IMPORTANT: Evaluate each rule INDEPENDENTLY. If one rule's failure affects another's
 effectiveness, note it in evidence, do NOT use CONDITIONAL for this relationship.

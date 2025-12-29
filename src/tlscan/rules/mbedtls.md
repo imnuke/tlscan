@@ -284,28 +284,18 @@ if (peer_cert == NULL) {
 | 2.28+ | TLS 1.2 | SECURE |
 | 2.0 - 2.27 | TLS 1.0 | INSECURE |
 
-**Version Resolution (when no `mbedtls_ssl_conf_min_version` call found)**:
-1. If explicit min version set to TLS 1.2+ → SATISFIED
-2. If explicit min version allows TLS 1.0/1.1 → UNSATISFIED
-3. If no restriction and mbedTLS 3.x detected → SATISFIED (default TLS 1.2)
-4. If no restriction and mbedTLS 2.28+ detected → SATISFIED (default TLS 1.2)
-5. If no restriction and mbedTLS < 2.28 detected → UNSATISFIED (default TLS 1.0)
-6. If no restriction and mbedTLS version unknown → UNDETERMINED
-
 **Detection Patterns**:
 - mbedTLS 2.x: `mbedtls_ssl_conf_min_version(conf, 3, 3)` → SATISFIED (TLS 1.2)
 - mbedTLS 3.x: `mbedtls_ssl_conf_min_tls_version(conf, 0x0303)` → SATISFIED (TLS 1.2)
 - `mbedtls_ssl_conf_min_version(conf, 3, 1)` → UNSATISFIED (allows TLS 1.0)
-- No version restriction → Use resolution logic above
+- No version restriction → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Min version set to TLS 1.2 (3,3) or higher | SATISFIED | Secure versions only |
 | Min version allows TLS 1.0/1.1 | UNSATISFIED | Insecure protocols allowed |
-| No config, mbedTLS 3.x or 2.28+ detected | SATISFIED | Default TLS 1.2 |
-| No config, mbedTLS < 2.28 detected | UNSATISFIED | Default allows TLS 1.0 |
-| No config, mbedTLS version unknown | UNDETERMINED | Cannot determine default |
+| No version config | DEFAULT | Not explicitly configured |
 | Version from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -345,27 +335,17 @@ if (peer_cert == NULL) {
 | 2.28+ | AEAD preferred, CBC allowed | SECURE |
 | 2.0 - 2.27 | May include weak ciphers | INSECURE |
 
-**Cipher Resolution (when no `mbedtls_ssl_conf_ciphersuites` call found)**:
-1. If explicit cipher list with only strong ciphers → SATISFIED
-2. If explicit cipher list with weak ciphers → UNSATISFIED
-3. If no config and mbedTLS 3.x detected → SATISFIED (AEAD-only default)
-4. If no config and mbedTLS 2.28+ detected → SATISFIED (secure defaults)
-5. If no config and mbedTLS < 2.28 detected → UNSATISFIED (may include weak)
-6. If no config and mbedTLS version unknown → UNDETERMINED
-
 **Detection Patterns**:
 - Cipher array includes only AEAD suites → SATISFIED
 - Cipher array includes NULL/EXPORT/RC4 → UNSATISFIED
-- No cipher restriction → Use resolution logic above
+- No cipher restriction → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Only strong ciphers (GCM, CCM, ChaCha) | SATISFIED | Weak ciphers excluded |
 | NULL/EXPORT/RC4/DES ciphers allowed | UNSATISFIED | Insecure ciphers |
-| No config, mbedTLS 3.x or 2.28+ detected | SATISFIED | Secure default ciphers |
-| No config, mbedTLS < 2.28 detected | UNSATISFIED | May include weak ciphers |
-| No config, mbedTLS version unknown | UNDETERMINED | Cannot determine defaults |
+| No cipher config | DEFAULT | Not explicitly configured |
 | Cipher list from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -391,13 +371,13 @@ if (peer_cert == NULL) {
 
 **Detection Patterns**:
 - CRL loaded and passed to verification → SATISFIED
-- No CRL checking → UNDETERMINED (SHOULD requirement)
+- No CRL checking → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | CRL checking implemented | SATISFIED | Revocation verified |
-| No CRL checking | UNDETERMINED | SHOULD requirement |
+| No CRL checking | DEFAULT | Not explicitly configured |
 | CRL path from config | CONDITIONAL | Trace configuration |
 
 ---
@@ -437,28 +417,19 @@ if (peer_cert == NULL) {
 | 2.28+ | Allowed but discouraged | Yes | SECURE |
 | 2.0 - 2.27 | Allowed | Yes | INSECURE |
 
-**Crypto Strength Resolution**:
-1. If only strong algorithm symbols present → SATISFIED
-2. If mbedTLS 3.x detected → SATISFIED (SHA-1 disabled by default)
-3. If mbedTLS 2.28+ detected → SATISFIED (modern secure defaults)
-4. If mbedTLS < 2.28 detected → UNSATISFIED (SHA-1 allowed, weak defaults)
-5. If mbedTLS version unknown → UNDETERMINED
-
 **Detection Patterns**:
 - Binary lacks `mbedtls_md5_*` and weak algorithm symbols → SATISFIED
 - Binary has `mbedtls_sha256_*` and strong algorithms only → SATISFIED
 - Binary includes weak algorithms (MD5, DES) used for TLS → UNSATISFIED
-- No version detection possible → UNDETERMINED
+- No version detection possible → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | Only strong algorithm symbols present | SATISFIED | Weak crypto not available |
-| mbedTLS 3.x detected | SATISFIED | SHA-1 disabled by default |
-| mbedTLS 2.28+ detected | SATISFIED | Modern secure defaults |
-| mbedTLS < 2.28 detected | UNSATISFIED | SHA-1 allowed by default |
+| Weak algorithms present in TLS context | UNSATISFIED | Weak crypto in use |
+| No crypto strength config | DEFAULT | Not explicitly configured |
 | Weak algorithms present, usage unclear | CONDITIONAL | Check if used for TLS |
-| mbedTLS version unknown | UNDETERMINED | Cannot determine defaults |
 
 ---
 

@@ -210,19 +210,13 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | GnuTLS | < 3.6 | TLS 1.0 | INSECURE |
 | wolfSSL | 4.x+ | TLS 1.2 | SECURE |
 
-**TLS Version Resolution (when no `--secure-protocol` flag specified)**:
-1. If explicit `--secure-protocol=TLSv1.2` or `TLSv1.3` → SATISFIED
-2. If explicit `--secure-protocol=TLSv1.0` or lower → UNSATISFIED
-3. If no flag and backend version detected → Use Backend TLS Version Defaults table above
-4. If no flag and backend version unknown → UNDETERMINED
-
 **Detection Patterns**:
 - `wget --secure-protocol=TLSv1_2 https://...` → SATISFIED
 - `wget --secure-protocol=TLSv1_3 https://...` → SATISFIED
 - `wget --secure-protocol=PFS https://...` → SATISFIED (if OpenSSL supports TLS 1.2+)
 - `wget --secure-protocol=TLSv1 https://...` → UNSATISFIED
 - `wget --secure-protocol=SSLv3 https://...` → UNSATISFIED
-- `wget https://...` (no protocol option) → Use resolution logic above
+- `wget https://...` (no protocol option) → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -231,9 +225,7 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | `--secure-protocol=PFS` | SATISFIED | Forward secrecy enforced |
 | `--secure-protocol=TLSv1`, `TLSv1_1` | UNSATISFIED | Insecure protocol |
 | `--secure-protocol=SSLv2`, `SSLv3` | UNSATISFIED | Insecure protocol |
-| No flag, backend default ≥ TLS 1.2 | SATISFIED | Backend enforces secure minimum |
-| No flag, backend default < TLS 1.2 | UNSATISFIED | Backend allows insecure protocols |
-| No flag, backend version unknown | UNDETERMINED | Cannot determine backend default |
+| No protocol flag | DEFAULT | Not explicitly configured |
 | Protocol option from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -280,18 +272,11 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | GnuTLS | < 3.6 | NORMAL (may include weak) | INSECURE |
 | wolfSSL | 4.x+ | Secure defaults | SECURE |
 
-**Cipher Resolution (when no `--ciphers` flag specified)**:
-1. If explicit `--ciphers` with strong cipher string → SATISFIED
-2. If explicit `--ciphers` with weak ciphers → UNSATISFIED
-3. If `--secure-protocol=PFS` → SATISFIED (forward secrecy enforced)
-4. If no flag and backend version detected → Use Backend Cipher Suite Defaults table above
-5. If no flag and backend version unknown → UNDETERMINED
-
 **Detection Patterns**:
 - `--ciphers 'HIGH:!aNULL:!eNULL'` → SATISFIED (strong ciphers)
 - `--secure-protocol=PFS` → SATISFIED (forward secrecy)
 - `--ciphers` containing `NULL`, `EXPORT`, `RC4` → UNSATISFIED
-- No cipher option → Use resolution logic above
+- No cipher option → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
@@ -299,9 +284,7 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 | Strong cipher string configured | SATISFIED | Weak ciphers excluded |
 | `--secure-protocol=PFS` | SATISFIED | Forward secrecy enforced |
 | Cipher string contains weak ciphers | UNSATISFIED | Insecure ciphers allowed |
-| No config, backend default secure | SATISFIED | Backend uses secure ciphers |
-| No config, backend default insecure | UNSATISFIED | Backend may use weak ciphers |
-| No config, backend version unknown | UNDETERMINED | Cannot determine backend default |
+| No cipher config | DEFAULT | Not explicitly configured |
 | Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -329,9 +312,10 @@ The `PFS` (Perfect Forward Secrecy) option enforces cipher suites that provide f
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Backend version with secure defaults (see table) | SATISFIED | Backend enforces strong crypto |
-| Backend version with weak defaults (see table) | UNSATISFIED | Backend allows weak crypto |
-| Backend version unknown | UNDETERMINED | Cannot determine backend security |
+| No configuration | DEFAULT | Not explicitly configured (backend-dependent) |
+
+**Note**: wget has no direct option to configure cryptographic strength. This is entirely
+backend-dependent with no code-level configuration possible, so result is always DEFAULT.
 
 ---
 
@@ -407,16 +391,14 @@ For applications requiring these features, consider using curl or a custom TLS c
 
 ## Result Determination Summary
 
-| Priority | Scenario | Result |
-|----------|----------|--------|
-| MUST | Option explicitly secure | SATISFIED |
-| MUST | Option explicitly insecure | UNSATISFIED |
-| MUST | No option, secure default (wget ≥1.10 or backend secure) | SATISFIED |
-| MUST | No option, backend version detected, backend default insecure | UNSATISFIED |
-| MUST | No option, backend version unknown | UNDETERMINED |
-| SHOULD | Feature enabled | SATISFIED |
-| SHOULD | Feature explicitly disabled | UNSATISFIED |
-| SHOULD | Feature not configured, backend secure | SATISFIED |
-| SHOULD | Feature not configured, backend insecure | UNSATISFIED |
-| SHOULD | Feature not configured, backend unknown | UNDETERMINED |
-| MAY | Feature not supported | N/A |
+| Scenario | Result |
+|----------|--------|
+| Option explicitly set to secure value | SATISFIED |
+| Option explicitly set to insecure value | UNSATISFIED |
+| Option set to runtime variable | CONDITIONAL |
+| Option NOT configured | DEFAULT |
+| Cannot find relevant code at all | UNDETERMINED |
+
+**Note**: DEFAULT means the option was not explicitly configured in code. The actual
+security depends on wget and backend version at runtime, which cannot be determined
+from static analysis alone.

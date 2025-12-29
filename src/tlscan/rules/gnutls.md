@@ -284,13 +284,6 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 | 3.6.0 - 3.6.x | Vendor-configurable | TLS 1.2 | SECURE |
 | < 3.6.0 | TLS 1.0, 1.1, 1.2 | TLS 1.0 | INSECURE |
 
-**Priority Resolution (when no priority string explicitly set)**:
-1. If explicit priority disables TLS 1.0/1.1 → SATISFIED
-2. If explicit "NORMAL" without version restrictions → UNSATISFIED
-3. If no priority and GnuTLS ≥ 3.6.0 detected → SATISFIED (TLS 1.2 default)
-4. If no priority and GnuTLS < 3.6.0 detected → UNSATISFIED (allows TLS 1.0/1.1)
-5. If no priority and GnuTLS version unknown → UNDETERMINED
-
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
@@ -298,9 +291,7 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 | `"SECURE128/192/256"` without TLS 1.0/1.1 | SATISFIED | Strong configuration |
 | `"NORMAL"` without version restrictions | UNSATISFIED | Allows TLS 1.0/1.1 |
 | Priority allows NULL/EXPORT ciphers | UNSATISFIED | Weak ciphers enabled |
-| No priority, GnuTLS ≥ 3.6.0 detected | SATISFIED | Default TLS 1.2+ |
-| No priority, GnuTLS < 3.6.0 detected | UNSATISFIED | Allows TLS 1.0/1.1 |
-| No priority, GnuTLS version unknown | UNDETERMINED | Cannot determine default |
+| No priority configured | DEFAULT | Not explicitly configured |
 | Priority string from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -327,13 +318,13 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 **Detection Patterns**:
 - OCSP stapling enabled → SATISFIED
 - CRL loaded → SATISFIED
-- No revocation checking → UNDETERMINED (SHOULD requirement)
+- No revocation checking → DEFAULT (not explicitly configured)
 
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
 | OCSP or CRL checking enabled | SATISFIED | Revocation verified |
-| No revocation checking | UNDETERMINED | SHOULD requirement |
+| No revocation checking | DEFAULT | Not explicitly configured |
 | Revocation check from config | CONDITIONAL | Trace configuration |
 
 ---
@@ -377,10 +368,8 @@ if (ret == GNUTLS_E_NO_CERTIFICATE_FOUND) {
 |----------|--------|--------|
 | Priority uses `SECURE128/192/256` | SATISFIED | Strong crypto enforced |
 | Priority uses `%VERIFY_ALLOW_BROKEN` | UNSATISFIED | Weak crypto allowed |
-| `NORMAL` priority, GnuTLS ≥ 3.6.0 | SATISFIED | Modern defaults secure |
-| `NORMAL` priority, GnuTLS < 3.6.0 | UNSATISFIED | Older defaults allow weak |
+| No crypto strength configured | DEFAULT | Not explicitly configured |
 | Priority string from variable | CONDITIONAL | Trace variable |
-| GnuTLS version unknown, `NORMAL` priority | UNDETERMINED | Cannot determine version |
 
 ---
 

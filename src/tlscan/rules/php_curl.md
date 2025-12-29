@@ -267,7 +267,7 @@ curl_setopt($ch, CURLOPT_SSLVERSION, 0);
 |----------|--------|--------|
 | `CURLOPT_SSLVERSION` ≥ 6 | SATISFIED | TLS 1.2+ enforced |
 | `CURLOPT_SSLVERSION` 1-5 | UNSATISFIED | Allows insecure protocols |
-| `CURLOPT_SSLVERSION` = 0 or not set | UNDETERMINED | Depends on libcurl version (not traceable) |
+| `CURLOPT_SSLVERSION` = 0 or not set | DEFAULT | Not explicitly configured |
 | Value from variable | CONDITIONAL | Trace variable |
 
 ---
@@ -317,7 +317,8 @@ curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:+RC4');
 |----------|--------|--------|
 | Strong cipher string | SATISFIED | Weak ciphers excluded |
 | Weak ciphers in string | UNSATISFIED | Insecure ciphers allowed |
-| No cipher configuration | CONDITIONAL | Uses backend default |
+| No cipher configuration | DEFAULT | Not explicitly configured |
+| Cipher string from variable | CONDITIONAL | Trace variable |
 
 ---
 
@@ -351,7 +352,7 @@ curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE);
 |----------|--------|--------|
 | Revocation checking enabled | SATISFIED | CRL/OCSP check performed |
 | `CURLSSLOPT_NO_REVOKE` used | UNSATISFIED | Revocation check disabled |
-| No configuration | UNDETERMINED | SHOULD requirement |
+| No configuration | DEFAULT | Not explicitly configured |
 
 ---
 
@@ -378,9 +379,10 @@ curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE);
 **SATISFIED/UNSATISFIED/CONDITIONAL Criteria**:
 | Scenario | Result | Reason |
 |----------|--------|--------|
-| Backend version with secure defaults (see table) | SATISFIED | Backend enforces strong crypto |
-| Backend version with weak defaults (see table) | UNSATISFIED | Backend allows weak crypto |
-| Backend version unknown | UNDETERMINED | Cannot determine backend security |
+| No configuration | DEFAULT | Not explicitly configured (backend-dependent) |
+
+**Note**: PHP cURL has no direct option to configure cryptographic strength. This is entirely
+backend-dependent with no code-level configuration possible, so result is always DEFAULT.
 
 ---
 
@@ -451,15 +453,14 @@ if ($result === false) {
 
 ## Result Determination Summary
 
-| Priority | Scenario | Result |
-|----------|----------|--------|
-| MUST | Option explicitly secure | SATISFIED |
-| MUST | Option explicitly insecure | UNSATISFIED |
-| MUST | No option, secure default | SATISFIED |
-| MUST | No option, version-dependent default | CONDITIONAL |
-| SHOULD | Feature enabled | SATISFIED |
-| SHOULD | Feature explicitly disabled | UNSATISFIED |
-| SHOULD | Feature not configured | UNDETERMINED |
-| MAY | Feature implemented | SATISFIED |
-| MAY | Feature not implemented | UNDETERMINED |
-| CRITICAL | Insecure PHP patterns found | UNSATISFIED |
+| Scenario | Result |
+|----------|--------|
+| Option explicitly set to secure value | SATISFIED |
+| Option explicitly set to insecure value | UNSATISFIED |
+| Option set to runtime variable | CONDITIONAL |
+| Option NOT configured | DEFAULT |
+| Cannot find relevant code at all | UNDETERMINED |
+
+**Note**: DEFAULT means the option was not explicitly configured in code. The actual
+security depends on PHP and libcurl/backend versions at runtime, which cannot be
+determined from static analysis alone.
