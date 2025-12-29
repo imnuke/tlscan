@@ -353,6 +353,7 @@ async def main(
             file_type=file_type,
             library_versions=library_versions,
             library_name=rules,
+            firmware_path=firmware_path,
         )
 
         # If fork_checkpoint_id is provided, use already-loaded state for forking
