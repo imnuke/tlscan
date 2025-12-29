@@ -3,6 +3,8 @@ import subprocess
 from enum import Enum
 from typing import Optional
 
+import cxxfilt
+
 
 class FileType(str, Enum):
     """Detected file type for analysis routing."""
@@ -81,7 +83,34 @@ def is_elf_file(file_path: str) -> bool:
     except Exception as e:
         return False
 
-def get_imported_function_list(binary_path: str) -> list[str]:
+
+def demangle_symbol(name: str) -> str:
+    """
+    Demangle C++ symbol name using cxxfilt library.
+
+    Returns just the function name without the signature.
+    E.g., '_Z18Get_App_Server_UrlPci' -> 'Get_App_Server_Url'
+    """
+    if not name.startswith('_Z'):
+        return name
+    try:
+        demangled = cxxfilt.demangle(name)
+        # Extract function name without signature (before '(')
+        if '(' in demangled:
+            return demangled.split('(')[0]
+        return demangled
+    except cxxfilt.InvalidName:
+        return name
+
+
+def get_imported_function_list(binary_path: str) -> list[tuple[str, str]]:
+    """
+    Get list of imported (undefined) functions from an ELF binary.
+
+    Returns:
+        List of (mangled_name, demangled_name) tuples.
+        For non-C++ symbols, both values are identical.
+    """
     try:
         output = subprocess.check_output(
             ['readelf', '-a', '--wide', binary_path], stderr=subprocess.DEVNULL).decode()
@@ -102,11 +131,20 @@ def get_imported_function_list(binary_path: str) -> list[str]:
 
     imported_functions = []
     for match in re.finditer(merged_pattern, output):
-        imported_functions.append(match.group(1) or match.group(2))
+        mangled = match.group(1) or match.group(2)
+        demangled = demangle_symbol(mangled)
+        imported_functions.append((mangled, demangled))
 
     return imported_functions
 
-def get_exported_function_list(binary_path: str) -> list[str]:
+def get_exported_function_list(binary_path: str) -> list[tuple[str, str]]:
+    """
+    Get list of exported (defined) functions from an ELF binary.
+
+    Returns:
+        List of (mangled_name, demangled_name) tuples.
+        For non-C++ symbols, both values are identical.
+    """
     try:
         output = subprocess.check_output(
             ['readelf', '-s', '--wide', binary_path], stderr=subprocess.DEVNULL).decode()
@@ -114,9 +152,13 @@ def get_exported_function_list(binary_path: str) -> list[str]:
         # Ignore binaries that are not ELF
         return []
 
-    pattern = re.compile(r'^\s*\d+\s+FUNC\s+GLOBAL\s+\d+\s+([^\s@]+)')
+    # Match lines like: "22: 0000000000094de0 39 FUNC GLOBAL DEFAULT 14 name"
+    # FUNC with GLOBAL or WEAK binding, and a numeric Ndx (not UND)
+    pattern = re.compile(r'FUNC\s+(?:GLOBAL|WEAK)\s+\w+\s+\d+\s+([^\s@]+)')
     exported_functions = []
     for match in re.finditer(pattern, output):
-        exported_functions.append(match.group(1))
+        mangled = match.group(1)
+        demangled = demangle_symbol(mangled)
+        exported_functions.append((mangled, demangled))
 
     return exported_functions

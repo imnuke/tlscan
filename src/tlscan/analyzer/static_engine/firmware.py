@@ -327,7 +327,6 @@ def read_file(path: str, start_line: Optional[int] = None, end_line: Optional[in
 # 3. BINARY ANALYSIS
 # ============================================================================
 
-# FIXME: Not working well. Not finding that upscli_connect is defined in libupsclient.so.
 @tool
 def find_function_definition(function_name: str) -> str:
     """
@@ -337,7 +336,7 @@ def find_function_definition(function_name: str) -> str:
     - Locate where functions are implemented
 
     Args:
-        function_name: Name of the function to search for
+        function_name: Name of the function to search for (can be mangled or demangled)
 
     Returns:
         Binary path where function is defined
@@ -351,9 +350,10 @@ def find_function_definition(function_name: str) -> str:
             if os.path.islink(file_path) or not is_elf_file(file_path):
                 continue
             exported_functions = get_exported_function_list(file_path)
-            if function_name in exported_functions:
-                rel_path = Path(file_path).relative_to(FIRMWARE_ROOT)
-                return f"Function '{function_name}' is defined in binary: {rel_path}"
+            for mangled, demangled in exported_functions:
+                if function_name == mangled or function_name == demangled:
+                    rel_path = Path(file_path).relative_to(FIRMWARE_ROOT)
+                    return f"Function '{function_name}' is defined in binary: {rel_path}"
 
     return f"Function '{function_name}' not found in any binaries."
 
@@ -368,7 +368,7 @@ def find_function_references(function_name: str) -> str:
     - Understand function call relationships
 
     Args:
-        function_name: Name of the function to search for
+        function_name: Name of the function to search for (can be mangled or demangled)
 
     Returns:
         List of binaries and addresses referencing the function
@@ -385,9 +385,11 @@ def find_function_references(function_name: str) -> str:
             if os.path.islink(file_path) or not is_elf_file(file_path):
                 continue
             imported_functions = get_imported_function_list(file_path)
-            if function_name in imported_functions:
-                rel_path = Path(file_path).relative_to(FIRMWARE_ROOT)
-                results.append(str(rel_path))
+            for mangled, demangled in imported_functions:
+                if function_name == mangled or function_name == demangled:
+                    rel_path = Path(file_path).relative_to(FIRMWARE_ROOT)
+                    results.append(str(rel_path))
+                    break  # Found in this binary, move to next
 
     if results:
         return f"Function '{function_name}' is referenced in {len(results)} binaries:\n" + "\n".join(results)
