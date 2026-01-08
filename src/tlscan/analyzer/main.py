@@ -88,6 +88,12 @@ def parse_model_string(model: str):
             if api_base:
                 kwargs["base_url"] = api_base
             return ChatDeepSeek(**kwargs), model_name, config
+        elif provider == "qwen":
+            from langchain_qwq import ChatQwen
+            kwargs = {"model": model_name, "api_key": api_key}
+            if api_base:
+                kwargs["base_url"] = api_base
+            return ChatQwen(**kwargs), model_name, config
         else:
             raise ValueError(f"Unknown provider: {provider}")
     else:
