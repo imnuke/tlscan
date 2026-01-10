@@ -57,6 +57,11 @@ def parse_args():
         help="SSL/TLS library rules to use (default: openssl). Use 'socket' to detect plaintext communication"
     )
     parser.add_argument(
+        "--no-rules",
+        action="store_true",
+        help="Run ablation study without security rules (free-form analysis)"
+    )
+    parser.add_argument(
         "--save-checkpoints",
         action="store_true",
         help="Enable automatic state checkpointing after each workflow node"
@@ -243,6 +248,7 @@ def run():
             conn_type=args.conn_type,
             firmware_path=args.firmware_path,
             rules=args.rules,
+            no_rules=args.no_rules,
             save_checkpoints=args.save_checkpoints,
             thread_id=args.resume,
             fork_checkpoint_id=args.fork_from_checkpoint,

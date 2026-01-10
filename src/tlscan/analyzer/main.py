@@ -106,6 +106,7 @@ async def main(
     conn_type: str = "headless_ida",
     firmware_path: str = None,
     rules: str = "openssl",
+    no_rules: bool = False,
     save_checkpoints: bool = False,
     thread_id: str = None,
     fork_checkpoint_id: str = None,
@@ -126,6 +127,7 @@ async def main(
         conn_type: Connection type (currently unused, always headless_ida)
         firmware_path: Path to firmware filesystem root (optional)
         rules: SSL/TLS library rules to use (default: "openssl")
+        no_rules: Run ablation study without security rules (default: False)
         save_checkpoints: Enable automatic state checkpointing (default: False)
         thread_id: Resume from this thread ID (optional)
         fork_checkpoint_id: Fork from specific checkpoint with fresh execution (requires thread_id)
@@ -216,8 +218,12 @@ async def main(
         console.print(f"[cyan]🗂️  Firmware root:[/cyan] {firmware_path}")
     console.print()
 
-    # Load security rules
-    security_rules_content = load_security_rules(rules)
+    # Load security rules (or skip for ablation study)
+    if no_rules:
+        security_rules_content = ""
+        console.print("[yellow]⚠️  Ablation mode: Running without security rules[/yellow]")
+    else:
+        security_rules_content = load_security_rules(rules)
     console.print()
 
     # Parse model and load config
@@ -360,6 +366,7 @@ async def main(
             library_versions=library_versions,
             library_name=rules,
             firmware_path=firmware_path,
+            no_rules=no_rules,
         )
 
         # If fork_checkpoint_id is provided, use already-loaded state for forking
