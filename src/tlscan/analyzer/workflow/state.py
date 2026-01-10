@@ -424,6 +424,9 @@ class AnalysisState(TypedDict, total=False):
     library_name: str
     """Name of the library/command being analyzed (from -r argument, e.g., 'curl', 'libcurl', 'openssl')."""
 
+    no_rules: bool
+    """Whether running in ablation mode without security rules."""
+
     # ========================================================================
     # Workflow Control
     # ========================================================================
@@ -631,6 +634,7 @@ def create_initial_state(
     library_versions: Optional[LibraryVersions] = None,
     library_name: str = "unknown",
     firmware_path: Optional[str] = None,
+    no_rules: bool = False,
 ) -> AnalysisState:
     """
     Create initial state for analysis.
@@ -641,6 +645,8 @@ def create_initial_state(
         file_type: Detected file type (default: ELF_BINARY for backward compatibility)
         library_versions: Optional detected library versions from firmware cache
         library_name: Name of the library/command being analyzed (from -r argument)
+        firmware_path: Path to firmware root (optional)
+        no_rules: Whether running in ablation mode without security rules
 
     Returns:
         Initial AnalysisState with all required fields initialized
@@ -652,6 +658,7 @@ def create_initial_state(
         security_rules=security_rules,
         file_type=file_type,
         library_name=library_name,
+        no_rules=no_rules,
 
         # Workflow control
         current_phase=AnalysisPhase.INITIAL_SSL_ANALYSIS,

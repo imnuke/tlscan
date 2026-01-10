@@ -214,3 +214,103 @@ When the initial value is 0 (zero):
 
 Use the available tools to explore the code structure, find function calls, and trace variable values.
 """
+
+
+def get_ssl_ablation_prompt(library_name: str = "unknown") -> str:
+    """Get SSL agent system prompt for ablation study (no predefined rules).
+
+    In ablation mode, the agent performs free-form TLS security analysis
+    without reference to predefined security rules. This is used to compare
+    what the LLM discovers independently vs rule-guided analysis.
+
+    Args:
+        library_name: Name of the library/command being analyzed
+
+    Returns:
+        System prompt for free-form TLS security analysis
+    """
+    return f"""You are an SSL/TLS security analysis expert.
+
+Analyze the code for SSL/TLS client security and output JSON matching this schema:
+
+{{
+  "client_type": "OpenSSL|libcurl|mbedTLS|GnuTLS|etc",
+  "rules": [
+    {{
+      "rule_id": "FINDING-N",
+      "rule_name": "<descriptive name of the security aspect>",
+      "result": "satisfied|unsatisfied|conditional|default|undetermined",
+      "evidence": "detailed evidence with function names and addresses",
+      "conditions": []
+    }}
+  ],
+  "summary": "2-3 sentences: First explain what the program uses TLS for (business purpose), then summarize security posture",
+  "applicable": true|false,
+  "reason": null|"why not applicable"
+}}
+
+{'=' * 60}
+ANALYSIS SCOPE:
+{'=' * 60}
+
+You are analyzing: {library_name}
+
+Focus EXCLUSIVELY on {library_name} usage patterns. If {library_name} is not found
+in the binary, set applicable=false.
+
+{'=' * 60}
+OUTPUT FORMAT:
+{'=' * 60}
+
+For each security aspect you identify:
+- Use rule_id format: FINDING-1, FINDING-2, etc.
+- Use descriptive rule_name (e.g., "Certificate Verification", "Hostname Checking")
+- Evaluate security status using result types below
+
+RESULT TYPE RULES:
+- SATISFIED: Security aspect EXPLICITLY configured securely in code
+- UNSATISFIED: Security aspect EXPLICITLY configured insecurely in code
+- CONDITIONAL: Security depends on runtime variable (include conditions array)
+- DEFAULT: Security aspect not explicitly configured (library defaults apply)
+- UNDETERMINED: Cannot locate relevant code for this aspect
+
+For conditional results, include conditions array with:
+{{
+  "variable": "<actual variable name from code>",
+  "function": "<function name>",
+  "function_address": "<hex address>",
+  "usage_address": "<where variable is used>",
+  "usage_context": "<how the variable is used>",
+  "security_mapping": {{"0": "unsatisfied", "1": "satisfied"}}
+}}
+
+CRITICAL - Variable names:
+- Use ACTUAL variable names from the code (e.g., "v20", "a1", "$FLAG")
+- Do NOT make up descriptive names like "verify_flag" or "ssl_mode"
+
+{'=' * 60}
+SUMMARY INSTRUCTIONS:
+{'=' * 60}
+
+First sentence - Client purpose:
+- Identify what service/functionality the TLS client implements
+- Look at URLs, hostnames, API endpoints to understand the purpose
+
+Following sentences - Security posture:
+- Summarize which security aspects you found satisfied/unsatisfied/conditional
+- Highlight any critical security concerns
+
+{'=' * 60}
+KEY INSTRUCTIONS:
+{'=' * 60}
+
+1. Verify the code has SSL/TLS CLIENT functionality
+2. If not applicable, set applicable=false with reason
+3. Analyze ALL security aspects you can identify independently
+4. Use available tools to explore the code and find SSL/TLS settings
+5. Provide detailed evidence with function names and addresses
+6. Run ONCE and analyze all aspects in a single pass
+7. Output ONLY valid JSON matching the schema above
+
+Use the available tools to explore the code structure, find function calls, and trace variable values.
+"""

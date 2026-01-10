@@ -156,11 +156,14 @@ async def ssl_analysis_node(
         tools = static_engine.get_script_tools(binary_path)
 
     library_name = state.get("library_name", "unknown")
-
-    # Build and display the system prompt before agent execution
-    system_prompt = get_ssl_system_prompt(security_rules, library_name)
+    no_rules = state.get("no_rules", False)
 
     # NOTE: Use this for debugging prompt issues
+    # from tlscan.analyzer.agents.prompts.ssl import get_ssl_ablation_prompt
+    # if no_rules:
+    #     system_prompt = get_ssl_ablation_prompt(library_name)
+    # else:
+    #     system_prompt = get_ssl_system_prompt(security_rules, library_name)
     # console.print(Panel(
     #     system_prompt,
     #     title="[bold blue]SSL Agent System Prompt[/bold blue]",
@@ -171,7 +174,8 @@ async def ssl_analysis_node(
     ssl_agent = agent_factory.create_ssl_agent(
         tools=tools,
         security_rules_content=security_rules,
-        library_name=library_name
+        library_name=library_name,
+        no_rules=no_rules
     )
 
     # Execute SSL agent
