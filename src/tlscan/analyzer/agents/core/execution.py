@@ -77,6 +77,46 @@ def _normalize_enum_values(data):
         return data
 
 
+def _strip_json_comments(json_string: str) -> str:
+    """Remove JavaScript-style // comments from JSON string.
+
+    LLM agents sometimes include JS-style comments in their JSON output,
+    which causes json.loads() to fail. This function strips those comments
+    while preserving // inside quoted strings (e.g., URLs like https://example.com).
+    """
+    result = []
+    in_string = False
+    i = 0
+    n = len(json_string)
+
+    while i < n:
+        char = json_string[i]
+
+        if in_string:
+            result.append(char)
+            if char == '\\' and i + 1 < n:
+                # Escaped character - append next char too
+                i += 1
+                result.append(json_string[i])
+            elif char == '"':
+                in_string = False
+        else:
+            if char == '"':
+                in_string = True
+                result.append(char)
+            elif char == '/' and i + 1 < n and json_string[i + 1] == '/':
+                # Skip // comment until end of line
+                while i < n and json_string[i] != '\n':
+                    i += 1
+                continue  # Don't increment i again
+            else:
+                result.append(char)
+
+        i += 1
+
+    return ''.join(result)
+
+
 async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None, output_model=None) -> Tuple[Any, AgentMetrics]:
     """
     Stream an agent's execution and log all intermediate steps.
@@ -249,16 +289,16 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
         try:
             # Try to parse as JSON first
             if final_content.strip().startswith("{") or final_content.strip().startswith("["):
-                data = json.loads(final_content)
+                data = json.loads(_strip_json_comments(final_content))
             else:
                 # Try to extract JSON from markdown code blocks
                 import re
                 json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', final_content, re.DOTALL)
                 if json_match:
-                    data = json.loads(json_match.group(1))
+                    data = json.loads(_strip_json_comments(json_match.group(1)))
                 else:
                     # If no JSON found, try to parse the whole content as JSON
-                    data = json.loads(final_content)
+                    data = json.loads(_strip_json_comments(final_content))
 
             # Normalize status values to lowercase for enum compatibility
             data = _normalize_enum_values(data)
