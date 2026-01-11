@@ -48,6 +48,24 @@ VERSION_STRING_PATTERNS: Dict[str, List[Tuple[re.Pattern, str]]] = {
         (re.compile(rb"GNU\s+Wget\s+(\d+\.\d+)"), "wget"),
         (re.compile(rb"wget-(\d+\.\d+\.\d+)"), "wget"),
     ],
+    "wolfssl": [
+        (re.compile(rb"wolfSSL\s+(\d+\.\d+\.\d+)"), "wolfSSL"),
+        (re.compile(rb"wolfssl[-_](\d+\.\d+\.\d+)"), "wolfSSL"),
+    ],
+    "libressl": [
+        (re.compile(rb"LibreSSL\s+(\d+\.\d+\.\d+)"), "LibreSSL"),
+        (re.compile(rb"libressl[-_](\d+\.\d+\.\d+)"), "LibreSSL"),
+    ],
+    "s2n_tls": [
+        (re.compile(rb"s2n[-_]tls[-/]v?(\d+\.\d+\.\d+)"), "s2n-tls"),
+        (re.compile(rb"s2n\s+v?(\d+\.\d+\.\d+)"), "s2n-tls"),
+    ],
+    "rustls": [
+        (re.compile(rb"rustls[-/](\d+\.\d+\.\d+)"), "rustls"),
+        (re.compile(rb"rustls\s+(\d+\.\d+\.\d+)"), "rustls"),
+    ],
+    # Note: BearSSL doesn't embed version strings
+    # Note: BoringSSL uses rolling releases, no semantic versioning
 }
 
 SONAME_LIBRARY_MAP: Dict[str, str] = {
@@ -57,6 +75,11 @@ SONAME_LIBRARY_MAP: Dict[str, str] = {
     "libgnutls": "gnutls",
     "libmbedtls": "mbedtls",
     "libmbedcrypto": "mbedtls",
+    "libwolfssl": "wolfssl",
+    "libtls": "libressl",
+    "libs2n": "s2n_tls",
+    "libbearssl": "bearssl",
+    "librustls": "rustls",
 }
 
 VERSION_SPECIFIC_APIS: Dict[str, Dict[str, str]] = {
