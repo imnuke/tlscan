@@ -13,6 +13,12 @@ from .gnutls import GNUTLS
 from .mbedtls import MBEDTLS
 from .curl_wget import CURL_WGET
 from .php_curl import PHP_CURL
+from .wolfssl import WOLFSSL
+from .boringssl import BORINGSSL
+from .libressl import LIBRESSL
+from .s2n_tls import S2N_TLS
+from .bearssl import BEARSSL
+from .rustls import RUSTLS
 
 # Central registry of all library definitions
 LIBRARY_REGISTRY: Dict[str, LibraryDefinition] = {
@@ -22,6 +28,12 @@ LIBRARY_REGISTRY: Dict[str, LibraryDefinition] = {
     "mbedtls": MBEDTLS,
     "curl_wget": CURL_WGET,
     "php_curl": PHP_CURL,
+    "wolfssl": WOLFSSL,
+    "boringssl": BORINGSSL,
+    "libressl": LIBRESSL,
+    "s2n_tls": S2N_TLS,
+    "bearssl": BEARSSL,
+    "rustls": RUSTLS,
 }
 
 

@@ -30,6 +30,12 @@ LIBRARY_FILE_PATTERNS: List[Tuple[str, str]] = [
     ("**/libgnutls.so*", "gnutls"),
     ("**/libmbedtls.so*", "mbedtls"),
     ("**/libmbedcrypto.so*", "mbedtls"),
+    ("**/libwolfssl.so*", "wolfssl"),
+    # Note: BoringSSL uses libssl.so/libcrypto.so (same as OpenSSL)
+    ("**/libtls.so*", "libressl"),  # libtls is LibreSSL's modern API
+    ("**/libs2n.so*", "s2n_tls"),
+    ("**/libbearssl.so*", "bearssl"),
+    ("**/librustls.so*", "rustls"),
     # CLI tools
     ("**/bin/curl", "curl_cli"),
     ("**/bin/wget", "wget_cli"),
