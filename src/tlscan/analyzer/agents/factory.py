@@ -124,6 +124,10 @@ class AgentFactory:
         else:
             system_prompt = get_ssl_system_prompt(security_rules_content, library_name)
 
+        # Filter out tools not needed for SSL analysis
+        exclude_tools = ["get_entry_points"]
+        filtered_tools = self._filter_tools(tools, exclude=exclude_tools)
+
         # Get temperature for SSL analysis agent
         temperature = self._config.get_agent_temperature('ssl_analysis')
 
@@ -131,13 +135,13 @@ class AgentFactory:
         llm_with_temp = self._llm.bind(temperature=temperature)
 
         # Prepare LLM for sequential tool calling (prevents SSE timeouts)
-        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, tools)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, filtered_tools)
 
         # Create base agent with raw LLM (not wrapped with structured output)
         # The agent will output JSON that matches SSLAnalysisOutput schema
         agent = create_agent(
             model=llm_with_tools,
-            tools=tools,
+            tools=filtered_tools,
             middleware=[handle_tool_errors],
             system_prompt=system_prompt
         )
@@ -159,7 +163,7 @@ class AgentFactory:
         from tlscan.analyzer.agents.prompts.dataflow import DATAFLOW_SYSTEM_PROMPT
 
         # Default exclusions for dataflow agent
-        exclude_tools = ["get_function_by_address"]
+        exclude_tools = ["get_function_by_address", "get_entry_points"]
 
         # Filter tools before binding
         filtered_tools = self._filter_tools(tools, exclude=exclude_tools)
