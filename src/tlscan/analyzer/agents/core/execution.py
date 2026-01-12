@@ -155,7 +155,7 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
     #     console.print()
 
     final_content = ""
-    config = config or {"recursion_limit": 100}
+    config = config or {"recursion_limit": 300}
 
     # Track how many messages we've already processed to avoid duplicates
     processed_message_count = 0
