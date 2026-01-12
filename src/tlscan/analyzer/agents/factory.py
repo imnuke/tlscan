@@ -125,7 +125,7 @@ class AgentFactory:
             system_prompt = get_ssl_system_prompt(security_rules_content, library_name)
 
         # Filter out tools not needed for SSL analysis
-        exclude_tools = ["get_entry_points"]
+        exclude_tools = ["get_entry_points", "list_imports"]
         filtered_tools = self._filter_tools(tools, exclude=exclude_tools)
 
         # Get temperature for SSL analysis agent
@@ -163,7 +163,7 @@ class AgentFactory:
         from tlscan.analyzer.agents.prompts.dataflow import DATAFLOW_SYSTEM_PROMPT
 
         # Default exclusions for dataflow agent
-        exclude_tools = ["get_function_by_address", "get_entry_points"]
+        exclude_tools = ["get_function_by_address", "get_entry_points", "list_imports"]
 
         # Filter tools before binding
         filtered_tools = self._filter_tools(tools, exclude=exclude_tools)
