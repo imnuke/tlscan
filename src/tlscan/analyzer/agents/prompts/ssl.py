@@ -224,43 +224,45 @@ def get_ssl_ablation_prompt(library_name: str = "unknown") -> str:
     what the LLM discovers independently vs rule-guided analysis.
 
     Args:
-        library_name: Name of the library/command being analyzed
+        library_name: Name of the library/command being analyzed (unused in
+            ablation mode - the agent analyzes any TLS library found)
 
     Returns:
         System prompt for free-form TLS security analysis
     """
-    return f"""You are an SSL/TLS security analysis expert.
+    return """You are an SSL/TLS security analysis expert.
 
 Analyze the code for SSL/TLS client security and output JSON matching this schema:
 
-{{
+{
   "client_type": "OpenSSL|libcurl|mbedTLS|GnuTLS|etc",
   "rules": [
-    {{
+    {
       "rule_id": "FINDING-N",
       "rule_name": "<descriptive name of the security aspect>",
       "result": "satisfied|unsatisfied|conditional|default|undetermined",
       "evidence": "detailed evidence with function names and addresses",
       "conditions": []
-    }}
+    }
   ],
   "summary": "2-3 sentences: First explain what the program uses TLS for (business purpose), then summarize security posture",
   "applicable": true|false,
   "reason": null|"why not applicable"
-}}
+}
 
-{'=' * 60}
+============================================================
 ANALYSIS SCOPE:
-{'=' * 60}
+============================================================
 
-You are analyzing: {library_name}
+Analyze the binary's TLS/SSL implementation. Identify which TLS library is used
+(OpenSSL, GnuTLS, mbedTLS, libcurl, wolfSSL, etc.) and analyze its security
+configuration.
 
-Focus EXCLUSIVELY on {library_name} usage patterns. If {library_name} is not found
-in the binary, set applicable=false.
+Set applicable=false only if NO SSL/TLS client functionality is found in the binary.
 
-{'=' * 60}
+============================================================
 OUTPUT FORMAT:
-{'=' * 60}
+============================================================
 
 For each security aspect you identify:
 - Use rule_id format: FINDING-1, FINDING-2, etc.
@@ -275,22 +277,22 @@ RESULT TYPE RULES:
 - UNDETERMINED: Cannot locate relevant code for this aspect
 
 For conditional results, include conditions array with:
-{{
+{
   "variable": "<actual variable name from code>",
   "function": "<function name>",
   "function_address": "<hex address>",
   "usage_address": "<where variable is used>",
   "usage_context": "<how the variable is used>",
-  "security_mapping": {{"0": "unsatisfied", "1": "satisfied"}}
-}}
+  "security_mapping": {"0": "unsatisfied", "1": "satisfied"}
+}
 
 CRITICAL - Variable names:
 - Use ACTUAL variable names from the code (e.g., "v20", "a1", "$FLAG")
 - Do NOT make up descriptive names like "verify_flag" or "ssl_mode"
 
-{'=' * 60}
+============================================================
 SUMMARY INSTRUCTIONS:
-{'=' * 60}
+============================================================
 
 First sentence - Client purpose:
 - Identify what service/functionality the TLS client implements
@@ -300,9 +302,9 @@ Following sentences - Security posture:
 - Summarize which security aspects you found satisfied/unsatisfied/conditional
 - Highlight any critical security concerns
 
-{'=' * 60}
+============================================================
 KEY INSTRUCTIONS:
-{'=' * 60}
+============================================================
 
 1. Verify the code has SSL/TLS CLIENT functionality
 2. If not applicable, set applicable=false with reason
