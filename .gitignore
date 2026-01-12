@@ -19,3 +19,16 @@ temp_files/
 
 # LLM API configuration (contains secrets)
 llm_config.yaml
+
+# Temporary fix for claude code generated rubbish
+.bash_profile
+.bashrc
+.gitconfig
+.gitmodules
+.idea
+.mcp.json
+.profile
+.ripgreprc
+.zprofile
+.zshrc
+.claude/
