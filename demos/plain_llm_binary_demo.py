@@ -60,7 +60,7 @@ USER_PROMPT = """Analyze this binary for TLS/SSL security issues.
 
 
 
-def create_llm(model_spec: str, config: LLMConfig):
+def create_llm(model_spec: str, config: LLMConfig, api_key: str | None = None):
     """Create an LLM instance based on model specification."""
     if ":" not in model_spec:
         raise ValueError(
@@ -75,7 +75,7 @@ def create_llm(model_spec: str, config: LLMConfig):
 
         return ChatOpenAI(
             model=model_name,
-            api_key=provider_config["api_key"],
+            api_key=api_key or provider_config["api_key"],
             base_url=provider_config.get("api_base", "https://api.deepseek.com"),
             temperature=0,
         )
@@ -84,7 +84,7 @@ def create_llm(model_spec: str, config: LLMConfig):
 
         return ChatOpenAI(
             model=model_name,
-            api_key=provider_config["api_key"],
+            api_key=api_key or provider_config["api_key"],
             temperature=0,
         )
     elif provider == "anthropic":
@@ -92,7 +92,7 @@ def create_llm(model_spec: str, config: LLMConfig):
 
         return ChatAnthropic(
             model=model_name,
-            api_key=provider_config["api_key"],
+            api_key=api_key or provider_config["api_key"],
             temperature=0,
         )
     elif provider == "qwen":
@@ -100,7 +100,7 @@ def create_llm(model_spec: str, config: LLMConfig):
 
         return ChatQwen(
             model=model_name,
-            api_key=provider_config["api_key"],
+            api_key=api_key or provider_config["api_key"],
             api_base=provider_config["api_base"],
             temperature=0,
         )
@@ -108,7 +108,7 @@ def create_llm(model_spec: str, config: LLMConfig):
         raise ValueError(f"Unknown provider: {provider}")
 
 
-async def run_analysis(binary_path: Path, model_spec: str, port: int | None = None):
+async def run_analysis(binary_path: Path, model_spec: str, port: int | None = None, api_key: str | None = None):
     """Run TLS security analysis on a binary."""
     server_process = None
     allocated_port = None
@@ -117,7 +117,7 @@ async def run_analysis(binary_path: Path, model_spec: str, port: int | None = No
     try:
         # Load LLM config
         config = LLMConfig()
-        llm = create_llm(model_spec, config)
+        llm = create_llm(model_spec, config, api_key)
 
         # Allocate port if not specified
         if port is None:
@@ -316,6 +316,12 @@ def main():
         default=None,
         help="MCP server port (default: auto-allocate)",
     )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key for the LLM provider (overrides llm_config.yaml)",
+    )
 
     args = parser.parse_args()
 
@@ -329,7 +335,7 @@ def main():
 
     # Run async analysis
     try:
-        asyncio.run(run_analysis(args.binary_path, args.model, args.port))
+        asyncio.run(run_analysis(args.binary_path, args.model, args.port, args.api_key))
     except ConfigurationError as e:
         console.print(f"[red]Configuration error:[/red] {e}")
         sys.exit(1)
