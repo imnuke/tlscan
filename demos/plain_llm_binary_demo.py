@@ -12,7 +12,6 @@ Purpose: Academic comparison against the multi-agent system with rules.
 
 import argparse
 import asyncio
-import signal
 import sys
 from pathlib import Path
 
@@ -21,11 +20,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from rich.console import Console
 
+from tlscan.analyzer.static_engine import StaticAnalysisEngine
 from tlscan.analyzer.static_engine.ida.ports import PortManager
-from tlscan.analyzer.static_engine.ida.server import start_headless_ida_server
 from tlscan.analyzer.agents.core.middleware import handle_tool_errors
 from tlscan.config.loader import ConfigurationError, LLMConfig
 
@@ -108,40 +106,27 @@ def create_llm(model_spec: str, config: LLMConfig, api_key: str | None = None):
         raise ValueError(f"Unknown provider: {provider}")
 
 
-async def run_analysis(binary_path: Path, model_spec: str, port: int | None = None, api_key: str | None = None):
+async def run_analysis(binary_path: Path, model_spec: str, api_key: str | None = None):
     """Run TLS security analysis on a binary."""
-    server_process = None
-    allocated_port = None
     port_manager = None
+    static_engine = None
 
     try:
         # Load LLM config
         config = LLMConfig()
         llm = create_llm(model_spec, config, api_key)
 
-        # Allocate port if not specified
-        if port is None:
-            port_manager = PortManager()
-            port_manager.cleanup_stale_locks()
-            allocated_port = port_manager.allocate_port(str(binary_path))
-            port = allocated_port
-            console.print(f"[cyan]🔌[/cyan] Allocated port: {port}")
+        # Initialize static analysis engine
+        port_manager = PortManager()
+        port_manager.cleanup_stale_locks()
 
-        # Start IDA Pro MCP server
-        console.print()
-        server_process = start_headless_ida_server(str(binary_path), port=port)
+        static_engine = StaticAnalysisEngine(
+            firmware_path=None,
+            port_manager=port_manager
+        )
 
-        # Connect to MCP server
-        console.print(f"\n[cyan]🔗[/cyan] Connecting to MCP server...")
-        server_config = {
-            "ida": {
-                "transport": "sse",
-                "url": f"http://localhost:{port}/sse"
-            }
-        }
-        mcp_client = MultiServerMCPClient(server_config)
-        tools = await mcp_client.get_tools()
-        console.print(f"[green]✓[/green] Connected, got {len(tools)} tools")
+        # Get IDA tools via static engine (handles server startup internally)
+        tools = await static_engine.get_tools(str(binary_path))
 
         # List available tools
         console.print("\n[bold]Available tools:[/bold]")
@@ -274,25 +259,9 @@ async def run_analysis(binary_path: Path, model_spec: str, port: int | None = No
         console.print("\n[yellow]⚠[/yellow] Interrupted by user")
 
     finally:
-        # Cleanup
-        if server_process:
-            console.print("\n[cyan]🧹[/cyan] Cleaning up IDA server...")
-            server_process.terminate()
-            try:
-                server_process.wait(timeout=5)
-            except Exception:
-                server_process.kill()
-
-            # Close log file if exists
-            if hasattr(server_process, '_log_file'):
-                try:
-                    server_process._log_file.close()
-                except Exception:
-                    pass
-
-        if allocated_port and port_manager:
-            port_manager.release_port(allocated_port)
-            console.print(f"[green]✓[/green] Released port {allocated_port}")
+        # Cleanup via static engine
+        if static_engine:
+            static_engine.cleanup_all()
 
 
 def main():
@@ -309,12 +278,6 @@ def main():
         "--model",
         required=True,
         help="LLM model in format 'provider:model_name' (e.g., deepseek:deepseek-chat)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help="MCP server port (default: auto-allocate)",
     )
     parser.add_argument(
         "--api-key",
@@ -335,7 +298,7 @@ def main():
 
     # Run async analysis
     try:
-        asyncio.run(run_analysis(args.binary_path, args.model, args.port, args.api_key))
+        asyncio.run(run_analysis(args.binary_path, args.model, args.api_key))
     except ConfigurationError as e:
         console.print(f"[red]Configuration error:[/red] {e}")
         sys.exit(1)
