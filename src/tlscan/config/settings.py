@@ -60,8 +60,8 @@ PORT_LOCK_DIR = TEMP_FILES_DIR / "port_locks"
 IDA_SERVER_LOGS_DIR = TEMP_FILES_DIR / "ida_server_logs"
 """Directory for IDA MCP server log files."""
 
-TEMP_BINARIES_DIR = TEMP_FILES_DIR / "binaries"
-"""Directory for temporary binary copies used during analysis."""
+TEMP_IDB_DIR = TEMP_FILES_DIR / "idb"
+"""Directory for IDB session directories used during analysis."""
 
 # Rules directory - default to bundled rules, allow override via environment
 SECURITY_RULES_DIR = Path(__file__).parent.parent / "rules"

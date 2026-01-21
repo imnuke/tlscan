@@ -12,7 +12,7 @@ from tlscan.config.settings import (
     TEMP_FILES_DIR,
     PORT_LOCK_DIR,
     IDA_SERVER_LOGS_DIR,
-    TEMP_BINARIES_DIR,
+    TEMP_IDB_DIR,
     SECURITY_RULES_DIR,
     LOG_LEVEL_HTTPX,
     LOG_LEVEL_HTTPCORE,

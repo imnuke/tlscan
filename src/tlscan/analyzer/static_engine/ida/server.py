@@ -26,6 +26,7 @@ console = Console()
 
 def start_headless_ida_server(
     binary_path: str,
+    idb_dir: str,
     host: str = IDA_SERVER_HOST,
     port: int = 8800  # Default port, will be allocated by PortManager in practice
 ) -> subprocess.Popen:
@@ -34,6 +35,7 @@ def start_headless_ida_server(
 
     Args:
         binary_path: Path to binary to analyze
+        idb_dir: Directory for IDB files (passed via --idb-dir)
         host: Server host (default: localhost)
         port: Server port (default: from config)
 
@@ -64,6 +66,7 @@ def start_headless_ida_server(
         "idalib-mcp",
         "--host", host,
         "--port", str(port),
+        "--idb-dir", idb_dir,
         binary_path
     ]
 
