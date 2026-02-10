@@ -47,6 +47,10 @@ SYSTEM_PROMPT = """You are a security analyst examining a binary for TLS/SSL vul
 Use the available IDA Pro tools to identify any security issues or misconfigurations of TLS/SSL client.
 """
 
+SYSTEM_PROMPT += """If some security flaw branches are taken on certain condition, 
+try to figure out the condition.
+"""
+
 # USER_PROMPT = """Analyze this binary for TLS/SSL security issues.
 
 # Start by listing functions to find TLS-related code, then decompile and analyze them.
