@@ -44,7 +44,7 @@ PORT_LOCK_TIMEOUT = 3600
 # Analysis Timeout
 # ============================================================================
 
-ANALYSIS_TOTAL_TIMEOUT = 1200
+ANALYSIS_TOTAL_TIMEOUT = 3600
 """Total timeout in seconds for the entire analysis workflow (default: 20 minutes)."""
 
 # ============================================================================
