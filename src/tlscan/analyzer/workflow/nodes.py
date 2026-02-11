@@ -229,6 +229,9 @@ async def ssl_analysis_node(
                     security_mapping=cond.security_mapping,
                     usage_address=cond.usage_address,
                     usage_context=cond.usage_context,
+                    struct_base=cond.struct_base,
+                    struct_offset=cond.struct_offset,
+                    access_size=cond.access_size,
                 )
                 for cond in rule.conditions
             ]

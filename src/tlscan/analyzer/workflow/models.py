@@ -89,7 +89,10 @@ class VariableSpec(BaseModel):
     """
 
     variable: str = Field(
-        description="Variable or parameter name to trace (e.g., 'verify_mode', 'v20')"
+        description=(
+            "Variable name or memory access expression. "
+            "Simple: 'v20', 'a1'. Struct: '*(DWORD *)(v18+12)'"
+        )
     )
 
     function: str = Field(
@@ -128,6 +131,21 @@ class VariableSpec(BaseModel):
             "How/where the variable is used at the usage point "
             "(e.g., '4th argument to Execute_Command_Line')"
         )
+    )
+
+    struct_base: Optional[str] = Field(
+        None,
+        description="Base variable for struct access (e.g., 'v18' from '*(DWORD *)(v18+12)')"
+    )
+
+    struct_offset: Optional[int] = Field(
+        None,
+        description="Byte offset into struct (e.g., 12 from '*(DWORD *)(v18+12)')"
+    )
+
+    access_size: Optional[int] = Field(
+        None,
+        description="Access size in bytes (e.g., 4 for DWORD, 8 for QWORD)"
     )
 
 
@@ -205,7 +223,10 @@ class RuleCondition(BaseModel):
     """
 
     variable: str = Field(
-        description="Variable or parameter to trace (e.g., 'verify_mode', 'v20')"
+        description=(
+            "Variable name or memory access expression. "
+            "Simple: 'v20', 'a1'. Struct: '*(DWORD *)(v18+12)'"
+        )
     )
 
     function: str = Field(
@@ -237,6 +258,21 @@ class RuleCondition(BaseModel):
             "How/where the variable is used at the usage point "
             "(e.g., '4th argument to Execute_Command_Line')"
         )
+    )
+
+    struct_base: Optional[str] = Field(
+        None,
+        description="Base variable for struct access (e.g., 'v18' from '*(DWORD *)(v18+12)')"
+    )
+
+    struct_offset: Optional[int] = Field(
+        None,
+        description="Byte offset into struct (e.g., 12 from '*(DWORD *)(v18+12)')"
+    )
+
+    access_size: Optional[int] = Field(
+        None,
+        description="Access size in bytes (e.g., 4 for DWORD, 8 for QWORD)"
     )
 
 

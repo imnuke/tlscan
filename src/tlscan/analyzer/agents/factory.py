@@ -126,11 +126,13 @@ class AgentFactory:
 
         # Filter out tools not needed for SSL analysis
         exclude_tools = [
-            "get_entry_points", 
+            "get_entry_points",
             "is_entry_point",
-            "list_imports", 
-            "convert_number", 
-            "disassemble_function"
+            "list_imports",
+            "convert_number",
+            "disassemble_function",
+            "get_global_variable_value_by_name",
+            "get_global_variable_value_at_address",
         ]
         filtered_tools = self._filter_tools(tools, exclude=exclude_tools)
 
