@@ -29,9 +29,14 @@ agent_temperatures:
   firmware_exploration: 0.4 # Slightly creative - finding related files
   synthesis: 0.6            # More creative - readable security reports
 
+# Tool paths
+tools:
+  ida_pro_mcp_dir: "/path/to/ida-pro-mcp"  # Directory of the ida-pro-mcp project
+
 # Usage:
 # 1. Copy this file: cp llm_config.example.yaml llm_config.yaml
 # 2. Edit llm_config.yaml and add your API keys
-# 3. Optionally adjust temperature settings for your use case
-# 4. The llm_config.yaml file is gitignored to prevent accidentally committing secrets
-# 5. Use --model flag to select provider: --model deepseek:deepseek-chat
+# 3. Set tools.ida_pro_mcp_dir to your local ida-pro-mcp directory
+# 4. Optionally adjust temperature settings for your use case
+# 5. The llm_config.yaml file is gitignored to prevent accidentally committing secrets
+# 6. Use --model flag to select provider: --model deepseek:deepseek-chat

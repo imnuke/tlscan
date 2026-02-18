@@ -102,6 +102,33 @@ class LLMConfig:
 
         return config
 
+    def get_ida_pro_mcp_dir(self) -> str:
+        """
+        Get the ida-pro-mcp project directory path.
+
+        Returns:
+            Path string to the ida-pro-mcp directory
+
+        Raises:
+            ConfigurationError: If tools.ida_pro_mcp_dir is not configured
+        """
+        tools = self._config.get('tools', {})
+
+        if not isinstance(tools, dict):
+            raise ConfigurationError("'tools' must be a dictionary")
+
+        ida_dir = tools.get('ida_pro_mcp_dir')
+
+        if not ida_dir or not isinstance(ida_dir, str):
+            raise ConfigurationError(
+                "tools.ida_pro_mcp_dir is not configured in llm_config.yaml\n"
+                "Please add it under the 'tools' section:\n"
+                "  tools:\n"
+                "    ida_pro_mcp_dir: \"/path/to/ida-pro-mcp\""
+            )
+
+        return ida_dir
+
     def list_providers(self) -> list[str]:
         """
         Get list of configured providers.

@@ -18,6 +18,7 @@ from tlscan.config import (
     IDA_SERVER_READINESS_CHECK_INTERVAL,
     IDA_SERVER_LOGS_DIR,
 )
+from tlscan.config.loader import get_config
 from tlscan.analyzer.utils.formatting import format_duration
 
 # Initialize console for output
@@ -46,7 +47,7 @@ def start_headless_ida_server(
         RuntimeError: If server fails to start
         TimeoutError: If server doesn't respond within timeout
     """
-    ida_pro_mcp_dir = '/home/peng/Projects/others/ida-pro-mcp'
+    ida_pro_mcp_dir = get_config().get_ida_pro_mcp_dir()
 
     start_time = time.perf_counter()
     console.print(f"[cyan]⚙[/cyan]  Starting headless IDA server for [bold]{binary_path}[/bold]...")
