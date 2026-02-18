@@ -829,11 +829,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pygraphviz"
-version = "1.14"
-source = { git = "https://github.com/pygraphviz/pygraphviz.git?rev=2fa8af802aeecfe92e53425c2503587de9593d9e#2fa8af802aeecfe92e53425c2503587de9593d9e" }
-
-[[package]]
 name = "python-dotenv"
 version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1197,7 +1192,6 @@ dependencies = [
     { name = "networkx" },
     { name = "numpy" },
     { name = "pyelftools" },
-    { name = "pygraphviz" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "tiktoken" },
@@ -1220,7 +1214,6 @@ requires-dist = [
     { name = "networkx", specifier = ">=3.5" },
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "pyelftools", specifier = ">=0.32" },
-    { name = "pygraphviz", git = "https://github.com/pygraphviz/pygraphviz.git?rev=2fa8af802aeecfe92e53425c2503587de9593d9e" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "rich", specifier = ">=14.1.0" },
     { name = "tiktoken", specifier = ">=0.8.0" },
