@@ -133,6 +133,8 @@ class AgentFactory:
             "disassemble_function",
             "get_global_variable_value_by_name",
             "get_global_variable_value_at_address",
+            "set_comment",
+            "get_current_address",
         ]
         filtered_tools = self._filter_tools(tools, exclude=exclude_tools)
 
@@ -177,7 +179,9 @@ class AgentFactory:
             "is_entry_point",
             "list_imports", 
             "convert_number", 
-            "disassemble_function"
+            "disassemble_function",
+            "set_comment",
+            "get_current_address",
         ]
 
         # Filter tools before binding
