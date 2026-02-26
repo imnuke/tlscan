@@ -1,0 +1,32 @@
+library: mbedtls
+functions:
+  - name: mbedtls_ssl_config_init
+    type: "void mbedtls_ssl_config_init(void *conf)"
+    comment: "Initialize SSL configuration structure"
+  - name: mbedtls_ssl_config_defaults
+    type: "int mbedtls_ssl_config_defaults(void *conf, int endpoint, int transport, int preset)"
+    comment: "Load default SSL configuration values"
+  - name: mbedtls_ssl_conf_authmode
+    type: "void mbedtls_ssl_conf_authmode(void *conf, int authmode)"
+    comment: "Set peer certificate verification mode"
+  - name: mbedtls_ssl_conf_ca_chain
+    type: "void mbedtls_ssl_conf_ca_chain(void *conf, void *ca_chain, void *ca_crl)"
+    comment: "Set CA certificate chain for verification"
+  - name: mbedtls_ssl_conf_min_version
+    type: "void mbedtls_ssl_conf_min_version(void *conf, int major, int minor)"
+    comment: "Set minimum accepted SSL/TLS protocol version"
+  - name: mbedtls_ssl_conf_max_version
+    type: "void mbedtls_ssl_conf_max_version(void *conf, int major, int minor)"
+    comment: "Set maximum accepted SSL/TLS protocol version"
+  - name: mbedtls_ssl_conf_ciphersuites
+    type: "void mbedtls_ssl_conf_ciphersuites(void *conf, const int *ciphersuites)"
+    comment: "Set list of allowed cipher suites"
+  - name: mbedtls_ssl_conf_verify
+    type: "void mbedtls_ssl_conf_verify(void *conf, void *f_vrfy, void *p_vrfy)"
+    comment: "Set custom certificate verification callback"
+  - name: mbedtls_ssl_get_verify_result
+    type: "unsigned int mbedtls_ssl_get_verify_result(const void *ssl)"
+    comment: "Return result of certificate verification"
+  - name: mbedtls_ssl_set_hostname
+    type: "int mbedtls_ssl_set_hostname(void *ssl, const char *hostname)"
+    comment: "Set hostname for SNI and certificate CN verification"

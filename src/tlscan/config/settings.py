@@ -70,6 +70,13 @@ SECURITY_RULES_DIR = Path(__file__).parent.parent / "rules"
 if custom_rules := os.environ.get("TLSCAN_RULES_DIR"):
     SECURITY_RULES_DIR = Path(custom_rules)
 
+# Signatures directory — bundled per-library function signature YAML files
+SIGNATURES_DIR = Path(__file__).parent.parent / "signatures"
+"""Directory containing per-library function signature YAML files."""
+
+if custom_sigs := os.environ.get("TLSCAN_SIGNATURES_DIR"):
+    SIGNATURES_DIR = Path(custom_sigs)
+
 # ============================================================================
 # Logging Configuration
 # ============================================================================

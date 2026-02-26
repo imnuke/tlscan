@@ -1,0 +1,32 @@
+library: gnutls
+functions:
+  - name: gnutls_init
+    type: "int gnutls_init(void **session, unsigned int flags)"
+    comment: "Initialize a TLS session"
+  - name: gnutls_certificate_allocate_credentials
+    type: "int gnutls_certificate_allocate_credentials(void **res)"
+    comment: "Allocate a certificate credentials structure"
+  - name: gnutls_certificate_set_verify_flags
+    type: "void gnutls_certificate_set_verify_flags(void *res, unsigned int flags)"
+    comment: "Set certificate verification flags"
+  - name: gnutls_certificate_verify_peers2
+    type: "int gnutls_certificate_verify_peers2(void *session, unsigned int *status)"
+    comment: "Verify the peer's certificate"
+  - name: gnutls_certificate_set_x509_trust_file
+    type: "int gnutls_certificate_set_x509_trust_file(void *res, const char *cafile, int type)"
+    comment: "Set CA certificate file for verification"
+  - name: gnutls_priority_set_direct
+    type: "int gnutls_priority_set_direct(void *session, const char *priorities, const char **err_pos)"
+    comment: "Set priority string for cipher/protocol selection"
+  - name: gnutls_set_default_priority
+    type: "int gnutls_set_default_priority(void *session)"
+    comment: "Set default priority string"
+  - name: gnutls_server_name_set
+    type: "int gnutls_server_name_set(void *session, int type, const void *name, int name_length)"
+    comment: "Set SNI hostname for TLS extension"
+  - name: gnutls_handshake
+    type: "int gnutls_handshake(void *session)"
+    comment: "Perform the TLS handshake"
+  - name: gnutls_protocol_get_version
+    type: "int gnutls_protocol_get_version(void *session)"
+    comment: "Get the protocol version of the current session"

@@ -296,6 +296,23 @@ async def main(
             static_engine.get_script_tools(file_path)
             console.print()
 
+        # 7.5 Apply function signature repair (ELF binaries only)
+        if file_type == FileType.ELF_BINARY:
+            from tlscan.analyzer.static_engine.signatures import (
+                apply_function_signatures,
+                display_repair_result,
+            )
+            console.print(
+                f"[cyan]🔧 Applying function signatures:[/cyan] {rules}"
+            )
+            ida_tools = await static_engine.get_tools(file_path)
+            repair_result = await apply_function_signatures(
+                tools=ida_tools,
+                library_name=rules,
+            )
+            display_repair_result(console, repair_result)
+            console.print()
+
         # 8. Prepare firmware tools (if firmware provided)
         firmware_tools_list = None
         if firmware_path:

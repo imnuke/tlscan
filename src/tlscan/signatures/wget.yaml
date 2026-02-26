@@ -1,0 +1,26 @@
+library: wget
+functions:
+  - name: ssl_init
+    type: "int ssl_init(void)"
+    comment: "Initialize SSL/TLS subsystem in wget"
+  - name: ssl_connect
+    type: "int ssl_connect(int fd, const char *hostname, int reuse, int scheme)"
+    comment: "Establish SSL/TLS connection"
+  - name: ssl_check_certificate
+    type: "int ssl_check_certificate(int fd, const char *host)"
+    comment: "Verify server certificate against CA store"
+  - name: ssl_cleanup
+    type: "void ssl_cleanup(void)"
+    comment: "Clean up SSL/TLS subsystem"
+  - name: ssl_set_server_name
+    type: "void ssl_set_server_name(int fd, const char *hostname)"
+    comment: "Set SNI server name for TLS extension"
+  - name: ssl_load_certs
+    type: "void ssl_load_certs(const char *file)"
+    comment: "Load CA certificates from file"
+  - name: ssl_get_last_error
+    type: "const char *ssl_get_last_error(void)"
+    comment: "Return description of last SSL error"
+  - name: connect_to_host
+    type: "int connect_to_host(const char *host, int port)"
+    comment: "Establish TCP connection to remote host"

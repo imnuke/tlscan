@@ -1,0 +1,32 @@
+library: socket
+functions:
+  - name: SSL_CTX_new
+    type: "void *SSL_CTX_new(const void *method)"
+    comment: "Create SSL context for raw socket TLS"
+  - name: SSL_new
+    type: "void *SSL_new(void *ctx)"
+    comment: "Create new SSL structure for a connection"
+  - name: SSL_set_fd
+    type: "int SSL_set_fd(void *ssl, int fd)"
+    comment: "Connect SSL object to a socket fd"
+  - name: SSL_connect
+    type: "int SSL_connect(void *ssl)"
+    comment: "Initiate TLS handshake (client side)"
+  - name: SSL_accept
+    type: "int SSL_accept(void *ssl)"
+    comment: "Await TLS handshake (server side)"
+  - name: SSL_read
+    type: "int SSL_read(void *ssl, void *buf, int num)"
+    comment: "Read bytes from TLS connection"
+  - name: SSL_write
+    type: "int SSL_write(void *ssl, const void *buf, int num)"
+    comment: "Write bytes to TLS connection"
+  - name: SSL_get_peer_certificate
+    type: "void *SSL_get_peer_certificate(const void *ssl)"
+    comment: "Get the X.509 certificate of the peer"
+  - name: SSL_get_verify_result
+    type: "long SSL_get_verify_result(const void *ssl)"
+    comment: "Get result of peer certificate verification"
+  - name: SSL_CTX_set_verify
+    type: "void SSL_CTX_set_verify(void *ctx, int mode, void *verify_callback)"
+    comment: "Set peer certificate verification mode"

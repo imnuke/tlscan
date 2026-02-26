@@ -1,0 +1,32 @@
+library: libcurl
+functions:
+  - name: curl_easy_setopt
+    type: "int curl_easy_setopt(void *handle, int option, ...)"
+    comment: "Set options on a curl handle (CURLoption -> int)"
+  - name: curl_easy_init
+    type: "void *curl_easy_init(void)"
+    comment: "Initialize a curl easy handle (CURL * -> void *)"
+  - name: curl_easy_perform
+    type: "int curl_easy_perform(void *easy_handle)"
+    comment: "Perform a blocking file transfer"
+  - name: curl_easy_cleanup
+    type: "void curl_easy_cleanup(void *handle)"
+    comment: "End a libcurl easy handle"
+  - name: curl_easy_getinfo
+    type: "int curl_easy_getinfo(void *curl, int info, ...)"
+    comment: "Extract information from a curl handle"
+  - name: curl_multi_setopt
+    type: "int curl_multi_setopt(void *multi_handle, int option, ...)"
+    comment: "Set options for a curl multi handle"
+  - name: curl_global_init
+    type: "int curl_global_init(long flags)"
+    comment: "Global libcurl initialization"
+  - name: curl_slist_append
+    type: "void *curl_slist_append(void *list, const char *string)"
+    comment: "Add a string to a slist"
+  - name: curl_easy_strerror
+    type: "const char *curl_easy_strerror(int errornum)"
+    comment: "Return string describing error code"
+  - name: curl_version_info
+    type: "void *curl_version_info(int age)"
+    comment: "Return runtime libcurl version info"

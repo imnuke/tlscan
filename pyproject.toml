@@ -39,3 +39,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "tlscan.rules" = ["*.md"]
+"tlscan.signatures" = ["*.yaml"]
