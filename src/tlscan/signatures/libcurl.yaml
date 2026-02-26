@@ -1,7 +1,7 @@
 library: libcurl
 functions:
   - name: curl_easy_setopt
-    type: "int curl_easy_setopt(void *handle, int option, ...)"
+    type: "int curl_easy_setopt(void *handle, int option, int value)"
     comment: "Set options on a curl handle (CURLoption -> int)"
   - name: curl_easy_init
     type: "void *curl_easy_init(void)"
