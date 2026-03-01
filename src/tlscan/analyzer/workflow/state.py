@@ -428,6 +428,13 @@ class AnalysisState(TypedDict, total=False):
     """Whether running in ablation mode without security rules."""
 
     # ========================================================================
+    # Pre-Analysis Context
+    # ========================================================================
+
+    call_graph_context: str
+    """Pre-computed call graph text for SSL agent."""
+
+    # ========================================================================
     # Workflow Control
     # ========================================================================
 
@@ -635,6 +642,7 @@ def create_initial_state(
     library_name: str = "unknown",
     firmware_path: Optional[str] = None,
     no_rules: bool = False,
+    call_graph_context: str = "",
 ) -> AnalysisState:
     """
     Create initial state for analysis.
@@ -647,6 +655,7 @@ def create_initial_state(
         library_name: Name of the library/command being analyzed (from -r argument)
         firmware_path: Path to firmware root (optional)
         no_rules: Whether running in ablation mode without security rules
+        call_graph_context: Pre-computed call graph text for SSL agent
 
     Returns:
         Initial AnalysisState with all required fields initialized
@@ -659,6 +668,9 @@ def create_initial_state(
         file_type=file_type,
         library_name=library_name,
         no_rules=no_rules,
+
+        # Pre-analysis context
+        call_graph_context=call_graph_context,
 
         # Workflow control
         current_phase=AnalysisPhase.INITIAL_SSL_ANALYSIS,

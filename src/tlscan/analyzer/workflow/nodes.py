@@ -179,7 +179,15 @@ async def ssl_analysis_node(
     )
 
     # Execute SSL agent
-    messages = [HumanMessage(content=f"Analyze SSL/TLS security for program: {binary_path}")]
+    call_graph_text = state.get("call_graph_context", "")
+    if call_graph_text:
+        content = (
+            f"Analyze SSL/TLS security for program: {binary_path}\n\n"
+            f"{call_graph_text}"
+        )
+    else:
+        content = f"Analyze SSL/TLS security for program: {binary_path}"
+    messages = [HumanMessage(content=content)]
 
     result, metrics = await stream_and_log_agent(
         agent=ssl_agent,

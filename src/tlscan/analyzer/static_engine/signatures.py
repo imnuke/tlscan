@@ -126,7 +126,7 @@ def load_signatures(
 # ---------------------------------------------------------------------------
 
 
-def _discover_tool(tools: list, candidates: list[str]):
+def discover_tool(tools: list, candidates: list[str]):
     """Return the first tool from *tools* whose name matches a candidate.
 
     Args:
@@ -148,7 +148,7 @@ def _discover_tool(tools: list, candidates: list[str]):
 # ---------------------------------------------------------------------------
 
 
-def _parse_address_from_result(result) -> Optional[int]:
+def parse_address_from_result(result) -> Optional[int]:
     """Extract a numeric address from an MCP tool call result.
 
     Handles both ``str`` (raw / JSON-encoded) and ``dict`` responses.
@@ -233,8 +233,8 @@ async def apply_function_signatures(
     result.total = len(sig_file.functions)
 
     # 2. Discover tools
-    lookup_tool = _discover_tool(tools, _FUNC_LOOKUP_CANDIDATES)
-    setter_tool = _discover_tool(tools, _TYPE_SETTER_CANDIDATES)
+    lookup_tool = discover_tool(tools, _FUNC_LOOKUP_CANDIDATES)
+    setter_tool = discover_tool(tools, _TYPE_SETTER_CANDIDATES)
 
     if lookup_tool is None:
         result.skipped = True
@@ -263,7 +263,7 @@ async def apply_function_signatures(
         # Look up address
         try:
             lookup_result = await lookup_tool.ainvoke({"name": sig.name})
-            addr = _parse_address_from_result(lookup_result)
+            addr = parse_address_from_result(lookup_result)
             # Keep a few raw lookup results for address-parse debugging
             if len(result.lookup_samples) < _MAX_SAMPLES:
                 result.lookup_samples.append((sig.name, lookup_result))

@@ -21,6 +21,9 @@ from tlscan.config.settings import (
     PROJECT_ROOT,
     LLM_CONFIG_FILE,
     LLM_CONFIG_EXAMPLE_FILE,
+    CALL_GRAPH_MAX_DEPTH,
+    CALL_GRAPH_MAX_NODES_PER_LEVEL,
+    CALL_GRAPH_MAX_TEXT_LENGTH,
 )
 from tlscan.config.loader import get_config, LLMConfig, ConfigurationError
 
@@ -46,6 +49,9 @@ __all__ = [
     "PROJECT_ROOT",
     "LLM_CONFIG_FILE",
     "LLM_CONFIG_EXAMPLE_FILE",
+    "CALL_GRAPH_MAX_DEPTH",
+    "CALL_GRAPH_MAX_NODES_PER_LEVEL",
+    "CALL_GRAPH_MAX_TEXT_LENGTH",
     # Loader
     "get_config",
     "LLMConfig",

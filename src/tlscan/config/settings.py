@@ -99,3 +99,16 @@ LLM_CONFIG_FILE = PROJECT_ROOT / "llm_config.yaml"
 
 LLM_CONFIG_EXAMPLE_FILE = PROJECT_ROOT / "llm_config.example.yaml"
 """Path to the example LLM configuration file."""
+
+# ============================================================================
+# Call Graph Pre-Analysis
+# ============================================================================
+
+CALL_GRAPH_MAX_DEPTH = 5
+"""Maximum BFS depth when walking callers upward from API functions."""
+
+CALL_GRAPH_MAX_NODES_PER_LEVEL = 50
+"""Maximum number of nodes to expand per BFS level."""
+
+CALL_GRAPH_MAX_TEXT_LENGTH = 4000
+"""Maximum character length for the formatted call graph text passed to the agent."""

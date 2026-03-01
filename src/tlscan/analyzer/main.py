@@ -313,6 +313,25 @@ async def main(
             display_repair_result(console, repair_result)
             console.print()
 
+        # 7.6 Build API call graph (ELF binaries only)
+        call_graph_context = ""
+        if file_type == FileType.ELF_BINARY:
+            from tlscan.analyzer.static_engine.call_graph import (
+                build_call_graph,
+                display_call_graph_result,
+            )
+            console.print(
+                f"[cyan]🔗 Building API call graph:[/cyan] {rules}"
+            )
+            ida_tools = await static_engine.get_tools(file_path)
+            call_graph_result = await build_call_graph(
+                tools=ida_tools,
+                library_name=rules,
+            )
+            display_call_graph_result(console, call_graph_result)
+            call_graph_context = call_graph_result.formatted_text
+            console.print()
+
         # 8. Prepare firmware tools (if firmware provided)
         firmware_tools_list = None
         if firmware_path:
@@ -384,6 +403,7 @@ async def main(
             library_name=rules,
             firmware_path=firmware_path,
             no_rules=no_rules,
+            call_graph_context=call_graph_context,
         )
 
         # If fork_checkpoint_id is provided, use already-loaded state for forking
