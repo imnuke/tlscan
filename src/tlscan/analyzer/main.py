@@ -531,3 +531,20 @@ async def main(
             border_style="blue"
         ))
         console.print()
+
+        # Display real, provider-billed token usage for this program. Guarded
+        # because final_state may be unset if the workflow raised before
+        # completing. Emitted as a single-line banner so post-hoc log parsing
+        # can key on "Real Token Usage:" the way it keys on "Total Analysis Time".
+        if 'final_state' in locals() and isinstance(final_state, dict):
+            _stats = final_state.get("statistics") or {}
+            _ri = _stats.get("real_input_tokens", 0)
+            _ro = _stats.get("real_output_tokens", 0)
+            _rt = _stats.get("real_total_tokens", 0)
+            _rc = _stats.get("cache_hit_tokens", 0)
+            console.print(Panel.fit(
+                f"[bold magenta]🔢 Real Token Usage: total={_rt:,}  "
+                f"input={_ri:,}  output={_ro:,}  cache_hit={_rc:,}[/bold magenta]",
+                border_style="magenta"
+            ))
+            console.print()

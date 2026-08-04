@@ -99,6 +99,12 @@ def update_agent_statistics(
     agent_stats["tool_call_count"] = agent_stats.get("tool_call_count", 0) + metrics["tool_call_count"]
     agent_stats["total_time_seconds"] = agent_stats.get("total_time_seconds", 0.0) + metrics["elapsed_seconds"]
     agent_stats["invocation_count"] = agent_stats.get("invocation_count", 0) + 1
+    # Real, provider-billed token usage (from usage_metadata), tracked
+    # separately from the local estimate above.
+    agent_stats["real_input_tokens"] = agent_stats.get("real_input_tokens", 0) + metrics["real_input_tokens"]
+    agent_stats["real_output_tokens"] = agent_stats.get("real_output_tokens", 0) + metrics["real_output_tokens"]
+    agent_stats["real_total_tokens"] = agent_stats.get("real_total_tokens", 0) + metrics["real_total_tokens"]
+    agent_stats["cache_hit_tokens"] = agent_stats.get("cache_hit_tokens", 0) + metrics["cache_hit_tokens"]
 
     stats[agent_type] = agent_stats
 
@@ -106,6 +112,10 @@ def update_agent_statistics(
     stats["total_tokens"] = stats.get("total_tokens", 0) + metrics["thinking_tokens"] + metrics["tool_result_tokens"]
     stats["total_tool_calls"] = stats.get("total_tool_calls", 0) + metrics["tool_call_count"]
     stats["total_time_seconds"] = stats.get("total_time_seconds", 0.0) + metrics["elapsed_seconds"]
+    stats["real_input_tokens"] = stats.get("real_input_tokens", 0) + metrics["real_input_tokens"]
+    stats["real_output_tokens"] = stats.get("real_output_tokens", 0) + metrics["real_output_tokens"]
+    stats["real_total_tokens"] = stats.get("real_total_tokens", 0) + metrics["real_total_tokens"]
+    stats["cache_hit_tokens"] = stats.get("cache_hit_tokens", 0) + metrics["cache_hit_tokens"]
 
     return stats
 

@@ -327,6 +327,18 @@ class AgentStatistics(TypedDict, total=False):
     invocation_count: int
     """How many times this agent was invoked."""
 
+    real_input_tokens: int
+    """Real prompt tokens billed by the provider (from usage_metadata)."""
+
+    real_output_tokens: int
+    """Real completion tokens billed by the provider."""
+
+    real_total_tokens: int
+    """Real total tokens billed by the provider (input + output)."""
+
+    cache_hit_tokens: int
+    """Prompt tokens served from the provider's context cache."""
+
 
 class AnalysisStatistics(TypedDict, total=False):
     """Comprehensive analysis statistics."""
@@ -353,13 +365,25 @@ class AnalysisStatistics(TypedDict, total=False):
 
     # Overall totals (computed from per-agent stats)
     total_tokens: int
-    """Total tokens consumed across all agents."""
+    """Total tokens consumed across all agents (local estimate)."""
 
     total_time_seconds: float
     """Total execution time across all agents."""
 
     total_tool_calls: int
     """Total tool calls across all agents."""
+
+    real_input_tokens: int
+    """Real prompt tokens billed across all agents (from usage_metadata)."""
+
+    real_output_tokens: int
+    """Real completion tokens billed across all agents."""
+
+    real_total_tokens: int
+    """Real total tokens billed across all agents (input + output)."""
+
+    cache_hit_tokens: int
+    """Prompt tokens served from the provider's context cache across all agents."""
 
 
 def create_empty_agent_statistics() -> AgentStatistics:
@@ -371,6 +395,10 @@ def create_empty_agent_statistics() -> AgentStatistics:
         tool_call_count=0,
         total_time_seconds=0.0,
         invocation_count=0,
+        real_input_tokens=0,
+        real_output_tokens=0,
+        real_total_tokens=0,
+        cache_hit_tokens=0,
     )
 
 
@@ -386,6 +414,10 @@ def create_empty_statistics() -> AnalysisStatistics:
         total_tokens=0,
         total_time_seconds=0.0,
         total_tool_calls=0,
+        real_input_tokens=0,
+        real_output_tokens=0,
+        real_total_tokens=0,
+        cache_hit_tokens=0,
     )
 
 

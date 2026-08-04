@@ -27,16 +27,28 @@ class AgentMetrics(TypedDict):
     """Metrics from a single agent invocation."""
 
     thinking_tokens: int
-    """Tokens in AI thinking/content messages."""
+    """Tokens in AI thinking/content messages (local estimate, not billed)."""
 
     tool_result_tokens: int
-    """Tokens in tool result messages."""
+    """Tokens in tool result messages (local estimate, not billed)."""
 
     tool_call_count: int
     """Number of tool calls made."""
 
     elapsed_seconds: float
     """Total execution time in seconds."""
+
+    real_input_tokens: int
+    """Real prompt tokens billed by the provider (from AIMessage.usage_metadata)."""
+
+    real_output_tokens: int
+    """Real completion tokens billed by the provider."""
+
+    real_total_tokens: int
+    """Real total tokens billed by the provider (input + output)."""
+
+    cache_hit_tokens: int
+    """Prompt tokens served from the provider's context cache (billed cheaper)."""
 
 
 def create_empty_metrics() -> AgentMetrics:
@@ -46,6 +58,10 @@ def create_empty_metrics() -> AgentMetrics:
         tool_result_tokens=0,
         tool_call_count=0,
         elapsed_seconds=0.0,
+        real_input_tokens=0,
+        real_output_tokens=0,
+        real_total_tokens=0,
+        cache_hit_tokens=0,
     )
 
 
@@ -56,6 +72,10 @@ def add_metrics(base: AgentMetrics, addition: AgentMetrics) -> AgentMetrics:
         tool_result_tokens=base["tool_result_tokens"] + addition["tool_result_tokens"],
         tool_call_count=base["tool_call_count"] + addition["tool_call_count"],
         elapsed_seconds=base["elapsed_seconds"] + addition["elapsed_seconds"],
+        real_input_tokens=base["real_input_tokens"] + addition["real_input_tokens"],
+        real_output_tokens=base["real_output_tokens"] + addition["real_output_tokens"],
+        real_total_tokens=base["real_total_tokens"] + addition["real_total_tokens"],
+        cache_hit_tokens=base["cache_hit_tokens"] + addition["cache_hit_tokens"],
     )
 
 
@@ -175,6 +195,23 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
 
             # Process each new message
             for last_message in new_messages:
+                # Capture REAL billed token usage before dispatching to the
+                # print branches. LangChain attaches usage_metadata to every
+                # AIMessage (present in both streaming and non-streaming), so
+                # each model turn is counted exactly once here (messages are
+                # de-duplicated via processed_message_count). Non-AI messages
+                # (tool/human) carry no usage_metadata and are skipped. Unlike
+                # count_tokens() below, which only estimates the size of the
+                # thinking/tool-result TEXT, this is the actual prompt+completion
+                # the provider billed, including the full re-sent context.
+                usage = getattr(last_message, "usage_metadata", None)
+                if usage:
+                    metrics["real_input_tokens"] += usage.get("input_tokens", 0)
+                    metrics["real_output_tokens"] += usage.get("output_tokens", 0)
+                    metrics["real_total_tokens"] += usage.get("total_tokens", 0)
+                    details = usage.get("input_token_details") or {}
+                    metrics["cache_hit_tokens"] += details.get("cache_read", 0)
+
                 # Check if it's an AI message with tool calls
                 if hasattr(last_message, "tool_calls") and last_message.tool_calls:
                     # Print AI message content if present
@@ -279,7 +316,11 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
     elapsed = time.perf_counter() - start_time
     metrics["elapsed_seconds"] = elapsed  # Track elapsed time
     console.print(Panel.fit(
-        f"[bold green]✓ {agent_name} Complete ({format_duration(elapsed)})[/bold green]",
+        f"[bold green]✓ {agent_name} Complete ({format_duration(elapsed)})[/bold green]\n"
+        f"[dim]🔢 Real tokens: in={metrics['real_input_tokens']:,} "
+        f"out={metrics['real_output_tokens']:,} "
+        f"total={metrics['real_total_tokens']:,} "
+        f"(cache_hit={metrics['cache_hit_tokens']:,})[/dim]",
         border_style="green"
     ))
     console.print()
