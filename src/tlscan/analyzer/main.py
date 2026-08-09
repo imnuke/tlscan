@@ -11,6 +11,8 @@ LangGraph-based workflow with new architecture:
 import asyncio
 import time
 import logging
+import os
+import json
 
 from rich.console import Console
 from rich.panel import Panel
@@ -550,3 +552,19 @@ async def main(
                 border_style="magenta"
             ))
             console.print()
+
+        # Optional machine-readable stats dump for batch overhead experiments.
+        # When TLSCAN_STATS_JSON names a path, write program-level and per-agent
+        # statistics (time + real token usage) as JSON so a harness can
+        # aggregate overhead across many runs without scraping the console.
+        _stats_path = os.environ.get("TLSCAN_STATS_JSON")
+        if _stats_path and 'final_state' in locals() and isinstance(final_state, dict):
+            try:
+                _payload = {
+                    "total_elapsed_seconds": total_elapsed,
+                    "statistics": final_state.get("statistics") or {},
+                }
+                with open(_stats_path, "w") as _f:
+                    json.dump(_payload, _f, indent=2, default=str)
+            except Exception as _e:
+                console.print(f"[dim yellow]stats dump failed: {_e}[/dim yellow]")
