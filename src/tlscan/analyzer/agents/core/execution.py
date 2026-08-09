@@ -98,11 +98,12 @@ def _normalize_enum_values(data):
 
 
 def _strip_json_comments(json_string: str) -> str:
-    """Remove JavaScript-style // comments from JSON string.
+    """Remove JS-style comments from JSON and normalize Python-style literals.
 
-    LLM agents sometimes include JS-style comments in their JSON output,
-    which causes json.loads() to fail. This function strips those comments
-    while preserving // inside quoted strings (e.g., URLs like https://example.com).
+    Handles:
+    - // line comments
+    - /* block comments */
+    - Python-style None/True/False → null/true/false (outside quoted strings)
     """
     result = []
     in_string = False
@@ -115,7 +116,6 @@ def _strip_json_comments(json_string: str) -> str:
         if in_string:
             result.append(char)
             if char == '\\' and i + 1 < n:
-                # Escaped character - append next char too
                 i += 1
                 result.append(json_string[i])
             elif char == '"':
@@ -125,10 +125,34 @@ def _strip_json_comments(json_string: str) -> str:
                 in_string = True
                 result.append(char)
             elif char == '/' and i + 1 < n and json_string[i + 1] == '/':
-                # Skip // comment until end of line
+                # Skip // line comment
                 while i < n and json_string[i] != '\n':
                     i += 1
-                continue  # Don't increment i again
+                continue
+            elif char == '/' and i + 1 < n and json_string[i + 1] == '*':
+                # Skip /* block comment */
+                i += 2
+                while i < n - 1 and not (json_string[i] == '*' and json_string[i + 1] == '/'):
+                    i += 1
+                i += 2  # skip closing */
+                continue
+            elif char in ('N', 'T', 'F') and not in_string:
+                # Detect Python-style None/True/False literals
+                rest = json_string[i:]
+                if rest.startswith('None'):
+                    result.append('null')
+                    i += 4
+                    continue
+                elif rest.startswith('True'):
+                    result.append('true')
+                    i += 4
+                    continue
+                elif rest.startswith('False'):
+                    result.append('false')
+                    i += 5
+                    continue
+                else:
+                    result.append(char)
             else:
                 result.append(char)
 
@@ -175,6 +199,7 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
     #     console.print()
 
     final_content = ""
+    last_json_candidate = ""  # last AI message content starting with '{' (may be in tool-call branch)
     config = config or {"recursion_limit": 300}
 
     # Track how many messages we've already processed to avoid duplicates
@@ -222,6 +247,11 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                         md = create_markdown(last_message.content)
                         console.print(md)
                         console.print()
+                        # Track JSON candidates even in tool-call messages (DeepSeek sometimes puts
+                        # the final JSON here before making one more tool call, then emits prose as
+                        # the true final message — which overwrites final_content with non-JSON text)
+                        if last_message.content.strip().startswith("{"):
+                            last_json_candidate = last_message.content
 
                     # Print tool calls with counter
                     total_calls = len(last_message.tool_calls)
@@ -277,6 +307,8 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                         console.print(md)
                         console.print()
                         final_content = last_message.content
+                        if last_message.content.strip().startswith("{"):
+                            last_json_candidate = last_message.content
 
                 # Check if it's a human message
                 elif hasattr(last_message, "type") and last_message.type == "human":
@@ -327,27 +359,41 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
 
     # Parse output into Pydantic model if requested
     if output_model:
+        import re
+
+        def _try_parse_json(text: str):
+            stripped = text.strip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                return json.loads(_strip_json_comments(text))
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+            if json_match:
+                return json.loads(_strip_json_comments(json_match.group(1)))
+            bare_match = re.search(r'\{[\s\S]*\}', text)
+            if bare_match:
+                return json.loads(_strip_json_comments(bare_match.group(0)))
+            return json.loads(_strip_json_comments(text))
+
         try:
-            # Try to parse as JSON first
-            if final_content.strip().startswith("{") or final_content.strip().startswith("["):
-                data = json.loads(_strip_json_comments(final_content))
+            data = _try_parse_json(final_content)
+        except Exception as first_err:
+            # final_content was prose (e.g. DeepSeek emitted JSON in a tool-call
+            # thinking block then continued with a prose summary message).
+            # Fall back to the last AI-message content that started with '{'.
+            if last_json_candidate and last_json_candidate != final_content:
+                try:
+                    data = _try_parse_json(last_json_candidate)
+                except Exception as second_err:
+                    console.print(f"[yellow]⚠️ Failed to parse output into {output_model.__name__}: {first_err}[/yellow]")
+                    console.print(f"[dim]Raw output: {final_content[:500]}...[/dim]")
+                    raise ValueError(f"Failed to parse agent output into {output_model.__name__}: {first_err}")
             else:
-                # Try to extract JSON from markdown code blocks
-                import re
-                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', final_content, re.DOTALL)
-                if json_match:
-                    data = json.loads(_strip_json_comments(json_match.group(1)))
-                else:
-                    # If no JSON found, try to parse the whole content as JSON
-                    data = json.loads(_strip_json_comments(final_content))
+                console.print(f"[yellow]⚠️ Failed to parse output into {output_model.__name__}: {first_err}[/yellow]")
+                console.print(f"[dim]Raw output: {final_content[:500]}...[/dim]")
+                raise ValueError(f"Failed to parse agent output into {output_model.__name__}: {first_err}")
 
-            # Normalize status values to lowercase for enum compatibility
-            data = _normalize_enum_values(data)
+        # Normalize status values to lowercase for enum compatibility
+        data = _normalize_enum_values(data)
 
-            return (output_model(**data), metrics)
-        except Exception as e:
-            console.print(f"[yellow]⚠️ Failed to parse output into {output_model.__name__}: {e}[/yellow]")
-            console.print(f"[dim]Raw output: {final_content[:500]}...[/dim]")
-            raise ValueError(f"Failed to parse agent output into {output_model.__name__}: {e}")
+        return (output_model(**data), metrics)
 
     return (final_content, metrics)

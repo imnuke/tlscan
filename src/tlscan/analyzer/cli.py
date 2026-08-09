@@ -62,6 +62,16 @@ def parse_args():
         help="Run ablation study without security rules (free-form analysis)"
     )
     parser.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Enable Verification Agent: audits each UNSATISFIED/CONDITIONAL verdict "
+            "for evidence grounding, logical soundness, and condition adequacy. "
+            "Applies retry-and-downgrade policy (two failures → LOW_CONFIDENCE). "
+            "Disabled by default."
+        )
+    )
+    parser.add_argument(
         "--save-checkpoints",
         action="store_true",
         help="Enable automatic state checkpointing after each workflow node"
@@ -249,6 +259,7 @@ def run():
             firmware_path=args.firmware_path,
             rules=args.rules,
             no_rules=args.no_rules,
+            enable_verification=args.verify,
             save_checkpoints=args.save_checkpoints,
             thread_id=args.resume,
             fork_checkpoint_id=args.fork_from_checkpoint,

@@ -21,6 +21,7 @@ class RuleResultStatus(str, Enum):
     UNSATISFIED = "unsatisfied"
     CONDITIONAL = "conditional"
     DEFAULT = "default"  # Rule follows library default behavior - not explicitly configured
+    LOW_CONFIDENCE = "low_confidence"  # Verdict flagged after two failed verifications
 
 class SourceKind(str, Enum):
     """What kind of source was found at TRACE_END step."""
@@ -306,6 +307,16 @@ class RuleResult(BaseModel):
         description="List of conditions this rule depends on (empty if not conditional)"
     )
 
+    critique: Optional[str] = Field(
+        None,
+        description="Critique from verification agent when verdict was challenged"
+    )
+
+    low_confidence: bool = Field(
+        False,
+        description="True if verdict was downgraded to LOW_CONFIDENCE after two failed verifications"
+    )
+
 
 class SSLAnalysisOutput(BaseModel):
     """
@@ -338,6 +349,58 @@ class SSLAnalysisOutput(BaseModel):
     reason: Optional[str] = Field(
         None,
         description="Reason if not applicable (e.g., 'Server-only code', 'No SSL/TLS detected')"
+    )
+
+
+# ============================================================================
+# Verification Models
+# ============================================================================
+
+class VerificationCheckResult(BaseModel):
+    """Result of a single check within verification."""
+
+    check_name: str = Field(
+        description=(
+            "Name of the check: 'evidence_grounding', 'logical_soundness', "
+            "or 'condition_adequacy'"
+        )
+    )
+
+    passed: bool = Field(
+        description="Whether this specific check passed"
+    )
+
+    finding: str = Field(
+        description=(
+            "What was found during this check. If failed, include what the evidence "
+            "claims vs. what the re-fetched code actually shows."
+        )
+    )
+
+
+class VerificationOutput(BaseModel):
+    """Structured output from the Verification Agent."""
+
+    rule_id: str = Field(
+        description="Rule identifier being verified (e.g., 'R3')"
+    )
+
+    passed: bool = Field(
+        description="True only if ALL applicable checks passed"
+    )
+
+    critique: Optional[str] = Field(
+        None,
+        description=(
+            "If not passed: concise explanation of exactly what failed and why. "
+            "Cite function names, addresses, and what the evidence claims vs. "
+            "what the re-fetched code actually shows."
+        )
+    )
+
+    check_results: List[VerificationCheckResult] = Field(
+        default_factory=list,
+        description="Individual result for each check performed"
     )
 
 

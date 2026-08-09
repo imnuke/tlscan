@@ -12,6 +12,7 @@ from tlscan.analyzer.workflow.models import (
     SSLAnalysisOutput,
     DataflowAnalysisOutput,
     FirmwareSearchResult,
+    VerificationOutput,
 )
 from tlscan.config.loader import LLMConfig
 
@@ -203,6 +204,49 @@ class AgentFactory:
             tools=filtered_tools,
             middleware=[handle_tool_errors],
             system_prompt=DATAFLOW_SYSTEM_PROMPT
+        )
+
+        return agent
+
+    def create_verification_agent(
+        self,
+        tools: List[any],
+    ) -> any:
+        """Create verification agent that audits SSL rule verdicts.
+
+        The agent re-fetches cited code locations and runs three checks:
+        evidence grounding, logical soundness, and condition adequacy.
+
+        Args:
+            tools: IDA tools from Static Analysis Engine
+
+        Returns:
+            Agent that returns VerificationOutput Pydantic model
+        """
+        from tlscan.analyzer.agents.prompts.verification import VERIFICATION_SYSTEM_PROMPT
+
+        # Verification only needs read-only code-inspection tools
+        include_tools = [
+            "decompile_function",
+            "get_function_by_name",
+            "get_function_by_address",
+            "get_xrefs_to",
+            "get_callers",
+            "list_functions_filter",
+            "list_strings_filter",
+            "get_struct_info_simple",
+        ]
+        filtered_tools = self._filter_tools(tools, include=include_tools)
+
+        temperature = self._config.get_agent_temperature('ssl_analysis')
+        llm_with_temp = self._llm.bind(temperature=temperature)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, filtered_tools)
+
+        agent = create_agent(
+            model=llm_with_tools,
+            tools=filtered_tools,
+            middleware=[handle_tool_errors],
+            system_prompt=VERIFICATION_SYSTEM_PROMPT
         )
 
         return agent

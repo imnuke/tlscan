@@ -353,6 +353,9 @@ class AnalysisStatistics(TypedDict, total=False):
     firmware_agent: AgentStatistics
     """Statistics for firmware exploration agent."""
 
+    verification_agent: AgentStatistics
+    """Statistics for verification agent (only populated when --verify is used)."""
+
     # Dependency counts
     config_dependency_count: int
     """Number of config file dependencies discovered."""
@@ -408,6 +411,7 @@ def create_empty_statistics() -> AnalysisStatistics:
         ssl_agent=create_empty_agent_statistics(),
         dataflow_agent=create_empty_agent_statistics(),
         firmware_agent=create_empty_agent_statistics(),
+        verification_agent=create_empty_agent_statistics(),
         config_dependency_count=0,
         script_dependency_count=0,
         cross_binary_dependency_count=0,
@@ -458,6 +462,9 @@ class AnalysisState(TypedDict, total=False):
 
     no_rules: bool
     """Whether running in ablation mode without security rules."""
+
+    enable_verification: bool
+    """Whether to run verification agent after SSL analysis (default: False)."""
 
     # ========================================================================
     # Pre-Analysis Context
@@ -675,6 +682,7 @@ def create_initial_state(
     firmware_path: Optional[str] = None,
     no_rules: bool = False,
     call_graph_context: str = "",
+    enable_verification: bool = False,
 ) -> AnalysisState:
     """
     Create initial state for analysis.
@@ -688,6 +696,7 @@ def create_initial_state(
         firmware_path: Path to firmware root (optional)
         no_rules: Whether running in ablation mode without security rules
         call_graph_context: Pre-computed call graph text for SSL agent
+        enable_verification: Whether to run verification agent after SSL analysis
 
     Returns:
         Initial AnalysisState with all required fields initialized
@@ -700,6 +709,7 @@ def create_initial_state(
         file_type=file_type,
         library_name=library_name,
         no_rules=no_rules,
+        enable_verification=enable_verification,
 
         # Pre-analysis context
         call_graph_context=call_graph_context,

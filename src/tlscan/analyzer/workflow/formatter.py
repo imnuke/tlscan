@@ -200,6 +200,7 @@ def _display_agent_performance(console: Console, statistics: Dict[str, Any]) -> 
     # Agent definitions: (key, display_name, emoji)
     agents = [
         ("ssl_agent", "SSL Agent", "🔐"),
+        ("verification_agent", "Verification Agent", "✅"),
         ("dataflow_agent", "Dataflow Agent", "🔍"),
         ("firmware_agent", "Firmware Agent", "📂"),
     ]
@@ -584,9 +585,7 @@ def display_scripts(console: Console, scripts: List[str]) -> None:
         escaped_script = escape_rich_markup(script)
         table.add_row(str(i), f"`{escaped_script}`")
 
-    lines.append(str(table))
-
-    content = "\n".join(lines)
+    content = Group("\n".join(lines), table)
 
     console.print(Panel(
         content,

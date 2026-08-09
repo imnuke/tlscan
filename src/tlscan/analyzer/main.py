@@ -107,6 +107,7 @@ async def main(
     firmware_path: str = None,
     rules: str = "openssl",
     no_rules: bool = False,
+    enable_verification: bool = False,
     save_checkpoints: bool = False,
     thread_id: str = None,
     fork_checkpoint_id: str = None,
@@ -404,6 +405,7 @@ async def main(
             firmware_path=firmware_path,
             no_rules=no_rules,
             call_graph_context=call_graph_context,
+            enable_verification=enable_verification,
         )
 
         # If fork_checkpoint_id is provided, use already-loaded state for forking

@@ -44,6 +44,7 @@ from tlscan.analyzer.workflow.models import (
     TaskType,
     SourceKind,
     TraceStepType,
+    VerificationOutput,
 )
 from tlscan.analyzer.static_engine.engine import StaticAnalysisEngine
 from tlscan.analyzer.agents.factory import AgentFactory
@@ -118,6 +119,106 @@ def update_agent_statistics(
     stats["cache_hit_tokens"] = stats.get("cache_hit_tokens", 0) + metrics["cache_hit_tokens"]
 
     return stats
+
+
+# ============================================================================
+# Helpers: Verification Agent
+# ============================================================================
+
+async def _run_verification_for_rule(
+    rule: RuleResult,
+    security_rules: str,
+    tools: list,
+    agent_factory: AgentFactory,
+) -> tuple[VerificationOutput, "AgentMetrics"]:
+    """Run verification agent on a single rule result.
+
+    Re-fetches cited code locations and checks evidence grounding,
+    logical soundness, and (for CONDITIONAL) condition adequacy.
+    """
+    from tlscan.analyzer.agents.prompts.verification import get_verification_message
+
+    conditions_text = ""
+    if rule.result == RuleResultStatus.CONDITIONAL and rule.conditions:
+        lines = []
+        for cond in rule.conditions:
+            mapping_str = ", ".join(
+                f"{k!r} → {v}" for k, v in (cond.security_mapping or {}).items()
+            )
+            lines.append(
+                f"  - {cond.variable} in {cond.function} ({cond.function_address})"
+                f"{', context: ' + cond.usage_context if cond.usage_context else ''}"
+                f"{', impact: ' + mapping_str if mapping_str else ''}"
+            )
+        conditions_text = "\n".join(lines)
+
+    verification_agent = agent_factory.create_verification_agent(tools=tools)
+
+    content = get_verification_message(
+        rule_id=rule.rule_id,
+        rule_name=rule.rule_name,
+        verdict=rule.result.value.upper(),
+        evidence=rule.evidence,
+        conditions_text=conditions_text,
+        security_rules=security_rules,
+    )
+
+    messages = [HumanMessage(content=content)]
+
+    vresult, vmetrics = await stream_and_log_agent(
+        agent=verification_agent,
+        messages=messages,
+        agent_name=f"Verification ({rule.rule_id})",
+        agent_emoji="🔍",
+        output_model=VerificationOutput,
+    )
+    return vresult, vmetrics
+
+
+async def _retry_ssl_for_rule(
+    rule: RuleResult,
+    critique: str,
+    security_rules: str,
+    library_name: str,
+    tools: list,
+    agent_factory: AgentFactory,
+) -> tuple[Optional[RuleResult], "AgentMetrics"]:
+    """Re-run SSL agent for a single rule with critique feedback.
+
+    Returns the updated RuleResult for that rule, or None if the agent
+    did not return a matching rule in its output.
+    """
+    retry_agent = agent_factory.create_ssl_agent(
+        tools=tools,
+        security_rules_content=security_rules,
+        library_name=library_name,
+    )
+
+    content = (
+        f"The verification of rule {rule.rule_id} ({rule.rule_name}) failed.\n\n"
+        f"Critique: {critique}\n\n"
+        f"Previous verdict: {rule.result.value.upper()}\n"
+        f"Previous evidence:\n{rule.evidence}\n\n"
+        f"Please re-examine the binary for rule {rule.rule_id} ONLY and provide a "
+        f"corrected verdict. Be more precise about the evidence you cite."
+    )
+
+    messages = [HumanMessage(content=content)]
+
+    result, metrics = await stream_and_log_agent(
+        agent=retry_agent,
+        messages=messages,
+        agent_name=f"SSL Retry ({rule.rule_id})",
+        agent_emoji="🔐",
+        output_model=SSLAnalysisOutput,
+    )
+
+    # Extract only the rule matching our target
+    for r in result.rules:
+        if r.rule_id == rule.rule_id:
+            return r, metrics
+
+    return None, metrics
 
 
 # ============================================================================
@@ -232,6 +333,84 @@ async def ssl_analysis_node(
     rules_dict: Dict[str, RuleResult] = {}
     for rule in result.rules:
         rules_dict[rule.rule_id] = rule
+
+    # ── Optional: Verification Agent ────────────────────────────────────────
+    if state.get("enable_verification", False):
+        console.print("[cyan]🔍 Running Verification Agent on non-trivial verdicts...[/cyan]")
+        cumulative_vmetrics = create_empty_metrics()
+
+        # Only verify UNSATISFIED and CONDITIONAL — skip SATISFIED and UNDETERMINED
+        rules_to_verify = {
+            rid: r for rid, r in rules_dict.items()
+            if r.result in (RuleResultStatus.UNSATISFIED, RuleResultStatus.CONDITIONAL)
+        }
+
+        for rule_id, rule in rules_to_verify.items():
+            console.print(f"[dim]  Verifying {rule_id} ({rule.result.value})...[/dim]")
+
+            # First verification attempt
+            vresult, vmetrics = await _run_verification_for_rule(
+                rule=rule,
+                security_rules=security_rules,
+                tools=tools,
+                agent_factory=agent_factory,
+            )
+            cumulative_vmetrics = add_metrics(cumulative_vmetrics, vmetrics)
+
+            if vresult.passed:
+                console.print(f"[green]  ✓ {rule_id} passed verification[/green]")
+                continue
+
+            critique = vresult.critique or "Verification failed (no critique provided)"
+            console.print(f"[yellow]  ✗ {rule_id} failed — retrying with critique[/yellow]")
+
+            # Retry: ask SSL agent to reconsider with critique
+            retried_rule, retry_metrics = await _retry_ssl_for_rule(
+                rule=rule,
+                critique=critique,
+                security_rules=security_rules,
+                library_name=library_name,
+                tools=tools,
+                agent_factory=agent_factory,
+            )
+            cumulative_vmetrics = add_metrics(cumulative_vmetrics, retry_metrics)
+
+            if retried_rule is not None:
+                # Second verification attempt on retried result
+                vresult2, vmetrics2 = await _run_verification_for_rule(
+                    rule=retried_rule,
+                    security_rules=security_rules,
+                    tools=tools,
+                    agent_factory=agent_factory,
+                )
+                cumulative_vmetrics = add_metrics(cumulative_vmetrics, vmetrics2)
+
+                if vresult2.passed:
+                    console.print(f"[green]  ✓ {rule_id} passed after retry[/green]")
+                    rules_dict[rule_id] = retried_rule
+                    continue
+
+                # Second failure — downgrade to LOW_CONFIDENCE
+                second_critique = vresult2.critique or critique
+                console.print(f"[red]  ✗ {rule_id} → LOW_CONFIDENCE after two failures[/red]")
+                rule.low_confidence = True
+                rule.critique = second_critique
+            else:
+                # Retry returned no matching rule — downgrade original
+                console.print(f"[red]  ✗ {rule_id} → LOW_CONFIDENCE (retry returned no result)[/red]")
+                rule.low_confidence = True
+                rule.critique = critique
+
+        # Accumulate verification statistics (wrap updated_statistics as fake state)
+        updated_statistics = update_agent_statistics(
+            {"statistics": updated_statistics},
+            "verification_agent",
+            cumulative_vmetrics,
+        )
+        lc_count = sum(1 for r in rules_dict.values() if r.low_confidence)
+        if lc_count:
+            console.print(f"[yellow]  {lc_count} rule(s) marked LOW_CONFIDENCE[/yellow]")
+    # ── End Verification ─────────────────────────────────────────────────────
 
     # Create dataflow tasks for all CONDITIONAL rules
     pending_dataflow_tasks: List[DataflowTask] = []
