@@ -404,6 +404,92 @@ class VerificationOutput(BaseModel):
     )
 
 
+class TraceReplayFailureKind(str, Enum):
+    """How a forward replay of a dataflow trace failed."""
+
+    PREMATURE_STOP = "premature_stop"
+    """Replay ran out of steps before reaching the original condition variable."""
+
+    DIVERGENCE = "divergence"
+    """A re-fetched instruction propagates a different value than the trace claims."""
+
+    UNCOVERED_HOP = "uncovered_hop"
+    """Two consecutive steps are not connected by any instruction in the cited code."""
+
+    FABRICATION = "fabrication"
+    """A cited instruction does not exist at the cited location."""
+
+
+class TraceVerificationCheckResult(BaseModel):
+    """Result of a single check within trace verification."""
+
+    check_name: str = Field(
+        description=(
+            "Name of the check: 'step_grounding', 'forward_replay', "
+            "or 'terminal_soundness'"
+        )
+    )
+
+    passed: bool = Field(
+        description="Whether this specific check passed"
+    )
+
+    finding: str = Field(
+        description=(
+            "What was found during this check. If failed, state what the trace "
+            "claims vs. what the re-fetched code actually shows."
+        )
+    )
+
+
+class TraceVerificationOutput(BaseModel):
+    """Structured output from the Trace Verification Agent.
+
+    The agent replays the trace forward from the reported source terminal back
+    to the original condition variable, using only re-fetched code.
+    """
+
+    trace_id: str = Field(
+        description="Identifier of the trace being verified"
+    )
+
+    passed: bool = Field(
+        description=(
+            "True only if the forward replay reached the original condition "
+            "variable AND all checks passed"
+        )
+    )
+
+    failure_kind: Optional[TraceReplayFailureKind] = Field(
+        None,
+        description=(
+            "If not passed: which failure mode was observed. Omit when passed."
+        )
+    )
+
+    divergence_step: Optional[int] = Field(
+        None,
+        description=(
+            "If not passed: the step_number at which the replay diverged from "
+            "the claimed trace. Omit when passed."
+        )
+    )
+
+    critique: Optional[str] = Field(
+        None,
+        description=(
+            "If not passed: concise explanation of exactly where and why the "
+            "replay failed. Cite function names and addresses, and state what "
+            "the trace claims vs. what the re-fetched code actually shows."
+        )
+    )
+
+    check_results: List[TraceVerificationCheckResult] = Field(
+        default_factory=list,
+        description="Individual result for each check performed"
+    )
+
+
 # ============================================================================
 # Dataflow Analysis Models
 # ============================================================================
@@ -589,6 +675,20 @@ class VariableTrace(BaseModel):
     resolution_reason: Optional[str] = Field(
         None,
         description="Why resolution failed (e.g., 'Value controlled by external caller')"
+    )
+
+    # === Verification fields (set by the Trace Verification Agent) ===
+    verification_failed: bool = Field(
+        default=False,
+        description=(
+            "True when forward replay failed twice, so this trace was never "
+            "committed. Its claimed value must not be used for resolution."
+        )
+    )
+
+    verification_critique: Optional[str] = Field(
+        None,
+        description="Why the forward replay failed (set when verification_failed)"
     )
 
 

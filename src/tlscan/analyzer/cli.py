@@ -72,6 +72,16 @@ def parse_args():
         )
     )
     parser.add_argument(
+        "--no-trace-verify",
+        action="store_true",
+        help=(
+            "Disable the Trace Verification Agent, which audits each dataflow "
+            "trace by forward replay (step grounding, forward replay, terminal "
+            "soundness). Two failures mark the trace Unresolved. Only takes "
+            "effect together with --verify, which both verification stages share."
+        )
+    )
+    parser.add_argument(
         "--save-checkpoints",
         action="store_true",
         help="Enable automatic state checkpointing after each workflow node"
@@ -260,6 +270,7 @@ def run():
             rules=args.rules,
             no_rules=args.no_rules,
             enable_verification=args.verify,
+            enable_trace_verification=not args.no_trace_verify,
             save_checkpoints=args.save_checkpoints,
             thread_id=args.resume,
             fork_checkpoint_id=args.fork_from_checkpoint,

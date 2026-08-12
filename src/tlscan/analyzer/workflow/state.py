@@ -234,6 +234,14 @@ def resolve_trace_tree(
 
     outcomes = []
 
+    # A trace whose forward replay failed twice was never committed, so its
+    # claimed value carries no evidence. Children are separately verified
+    # traces, so the subtree is still traversed.
+    if trace.verification_failed:
+        for child_id in trace.child_trace_ids:
+            outcomes.extend(resolve_trace_tree(traces, child_id, security_mapping))
+        return outcomes
+
     # Check if this trace has a resolved value
     if trace.value and security_mapping:
         if trace.value in security_mapping:
@@ -271,6 +279,17 @@ def update_trace_statuses(
     """
     trace = traces.get(trace_id)
     if not trace:
+        return
+
+    # A trace whose forward replay failed twice is Unresolved and stays that
+    # way: neither its own claimed value nor a resolved child may promote it.
+    # Children are separately verified traces, so recursion continues.
+    if trace.verification_failed:
+        trace.resolving_status = TraceResolvingStatus.CANNOT_RESOLVE
+        if not trace.resolution_reason:
+            trace.resolution_reason = "Trace verification failed"
+        for child_id in trace.child_trace_ids:
+            update_trace_statuses(traces, child_id, security_mapping)
         return
 
     # Check if this trace has a resolved value
@@ -356,6 +375,9 @@ class AnalysisStatistics(TypedDict, total=False):
     verification_agent: AgentStatistics
     """Statistics for verification agent (only populated when --verify is used)."""
 
+    trace_verification_agent: AgentStatistics
+    """Statistics for trace verification agent (only populated when --verify is used)."""
+
     # Dependency counts
     config_dependency_count: int
     """Number of config file dependencies discovered."""
@@ -412,6 +434,7 @@ def create_empty_statistics() -> AnalysisStatistics:
         dataflow_agent=create_empty_agent_statistics(),
         firmware_agent=create_empty_agent_statistics(),
         verification_agent=create_empty_agent_statistics(),
+        trace_verification_agent=create_empty_agent_statistics(),
         config_dependency_count=0,
         script_dependency_count=0,
         cross_binary_dependency_count=0,
@@ -465,6 +488,13 @@ class AnalysisState(TypedDict, total=False):
 
     enable_verification: bool
     """Whether to run verification agent after SSL analysis (default: False)."""
+
+    enable_trace_verification: bool
+    """Whether to run the trace verification agent on each dataflow trace.
+
+    Gated by enable_verification: both stages share the verify-then-commit gate,
+    so this is only consulted when enable_verification is True.
+    """
 
     # ========================================================================
     # Pre-Analysis Context
@@ -683,6 +713,7 @@ def create_initial_state(
     no_rules: bool = False,
     call_graph_context: str = "",
     enable_verification: bool = False,
+    enable_trace_verification: bool = True,
 ) -> AnalysisState:
     """
     Create initial state for analysis.
@@ -697,6 +728,8 @@ def create_initial_state(
         no_rules: Whether running in ablation mode without security rules
         call_graph_context: Pre-computed call graph text for SSL agent
         enable_verification: Whether to run verification agent after SSL analysis
+        enable_trace_verification: Whether to also audit dataflow traces by
+            forward replay (only consulted when enable_verification is True)
 
     Returns:
         Initial AnalysisState with all required fields initialized
@@ -710,6 +743,7 @@ def create_initial_state(
         library_name=library_name,
         no_rules=no_rules,
         enable_verification=enable_verification,
+        enable_trace_verification=enable_trace_verification,
 
         # Pre-analysis context
         call_graph_context=call_graph_context,
