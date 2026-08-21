@@ -31,11 +31,16 @@ IDA_SERVER_READINESS_CHECK_INTERVAL = 0.5
 # Port Allocation
 # ============================================================================
 
-PORT_RANGE_START = 8800
-"""Start of port range for dynamic MCP server allocation."""
+PORT_RANGE_START = int(os.environ.get("TLSCAN_PORT_START", "8800"))
+"""Start of port range for dynamic MCP server allocation.
 
-PORT_RANGE_END = 8900
-"""End of port range for dynamic MCP server allocation."""
+Override with env TLSCAN_PORT_START to give concurrent tlscan instances
+disjoint port sub-ranges (prevents cross-instance server collisions)."""
+
+PORT_RANGE_END = int(os.environ.get("TLSCAN_PORT_END", "8900"))
+"""End of port range for dynamic MCP server allocation.
+
+Override with env TLSCAN_PORT_END (see TLSCAN_PORT_START)."""
 
 PORT_LOCK_TIMEOUT = 3600
 """Timeout in seconds for port locks (1 hour). Locks older than this are considered stale."""
@@ -51,8 +56,13 @@ ANALYSIS_TOTAL_TIMEOUT = 3600
 # File Paths
 # ============================================================================
 
-TEMP_FILES_DIR = Path("/tmp/tlscan")
-"""Directory for temporary files."""
+TEMP_FILES_DIR = Path(os.environ.get("TLSCAN_TEMP_DIR", "/tmp/tlscan"))
+"""Directory for temporary files.
+
+Override with env TLSCAN_TEMP_DIR so concurrent tlscan instances keep separate
+port-lock, IDB and log namespaces (port_locks/, idb/, ida_server_logs/ all
+derive from this). Combined with disjoint TLSCAN_PORT_START/END, this makes two
+parallel runs fully isolated."""
 
 PORT_LOCK_DIR = TEMP_FILES_DIR / "port_locks"
 """Directory for port lock files used in multi-instance coordination."""
