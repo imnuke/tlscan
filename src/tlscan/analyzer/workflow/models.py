@@ -9,6 +9,27 @@ from typing import Optional, List, Dict, Any
 from enum import Enum
 
 
+def _coerce_optional_int(v):
+    """Coerce hex/decimal string offsets to int for Optional[int] fields.
+
+    Some LLM backends (observed with GLM-5.2) emit numeric struct offsets and
+    access sizes as hex strings such as '0x274A8' instead of integers. Accept
+    those transparently so an otherwise well-formed analysis is not discarded
+    on a serialisation-format mismatch. This only normalises the value's type;
+    it does not affect any rule verdict logic.
+    """
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if not s:
+            return None
+        try:
+            return int(s, 16) if s.startswith("0x") else int(s, 10)
+        except ValueError:
+            # last resort: bare hex digits without a 0x prefix
+            return int(s, 16)
+    return v
+
+
 # ============================================================================
 # Enums
 # ============================================================================
@@ -149,6 +170,10 @@ class VariableSpec(BaseModel):
         description="Access size in bytes (e.g., 4 for DWORD, 8 for QWORD)"
     )
 
+    _coerce_offsets = field_validator(
+        "struct_offset", "access_size", mode="before"
+    )(_coerce_optional_int)
+
 
 class DataflowTask(BaseModel):
     """
@@ -275,6 +300,10 @@ class RuleCondition(BaseModel):
         None,
         description="Access size in bytes (e.g., 4 for DWORD, 8 for QWORD)"
     )
+
+    _coerce_offsets = field_validator(
+        "struct_offset", "access_size", mode="before"
+    )(_coerce_optional_int)
 
 
 class RuleResult(BaseModel):

@@ -96,6 +96,30 @@ def parse_model_string(model: str):
             if api_base:
                 kwargs["base_url"] = api_base
             return ChatQwen(**kwargs), model_name, config
+        elif provider == "glm":
+            # Zhipu GLM exposes an OpenAI-compatible endpoint, so route it
+            # through ChatOpenAI with a base_url override (same shape as the
+            # openai/deepseek branches).
+            #
+            # Thinking mode is disabled as a methodology choice for RQ4: it keeps
+            # GLM comparable to the other backends, which are also non-reasoning
+            # (deepseek-chat, and Sonnet without extended thinking). It is NOT a
+            # fix for output parsing: GLM still prepends a free-form reasoning
+            # narrative to its final message (with or without thinking), so the
+            # verification verdict arrives as prose followed by a trailing JSON
+            # object. Recovering that JSON is handled in the structured-output
+            # parser (stream_and_log_agent -> _last_embedded_json), not here.
+            # reasoning_effort is left at the API default; temperature comes from
+            # the per-agent config (0).
+            from langchain_openai import ChatOpenAI
+            kwargs = {
+                "model": model_name,
+                "api_key": api_key,
+                "extra_body": {"thinking": {"type": "disabled"}},
+            }
+            if api_base:
+                kwargs["base_url"] = api_base
+            return ChatOpenAI(**kwargs), model_name, config
         else:
             raise ValueError(f"Unknown provider: {provider}")
     else:

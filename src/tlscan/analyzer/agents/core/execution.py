@@ -361,13 +361,40 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
     if output_model:
         import re
 
+        def _last_embedded_json(text: str):
+            # Some backends (e.g. GLM) prepend a free-form reasoning narrative to
+            # the final message and only append the required JSON at the very end.
+            # A greedy first-brace-to-last-brace regex would splice prose fragments
+            # into the JSON and fail, so instead forward-scan every '{'/'[' with a
+            # strict JSON decoder and keep the LAST value that decodes cleanly.
+            # Prose braces (e.g. decompiled "{ return 3 }") raise and are skipped,
+            # so only genuine JSON survives, and the agent's final answer is last.
+            dec = json.JSONDecoder()
+            cleaned = _strip_json_comments(text)
+            found = None
+            idx, n = 0, len(cleaned)
+            while idx < n:
+                if cleaned[idx] in "{[":
+                    try:
+                        obj, end = dec.raw_decode(cleaned, idx)
+                        found = obj
+                        idx = end
+                        continue
+                    except Exception:
+                        pass
+                idx += 1
+            return found
+
         def _try_parse_json(text: str):
             stripped = text.strip()
             if stripped.startswith("{") or stripped.startswith("["):
                 return json.loads(_strip_json_comments(text))
-            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+            json_match = re.search(r'```(?:json)?\s*([\[{].*?[\]}])\s*```', text, re.DOTALL)
             if json_match:
                 return json.loads(_strip_json_comments(json_match.group(1)))
+            embedded = _last_embedded_json(text)
+            if embedded is not None:
+                return embedded
             bare_match = re.search(r'\{[\s\S]*\}', text)
             if bare_match:
                 return json.loads(_strip_json_comments(bare_match.group(0)))
