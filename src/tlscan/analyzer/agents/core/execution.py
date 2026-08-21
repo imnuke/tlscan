@@ -161,6 +161,31 @@ def _strip_json_comments(json_string: str) -> str:
     return ''.join(result)
 
 
+def _content_to_text(content: Any) -> str:
+    """Normalize a LangChain message ``content`` to plain text.
+
+    DeepSeek/OpenAI return ``content`` as a ``str``, whereas Anthropic returns
+    a list of content blocks (e.g. ``text`` / ``tool_use``). The streaming
+    logger and the JSON output parser below both assume a string, so collapse
+    the list form to the concatenation of its text-bearing blocks. ``tool_use``
+    blocks are intentionally dropped here because tool calls are surfaced
+    separately via ``last_message.tool_calls``.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+    return str(content)
+
+
 async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emoji: str = "🤖", config: dict = None, output_model=None) -> Tuple[Any, AgentMetrics]:
     """
     Stream an agent's execution and log all intermediate steps.
@@ -237,21 +262,25 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                     details = usage.get("input_token_details") or {}
                     metrics["cache_hit_tokens"] += details.get("cache_read", 0)
 
+                # Normalize content once: Anthropic returns a list of blocks,
+                # others return a plain string. Downstream display and JSON
+                # parsing both assume a string.
+                msg_text = _content_to_text(getattr(last_message, "content", None))
                 # Check if it's an AI message with tool calls
                 if hasattr(last_message, "tool_calls") and last_message.tool_calls:
                     # Print AI message content if present
-                    if hasattr(last_message, "content") and last_message.content and last_message.content.strip():
-                        thinking_tokens = count_tokens(last_message.content)
+                    if hasattr(last_message, "content") and msg_text and msg_text.strip():
+                        thinking_tokens = count_tokens(msg_text)
                         metrics["thinking_tokens"] += thinking_tokens  # Track thinking tokens
                         console.print(f"[bold blue]💭 {agent_name} THINKING - {format_token_count(thinking_tokens)} tokens:[/bold blue]")
-                        md = create_markdown(last_message.content)
+                        md = create_markdown(msg_text)
                         console.print(md)
                         console.print()
                         # Track JSON candidates even in tool-call messages (DeepSeek sometimes puts
                         # the final JSON here before making one more tool call, then emits prose as
                         # the true final message — which overwrites final_content with non-JSON text)
-                        if last_message.content.strip().startswith("{"):
-                            last_json_candidate = last_message.content
+                        if msg_text.strip().startswith("{"):
+                            last_json_candidate = msg_text
 
                     # Print tool calls with counter
                     total_calls = len(last_message.tool_calls)
@@ -280,42 +309,42 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                 # Check if it's a tool message (result)
                 elif hasattr(last_message, "type") and last_message.type == "tool":
                     # Count tokens in tool result (even for errors)
-                    tool_tokens = count_tokens(last_message.content)
+                    tool_tokens = count_tokens(msg_text)
                     metrics["tool_result_tokens"] += tool_tokens  # Track tool result tokens
 
                     # Check if it's an error result
                     if hasattr(last_message, "status") and last_message.status == "error":
                         console.print(f"[bold yellow]⚠️  {agent_name} TOOL ERROR ({last_message.name}):[/bold yellow]")
                         # Escape square brackets in error messages to prevent Rich markup parsing errors
-                        escaped_error = last_message.content.replace("[", r"\[").replace("]", r"\]")
+                        escaped_error = msg_text.replace("[", r"\[").replace("]", r"\]")
                         console.print(f"  [yellow]{escaped_error}[/yellow]")
                     else:
                         console.print(f"[bold green]📊 {agent_name} TOOL RESULT ([cyan]{last_message.name}[/cyan]) - {format_token_count(tool_tokens)} tokens:[/bold green]")
-                        content_preview = last_message.content[:500] if len(last_message.content) > 500 else last_message.content
+                        content_preview = msg_text[:500] if len(msg_text) > 500 else msg_text
                         # Escape square brackets to prevent Rich markup parsing errors
                         escaped_preview = content_preview.replace("[", r"\[").replace("]", r"\]")
-                        console.print(f"  [dim]{escaped_preview}{'...' if len(last_message.content) > 500 else ''}[/dim]")
+                        console.print(f"  [dim]{escaped_preview}{'...' if len(msg_text) > 500 else ''}[/dim]")
                     console.print()
 
                 # Check if it's an AI message with content (thinking)
                 elif hasattr(last_message, "type") and last_message.type == "ai":
-                    if hasattr(last_message, "content") and last_message.content and last_message.content.strip():
-                        thinking_tokens = count_tokens(last_message.content)
+                    if hasattr(last_message, "content") and msg_text and msg_text.strip():
+                        thinking_tokens = count_tokens(msg_text)
                         metrics["thinking_tokens"] += thinking_tokens  # Track thinking tokens
                         console.print(f"[bold blue]💭 {agent_name} THINKING - {format_token_count(thinking_tokens)} tokens:[/bold blue]")
-                        md = create_markdown(last_message.content)
+                        md = create_markdown(msg_text)
                         console.print(md)
                         console.print()
-                        final_content = last_message.content
-                        if last_message.content.strip().startswith("{"):
-                            last_json_candidate = last_message.content
+                        final_content = msg_text
+                        if msg_text.strip().startswith("{"):
+                            last_json_candidate = msg_text
 
                 # Check if it's a human message
                 elif hasattr(last_message, "type") and last_message.type == "human":
-                    if hasattr(last_message, "content") and last_message.content and last_message.content.strip():
-                        user_tokens = count_tokens(last_message.content)
+                    if hasattr(last_message, "content") and msg_text and msg_text.strip():
+                        user_tokens = count_tokens(msg_text)
                         console.print(f"[bold green]🧑 User Message - {format_token_count(user_tokens)} tokens:[/bold green]")
-                        md = create_markdown(last_message.content)
+                        md = create_markdown(msg_text)
                         console.print(md)
                         console.print()
 

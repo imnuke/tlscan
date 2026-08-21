@@ -84,6 +84,25 @@ def parse_model_string(model: str):
         elif provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
             return ChatAnthropic(model=model_name, api_key=api_key), model_name, config
+        elif provider == "anthropic_tc":
+            # Pilot-only: route Anthropic through the local teamclaude proxy,
+            # which fronts a Claude subscription via OAuth. Not for paper
+            # numbers (use the plain `anthropic` provider with a real key).
+            from tlscan.analyzer.utils.anthropic_tc import TeamClaudeChatAnthropic
+            kwargs = {
+                "model": model_name,
+                # Dummy key: the proxy strips x-api-key and injects its own
+                # `authorization: Bearer <oauth_token>`. A non-empty value is
+                # only needed so the SDK client constructs.
+                "api_key": api_key or "sk-teamclaude-proxy",
+                # SDK posts to {anthropic_api_url}/v1/messages.
+                "anthropic_api_url": api_base or "http://127.0.0.1:3456",
+                # Required by the subscription OAuth path.
+                "default_headers": {"anthropic-beta": "oauth-2025-04-20"},
+                # Default 1024 is too small for structured JSON tool output.
+                "max_tokens": 16384,
+            }
+            return TeamClaudeChatAnthropic(**kwargs), model_name, config
         elif provider == "deepseek":
             from langchain_deepseek import ChatDeepSeek
             kwargs = {"model": model_name, "api_key": api_key}
@@ -117,6 +136,19 @@ def parse_model_string(model: str):
                 "api_key": api_key,
                 "extra_body": {"thinking": {"type": "disabled"}},
             }
+            if api_base:
+                kwargs["base_url"] = api_base
+            return ChatOpenAI(**kwargs), model_name, config
+        elif provider == "llama":
+            # Llama via any OpenAI-compatible endpoint (local Ollama/vLLM here).
+            # Open-weight, so no vendor "cyber use" policy blocks vuln analysis.
+            # Tool-calling reliability depends on the serving stack: vLLM needs
+            # `--enable-auto-tool-choice --tool-call-parser llama3_json` (or the
+            # model-appropriate parser) to expose function calling; recent Ollama
+            # tags support tools natively. Structured output is validated in the
+            # RQ4 pilot, not assumed here.
+            from langchain_openai import ChatOpenAI
+            kwargs = {"model": model_name, "api_key": api_key or "sk-local-llama"}
             if api_base:
                 kwargs["base_url"] = api_base
             return ChatOpenAI(**kwargs), model_name, config
