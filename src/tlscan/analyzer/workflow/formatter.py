@@ -202,6 +202,7 @@ def _display_agent_performance(console: Console, statistics: Dict[str, Any]) -> 
         ("ssl_agent", "SSL Agent", "🔐"),
         ("verification_agent", "Verification Agent", "✅"),
         ("dataflow_agent", "Dataflow Agent", "🔍"),
+        ("trace_verification_agent", "Trace Verification Agent", "🧪"),
         ("firmware_agent", "Firmware Agent", "📂"),
     ]
 

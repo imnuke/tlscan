@@ -45,6 +45,7 @@ from tlscan.analyzer.workflow.models import (
     SourceKind,
     TraceStepType,
     VerificationOutput,
+    TraceVerificationOutput,
 )
 from tlscan.analyzer.static_engine.engine import StaticAnalysisEngine
 from tlscan.analyzer.agents.factory import AgentFactory
@@ -219,6 +220,247 @@ async def _retry_ssl_for_rule(
             return r, metrics
 
     return None, metrics
+
+
+# ============================================================================
+# Helpers: Trace Verification Agent
+# ============================================================================
+
+def _replay_precondition_failure(trace: VariableTrace) -> Optional[str]:
+    """Check whether a forward replay can start at all.
+
+    Replay begins at the reported terminal and walks toward the condition
+    variable. A trace with no steps, or with no TRACE_END, has no terminal to
+    start from, so it fails without spending an LLM call.
+
+    Args:
+        trace: Trace to inspect
+
+    Returns:
+        Reason string if replay cannot start, None otherwise
+    """
+    if not trace.trace_path:
+        return "Trace has no steps, so forward replay has no starting point."
+
+    has_terminal = any(
+        step.step_type == TraceStepType.TRACE_END for step in trace.trace_path
+    )
+    if not has_terminal:
+        return (
+            "Trace has no TRACE_END step, so no source terminal was reported "
+            "and forward replay cannot begin."
+        )
+
+    return None
+
+
+async def _run_trace_verification(
+    trace: VariableTrace,
+    trace_label: str,
+    tools: list,
+    agent_factory: AgentFactory,
+) -> tuple[TraceVerificationOutput, "AgentMetrics"]:
+    """Audit a single trace by forward replay.
+
+    Re-fetches every cited instruction and walks the dataflow forward from the
+    reported terminal to the original condition variable.
+    """
+    from tlscan.analyzer.agents.prompts.trace_verification import (
+        get_trace_verification_message,
+    )
+
+    verification_agent = agent_factory.create_trace_verification_agent(tools=tools)
+
+    content = get_trace_verification_message(trace, trace_label=trace_label)
+    messages = [HumanMessage(content=content)]
+
+    vresult, vmetrics = await stream_and_log_agent(
+        agent=verification_agent,
+        messages=messages,
+        agent_name=f"Trace Verification ({trace_label})",
+        agent_emoji="🧪",
+        output_model=TraceVerificationOutput,
+    )
+    return vresult, vmetrics
+
+
+async def _retry_dataflow_for_trace(
+    trace: VariableTrace,
+    critique: str,
+    tools: list,
+    agent_factory: AgentFactory,
+) -> tuple[Optional[VariableTrace], "AgentMetrics"]:
+    """Re-trace a single variable with replay critique feedback.
+
+    Uses a fresh dataflow agent, as the retry must not inherit the reasoning
+    that produced the rejected trace.
+
+    Returns the re-traced VariableTrace, or None if the agent did not return a
+    trace for the same variable.
+    """
+    retry_agent = agent_factory.create_dataflow_agent(tools=tools)
+
+    previous_steps = "\n".join(
+        f"  {step.step_number}. [{step.step_type.value}] "
+        f"{step.function or '<unknown>'}"
+        f"{' @ ' + step.address if step.address else ''}: {step.description}"
+        for step in trace.trace_path
+    ) or "  (no steps were reported)"
+
+    content = (
+        f"A forward replay of your trace for variable '{trace.variable}' in "
+        f"function '{trace.function}' failed.\n\n"
+        f"Critique: {critique}\n\n"
+        f"Previous trace path:\n{previous_steps}\n\n"
+        f"Previous concluded value: {trace.value if trace.value is not None else 'none'}\n\n"
+        f"Please re-trace variable '{trace.variable}' in function "
+        f"'{trace.function}' ONLY. Cite the exact function and address for every "
+        f"step, and make sure consecutive steps are actually connected by an "
+        f"instruction in the code."
+    )
+
+    messages = [HumanMessage(content=content)]
+
+    result, metrics = await stream_and_log_agent(
+        agent=retry_agent,
+        messages=messages,
+        agent_name=f"Dataflow Retry ({trace.variable})",
+        agent_emoji="🔍",
+        output_model=DataflowAnalysisOutput,
+    )
+
+    # Extract only the trace matching our target variable
+    for t in result.traces:
+        if t.variable == trace.variable and t.function == trace.function:
+            return t, metrics
+
+    return None, metrics
+
+
+async def verify_traces(
+    result: DataflowAnalysisOutput,
+    target: str,
+    tools: list,
+    agent_factory: AgentFactory,
+) -> "AgentMetrics":
+    """Audit every trace in a dataflow result, applying retry-and-downgrade.
+
+    Each trace is replayed forward. A failing trace is re-traced once by a fresh
+    dataflow agent and replayed again; a second failure marks the trace
+    Unresolved so its claimed value is never committed.
+
+    `result.traces` is modified in place.
+
+    Args:
+        result: Dataflow output whose traces should be audited
+        target: Target being analyzed, used only for log labels
+        tools: Tools the replay agent may use to re-fetch code
+        agent_factory: Factory for creating replay and retry agents
+
+    Returns:
+        Cumulative metrics for all replay and retry calls made here
+    """
+    cumulative = create_empty_metrics()
+    target_label = target.split('/')[-1] if '/' in target else target
+
+    for index, trace in enumerate(result.traces):
+        trace_label = f"{target_label}:{trace.variable}#{index + 1}"
+        console.print(f"[dim]  🧪 Replaying trace for {trace.variable}...[/dim]")
+
+        # Cheap well-formedness gate: replay with no terminal cannot even start
+        precondition_failure = _replay_precondition_failure(trace)
+        if precondition_failure:
+            console.print(f"[red]  ✗ {trace.variable} → Unresolved ({precondition_failure})[/red]")
+            _mark_trace_unresolved(trace, precondition_failure)
+            continue
+
+        try:
+            vresult, vmetrics = await _run_trace_verification(
+                trace=trace,
+                trace_label=trace_label,
+                tools=tools,
+                agent_factory=agent_factory,
+            )
+            cumulative = add_metrics(cumulative, vmetrics)
+
+            if vresult.passed:
+                console.print(f"[green]  ✓ {trace.variable} passed replay[/green]")
+                continue
+
+            critique = vresult.critique or "Forward replay failed (no critique provided)"
+            console.print(f"[yellow]  ✗ {trace.variable} failed replay — retracing with critique[/yellow]")
+
+            retried_trace, retry_metrics = await _retry_dataflow_for_trace(
+                trace=trace,
+                critique=critique,
+                tools=tools,
+                agent_factory=agent_factory,
+            )
+            cumulative = add_metrics(cumulative, retry_metrics)
+
+            if retried_trace is None:
+                console.print(f"[red]  ✗ {trace.variable} → Unresolved (retrace returned no trace)[/red]")
+                _mark_trace_unresolved(trace, critique)
+                continue
+
+            precondition_failure = _replay_precondition_failure(retried_trace)
+            if precondition_failure:
+                console.print(f"[red]  ✗ {trace.variable} → Unresolved ({precondition_failure})[/red]")
+                _mark_trace_unresolved(retried_trace, precondition_failure)
+                result.traces[index] = retried_trace
+                continue
+
+            vresult2, vmetrics2 = await _run_trace_verification(
+                trace=retried_trace,
+                trace_label=f"{trace_label} (retry)",
+                tools=tools,
+                agent_factory=agent_factory,
+            )
+            cumulative = add_metrics(cumulative, vmetrics2)
+
+            if vresult2.passed:
+                console.print(f"[green]  ✓ {trace.variable} passed replay after retrace[/green]")
+            else:
+                # Second failure: the trace is never committed
+                console.print(f"[red]  ✗ {trace.variable} → Unresolved after two failures[/red]")
+                _mark_trace_unresolved(
+                    retried_trace,
+                    vresult2.critique or critique,
+                )
+
+            result.traces[index] = retried_trace
+
+        except Exception as e:
+            # An infrastructure error (unparseable agent output, tool failure) is
+            # not evidence that the trace is wrong, so the trace is left as the
+            # tracing agent produced it rather than downgraded. The remaining
+            # traces are still verified.
+            #
+            # The failed call still burned tokens and wall time, so bill it when
+            # the error carries its metrics: dropping it would under-report the
+            # verification overhead.
+            lost_metrics = getattr(e, "metrics", None)
+            if lost_metrics is not None:
+                cumulative = add_metrics(cumulative, lost_metrics)
+            console.print(
+                f"[yellow]  ⚠ Trace verification errored for {trace.variable}, "
+                f"leaving trace unverified: {e}[/yellow]"
+            )
+
+    return cumulative
+
+
+def _mark_trace_unresolved(trace: VariableTrace, critique: str) -> None:
+    """Mark a trace as Unresolved because its forward replay failed.
+
+    Sets both the verification flag and the resolution status. The flag is what
+    keeps later resolution passes from promoting the trace back to RESOLVED on
+    the strength of the value the failed chain claims.
+    """
+    trace.verification_failed = True
+    trace.verification_critique = critique
+    trace.resolving_status = TraceResolvingStatus.CANNOT_RESOLVE
+    trace.resolution_reason = f"Trace verification failed: {critique}"
 
 
 # ============================================================================
@@ -482,6 +724,11 @@ def create_follow_up_tasks_from_trace(
     new_dataflow_tasks = []
     config_fetch_tasks = []
 
+    # A trace whose forward replay failed twice was never committed. Its
+    # terminal is unsound, so it must not spawn follow-up work.
+    if trace.verification_failed:
+        return new_dataflow_tasks, config_fetch_tasks
+
     # Get source info from the final step of trace_path
     if not trace.trace_path:
         return new_dataflow_tasks, config_fetch_tasks
@@ -613,7 +860,8 @@ async def execute_single_dataflow_task(
     agent_factory: AgentFactory,
     firmware_tools: List[any],
     file_type: FileType = FileType.ELF_BINARY,
-) -> tuple[DataflowAnalysisOutput, AgentMetrics]:
+    enable_trace_verification: bool = False,
+) -> tuple[DataflowAnalysisOutput, AgentMetrics, AgentMetrics]:
     """Execute dataflow analysis for a single task.
 
     Extracts common logic shared by dataflow_analysis_node and
@@ -625,9 +873,13 @@ async def execute_single_dataflow_task(
         agent_factory: Agent factory for creating dataflow agent
         firmware_tools: Firmware tools for script analysis
         file_type: File type of the main file being analyzed
+        enable_trace_verification: Whether to audit each produced trace by
+            forward replay before accepting it
 
     Returns:
-        Tuple of (DataflowAnalysisOutput, AgentMetrics)
+        Tuple of (DataflowAnalysisOutput, dataflow AgentMetrics,
+        trace verification AgentMetrics). The third element is empty when
+        trace verification is disabled.
 
     Raises:
         Exception: If agent execution fails
@@ -649,7 +901,8 @@ async def execute_single_dataflow_task(
         agent = agent_factory.create_dataflow_agent(tools=tools)
     elif task_type == TaskType.SCRIPT:
         # For SCRIPT tasks, use firmware tools to read script
-        agent = agent_factory.create_dataflow_agent(tools=firmware_tools)
+        tools = firmware_tools
+        agent = agent_factory.create_dataflow_agent(tools=tools)
     else:
         raise ValueError(f"Unknown task type: {task_type}")
 
@@ -703,7 +956,17 @@ async def execute_single_dataflow_task(
         output_model=DataflowAnalysisOutput
     )
 
-    return (result, metrics)
+    # Verify-then-commit: audit each trace by forward replay before accepting it
+    verification_metrics = create_empty_metrics()
+    if enable_trace_verification and result.traces:
+        verification_metrics = await verify_traces(
+            result=result,
+            target=target,
+            tools=tools,
+            agent_factory=agent_factory,
+        )
+
+    return (result, metrics, verification_metrics)
 
 
 # ============================================================================
@@ -824,6 +1087,13 @@ async def dataflow_analysis_node(
 
     # Accumulate metrics across all tasks
     accumulated_metrics = create_empty_metrics()
+    accumulated_verification_metrics = create_empty_metrics()
+
+    # Both verification stages share the verify-then-commit gate
+    trace_verification_enabled = (
+        state.get("enable_verification", False)
+        and state.get("enable_trace_verification", True)
+    )
 
     total_tasks = len(pending_tasks)
 
@@ -841,15 +1111,19 @@ async def dataflow_analysis_node(
 
         # Execute dataflow analysis for this task using shared helper
         try:
-            result, metrics = await execute_single_dataflow_task(
+            result, metrics, verification_metrics = await execute_single_dataflow_task(
                 task=task,
                 static_engine=static_engine,
                 agent_factory=agent_factory,
                 firmware_tools=firmware_tools,
                 file_type=file_type,
+                enable_trace_verification=trace_verification_enabled,
             )
             # Accumulate metrics
             accumulated_metrics = add_metrics(accumulated_metrics, metrics)
+            accumulated_verification_metrics = add_metrics(
+                accumulated_verification_metrics, verification_metrics
+            )
         except Exception as e:
             console.print(f"[red]✗ Error processing task: {e}[/red]")
             continue
@@ -884,6 +1158,16 @@ async def dataflow_analysis_node(
                 )
             elif trace_id not in rule_trace_links[condition_key].root_trace_ids:
                 rule_trace_links[condition_key].root_trace_ids.append(trace_id)
+
+            # A trace whose forward replay failed twice was never committed. It
+            # stays in the graph as Unresolved evidence, but its unsound
+            # terminal must not spawn follow-up work.
+            if trace.verification_failed:
+                console.print(
+                    f"[yellow]    ⚠ {trace.variable}: trace verification failed, "
+                    f"no follow-up tasks created[/yellow]"
+                )
+                continue
 
             # Get source info from final step of trace_path
             last_step = trace.trace_path[-1] if trace.trace_path else None
@@ -1029,6 +1313,11 @@ async def dataflow_analysis_node(
 
     # Update statistics with accumulated dataflow agent metrics
     updated_statistics = update_agent_statistics(state, "dataflow_agent", accumulated_metrics)
+    updated_statistics = update_agent_statistics(
+        {"statistics": updated_statistics},
+        "trace_verification_agent",
+        accumulated_verification_metrics,
+    )
 
     state_update = {
         "traces": traces,
@@ -1634,6 +1923,13 @@ async def binary_analysis_sequential(
 
     # Accumulate metrics across all cross-binary tasks (these are dataflow agent calls)
     accumulated_metrics = create_empty_metrics()
+    accumulated_verification_metrics = create_empty_metrics()
+
+    # Both verification stages share the verify-then-commit gate
+    trace_verification_enabled = (
+        state.get("enable_verification", False)
+        and state.get("enable_trace_verification", True)
+    )
 
     # Unified trace graph
     traces: Dict[str, VariableTrace] = dict(state.get("traces", {}))
@@ -1652,15 +1948,19 @@ async def binary_analysis_sequential(
         try:
             # Execute dataflow analysis using shared helper
             # Cross-binary analysis is for binaries, so file_type is ELF_BINARY
-            result, metrics = await execute_single_dataflow_task(
+            result, metrics, verification_metrics = await execute_single_dataflow_task(
                 task=task,
                 static_engine=static_engine,
                 agent_factory=agent_factory,
                 firmware_tools=[],  # Cross-binary tasks are always BINARY type, no firmware tools needed
                 file_type=FileType.ELF_BINARY,
+                enable_trace_verification=trace_verification_enabled,
             )
             # Accumulate metrics
             accumulated_metrics = add_metrics(accumulated_metrics, metrics)
+            accumulated_verification_metrics = add_metrics(
+                accumulated_verification_metrics, verification_metrics
+            )
 
             # Process traces
             for trace in result.traces:
@@ -1763,6 +2063,11 @@ async def binary_analysis_sequential(
 
     # Update statistics with accumulated dataflow agent metrics (cross-binary uses dataflow agent)
     updated_statistics = update_agent_statistics(state, "dataflow_agent", accumulated_metrics)
+    updated_statistics = update_agent_statistics(
+        {"statistics": updated_statistics},
+        "trace_verification_agent",
+        accumulated_verification_metrics,
+    )
 
     # Update cross-binary dependency count
     updated_statistics["cross_binary_dependency_count"] = updated_statistics.get("cross_binary_dependency_count", 0) + len(cross_binary_tasks)

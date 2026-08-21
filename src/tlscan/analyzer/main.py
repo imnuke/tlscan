@@ -166,6 +166,7 @@ async def main(
     rules: str = "openssl",
     no_rules: bool = False,
     enable_verification: bool = False,
+    enable_trace_verification: bool = True,
     save_checkpoints: bool = False,
     thread_id: str = None,
     fork_checkpoint_id: str = None,
@@ -187,6 +188,11 @@ async def main(
         firmware_path: Path to firmware filesystem root (optional)
         rules: SSL/TLS library rules to use (default: "openssl")
         no_rules: Run ablation study without security rules (default: False)
+        enable_verification: Enable the Verification Agent for rule verdicts (default: False)
+        enable_trace_verification: Enable the Trace Verification Agent, which audits
+            dataflow traces by forward replay. Only consulted when
+            enable_verification is True, since both stages share the
+            verify-then-commit gate (default: True)
         save_checkpoints: Enable automatic state checkpointing (default: False)
         thread_id: Resume from this thread ID (optional)
         fork_checkpoint_id: Fork from specific checkpoint with fresh execution (requires thread_id)
@@ -464,6 +470,7 @@ async def main(
             no_rules=no_rules,
             call_graph_context=call_graph_context,
             enable_verification=enable_verification,
+            enable_trace_verification=enable_trace_verification,
         )
 
         # If fork_checkpoint_id is provided, use already-loaded state for forking

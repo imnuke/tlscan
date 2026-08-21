@@ -23,6 +23,20 @@ console = Console()
 # Metrics Types
 # ============================================================================
 
+class AgentOutputParseError(ValueError):
+    """Raised when an agent's final message cannot be parsed into its model.
+
+    Carries the metrics of the invocation that failed: the LLM call really
+    happened and really cost tokens, so a caller that recovers from the failure
+    must still be able to bill it. Subclasses ValueError so existing handlers
+    keep working.
+    """
+
+    def __init__(self, message: str, metrics: "AgentMetrics"):
+        super().__init__(message)
+        self.metrics = metrics
+
+
 class AgentMetrics(TypedDict):
     """Metrics from a single agent invocation."""
 
@@ -390,40 +404,76 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
     if output_model:
         import re
 
-        def _last_embedded_json(text: str):
-            # Some backends (e.g. GLM) prepend a free-form reasoning narrative to
-            # the final message and only append the required JSON at the very end.
-            # A greedy first-brace-to-last-brace regex would splice prose fragments
-            # into the JSON and fail, so instead forward-scan every '{'/'[' with a
-            # strict JSON decoder and keep the LAST value that decodes cleanly.
-            # Prose braces (e.g. decompiled "{ return 3 }") raise and are skipped,
-            # so only genuine JSON survives, and the agent's final answer is last.
+        # output_model(**data) structurally requires a mapping, so a candidate
+        # that is not a dict is noise no matter where it was found.
+        required_fields = {
+            name
+            for name, field in getattr(output_model, "model_fields", {}).items()
+            if field.is_required()
+        }
+
+        def _best_object(candidates):
+            objects = [c for c in candidates if isinstance(c, dict)]
+            if not objects:
+                return None
+            # Prefer the last candidate that actually satisfies the model: the
+            # intermediate drafts an agent emits (a bare rule object, a
+            # conditions fragment) are dicts too.
+            if required_fields:
+                complete = [o for o in objects if required_fields <= o.keys()]
+                if complete:
+                    return complete[-1]
+            return objects[-1]
+
+        def _scan_embedded_json(text: str):
+            # Agents routinely narrate before answering, may emit several
+            # intermediate JSON drafts, and often keep talking AFTER the final
+            # answer. A greedy first-brace-to-last-brace regex splices prose
+            # between drafts and fails, while a first-match regex picks a draft.
+            # Forward-scan every '{'/'[' with a strict decoder and collect every
+            # value that decodes cleanly; prose braces raise and are skipped.
+            # Arrays are collected but dropped by _best_object, because trailing
+            # prose about decompiled code ("sa_data[0]") parses as a JSON array
+            # and would otherwise win as the last value.
             dec = json.JSONDecoder()
             cleaned = _strip_json_comments(text)
-            found = None
+            candidates = []
             idx, n = 0, len(cleaned)
             while idx < n:
                 if cleaned[idx] in "{[":
                     try:
                         obj, end = dec.raw_decode(cleaned, idx)
-                        found = obj
+                        candidates.append(obj)
                         idx = end
                         continue
                     except Exception:
                         pass
                 idx += 1
-            return found
+            return _best_object(candidates)
 
         def _try_parse_json(text: str):
             stripped = text.strip()
-            if stripped.startswith("{") or stripped.startswith("["):
-                return json.loads(_strip_json_comments(text))
-            json_match = re.search(r'```(?:json)?\s*([\[{].*?[\]}])\s*```', text, re.DOTALL)
-            if json_match:
-                return json.loads(_strip_json_comments(json_match.group(1)))
-            embedded = _last_embedded_json(text)
+            # Each of the shaped attempts below can pick the wrong span when the
+            # message holds more than one JSON value, so a miss here falls
+            # through to the forward scan rather than aborting the parse.
+            if stripped.startswith("{"):
+                try:
+                    parsed = json.loads(_strip_json_comments(text))
+                    if isinstance(parsed, dict):
+                        return parsed
+                except Exception:
+                    pass
+            # Tried before the fence regex: when a message carries several
+            # fenced blocks, re.search returns the FIRST, which is a draft.
+            embedded = _scan_embedded_json(text)
             if embedded is not None:
                 return embedded
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(_strip_json_comments(json_match.group(1)))
+                except Exception:
+                    pass
             bare_match = re.search(r'\{[\s\S]*\}', text)
             if bare_match:
                 return json.loads(_strip_json_comments(bare_match.group(0)))
@@ -441,7 +491,10 @@ async def stream_and_log_agent(agent, messages: list, agent_name: str, agent_emo
                 except Exception as second_err:
                     console.print(f"[yellow]⚠️ Failed to parse output into {output_model.__name__}: {first_err}[/yellow]")
                     console.print(f"[dim]Raw output: {final_content[:500]}...[/dim]")
-                    raise ValueError(f"Failed to parse agent output into {output_model.__name__}: {first_err}")
+                    raise AgentOutputParseError(
+                        f"Failed to parse agent output into {output_model.__name__}: {first_err}",
+                        metrics,
+                    )
             else:
                 console.print(f"[yellow]⚠️ Failed to parse output into {output_model.__name__}: {first_err}[/yellow]")
                 console.print(f"[dim]Raw output: {final_content[:500]}...[/dim]")

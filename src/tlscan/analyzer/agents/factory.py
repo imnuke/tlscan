@@ -251,6 +251,63 @@ class AgentFactory:
 
         return agent
 
+    def create_trace_verification_agent(
+        self,
+        tools: List[any],
+    ) -> any:
+        """Create the agent that audits dataflow traces by forward replay.
+
+        The agent re-fetches every cited instruction and walks the dataflow
+        forward from the reported terminal to the original condition variable,
+        running three checks: step grounding, forward replay, and terminal
+        soundness.
+
+        Args:
+            tools: IDA tools from Static Analysis Engine, or firmware tools for
+                script traces
+
+        Returns:
+            Agent that returns TraceVerificationOutput Pydantic model
+        """
+        from tlscan.analyzer.agents.prompts.trace_verification import (
+            TRACE_VERIFICATION_SYSTEM_PROMPT,
+        )
+
+        # Replay only needs read-only code-inspection tools. get_function_by_address
+        # is kept (unlike the dataflow agent) because steps are cited by address.
+        include_tools = [
+            "decompile_function",
+            "get_function_by_name",
+            "get_function_by_address",
+            "get_xrefs_to",
+            "get_callers",
+            "get_callees",
+            "list_functions_filter",
+            "list_strings_filter",
+            "get_struct_info_simple",
+            "get_global_variable_value_by_name",
+            "get_global_variable_value_at_address",
+        ]
+        filtered_tools = self._filter_tools(tools, include=include_tools)
+
+        # Script traces run on firmware tools, whose names do not overlap the
+        # allowlist above. Falling back to the full set keeps replay possible.
+        if not filtered_tools:
+            filtered_tools = tools
+
+        temperature = self._config.get_agent_temperature('dataflow')
+        llm_with_temp = self._llm.bind(temperature=temperature)
+        llm_with_tools = self._prepare_llm_for_sequential_tools(llm_with_temp, filtered_tools)
+
+        agent = create_agent(
+            model=llm_with_tools,
+            tools=filtered_tools,
+            middleware=[handle_tool_errors],
+            system_prompt=TRACE_VERIFICATION_SYSTEM_PROMPT
+        )
+
+        return agent
+
     def create_firmware_agent(
         self,
         firmware_tools: List[any],
