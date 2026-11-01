@@ -3,6 +3,7 @@ name = "tlscan"
 version = "0.1.0"
 description = "TLS Security Analysis Tool for Firmware Binaries"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.13"
 dependencies = [
     "aiosqlite>=0.20.0",
